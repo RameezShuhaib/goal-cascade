@@ -1,0 +1,462 @@
+import { relations, sql } from 'drizzle-orm';
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  BACKLOG_STATUSES,
+  HORIZONS,
+  PULSES,
+  TASK_EVENT_KINDS,
+  TASK_STATUSES,
+  THEMES,
+} from '../../domain/enums';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Better Auth tables — the output of `npx auth generate` for the Drizzle sqlite
+// adapter, unchanged. We add no columns; per-user app data lives in its own tables.
+// ─────────────────────────────────────────────────────────────────────────────
+const nowMs = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
+
+export const user = sqliteTable('user', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(),
+  emailVerified: integer('email_verified', { mode: 'boolean' }).default(false).notNull(),
+  image: text('image'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).default(nowMs).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(nowMs)
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const session = sqliteTable(
+  'session',
+  {
+    id: text('id').primaryKey(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    token: text('token').notNull().unique(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).default(nowMs).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .$onUpdate(() => new Date())
+      .notNull(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+  },
+  (t) => [index('session_userId_idx').on(t.userId)],
+);
+
+export const account = sqliteTable(
+  'account',
+  {
+    id: text('id').primaryKey(),
+    issuer: text('issuer').notNull(),
+    accountId: text('account_id').notNull(),
+    providerId: text('provider_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    accessToken: text('access_token'),
+    refreshToken: text('refresh_token'),
+    idToken: text('id_token'),
+    accessTokenExpiresAt: integer('access_token_expires_at', { mode: 'timestamp_ms' }),
+    refreshTokenExpiresAt: integer('refresh_token_expires_at', { mode: 'timestamp_ms' }),
+    scope: text('scope'),
+    password: text('password'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).default(nowMs).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [uniqueIndex('account_issuer_accountId_uidx').on(t.issuer, t.accountId), index('account_userId_idx').on(t.userId)],
+);
+
+export const verification = sqliteTable(
+  'verification',
+  {
+    id: text('id').primaryKey(),
+    identifier: text('identifier').notNull(),
+    value: text('value').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).default(nowMs).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(nowMs)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [index('verification_identifier_idx').on(t.identifier)],
+);
+
+export const userRelations = relations(user, ({ many }) => ({ sessions: many(session), accounts: many(account) }));
+export const sessionRelations = relations(session, ({ one }) => ({
+  user: one(user, { fields: [session.userId], references: [user.id] }),
+}));
+export const accountRelations = relations(account, ({ one }) => ({
+  user: one(user, { fields: [account.userId], references: [user.id] }),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Product tables.
+//
+// EVERY row carries `user_id` (SPEC's `ownerId`, R-auth-2) and every index leads
+// with it, so an owner-scoped read is always an index seek and a query that forgets
+// the scope cannot accidentally use a useful index either.
+//
+// EVERY week is `TEXT` holding the ISO date of that week's MONDAY (SPEC D-1). Never
+// an offset: an offset means something different every Monday, with no write. The
+// columns are named `*_week_start` so a relative value cannot be slipped in unnoticed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** R-auth-6 / R-nav-12 — the only row provisioned at sign-up. A new account's tree is EMPTY. */
+export const preferences = sqliteTable('preferences', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  theme: text('theme', { enum: THEMES }).notNull().default('system'),
+  /** R-auth-5 — authoritative for every week boundary in the product. */
+  timezone: text('timezone').notNull().default('UTC'),
+  updatedAt: text('updated_at').notNull(),
+});
+
+/**
+ * R-goal-1 — the goal tree as an ADJACENCY LIST. No materialised path, no closure table: the tree is at
+ * most 500 nodes and 4 levels deep (Q-12, R-goal-7), so `domain/goal-tree.ts` derives every relationship
+ * in memory from one `listAll`. That keeps "descendant" defined in exactly one place.
+ *
+ * `parent_id` has no FK to itself on purpose: D1 applies FKs per statement, and the subtree cascade
+ * (Q-5) deletes parents and children in one batched DELETE. Referential integrity is held by the
+ * cascade being transactional (`GuardedBatch`), not by the row order inside it.
+ */
+export const goals = sqliteTable(
+  'goals',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    parentId: text('parent_id'),
+    horizon: text('horizon', { enum: HORIZONS }).notNull(),
+    title: text('title').notNull(),
+    why: text('why').notNull().default(''),
+    pulse: text('pulse', { enum: PULSES }).notNull().default('On track'),
+    /** R-goal-13 — always `''` for a Life goal. */
+    period: text('period').notNull().default(''),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    /** Q-2 — optimistic concurrency. Bumped by every guarded update. */
+    version: integer('version').notNull().default(1),
+  },
+  (t) => [
+    // Q-7 — the stable sibling order (`created_at`, then `id`) is served straight off this index.
+    index('ix_goals_owner_parent').on(t.userId, t.parentId, t.createdAt, t.id),
+  ],
+);
+
+/**
+ * D-2 — one focus sentence per non-Life leaf per WEEK. The mockup kept a mutable string on the goal,
+ * which has no week dimension: this week's plan destroyed last week's, and a past week could never be
+ * rendered truthfully.
+ *
+ * A row exists ONLY while the leaf is active in that week. Unchecking DELETES the row rather than
+ * storing `''` (§1 WeeklyFocus), so "active" is exactly "a row exists" (R-goal-9) and there is no
+ * second, contradictory representation of dormancy.
+ */
+export const weeklyFocus = sqliteTable(
+  'weekly_focus',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    goalId: text('goal_id').notNull(),
+    /** ISO date of the week's Monday. */
+    weekStart: text('week_start').notNull(),
+    sentence: text('sentence').notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (t) => [
+    // §1 — unique on (owner, goal, week). Two focuses for one leaf in one week is not a state.
+    uniqueIndex('ux_weekly_focus_goal_week').on(t.userId, t.goalId, t.weekStart),
+    // The plan read for one week, and the active-leaf set that read produces.
+    index('ix_weekly_focus_week').on(t.userId, t.weekStart),
+  ],
+);
+
+/**
+ * R-task-1 — a task under an active leaf's weekly focus.
+ *
+ * `status` is what makes D-15 work: Move-to-Backlog and Cancel set a terminal status and keep the row,
+ * because the `Moved to Backlog` / `Canceled` timeline entries the ruleset requires — and the optional
+ * reason — cannot live on a deleted row. Exited tasks are excluded from every week view and count.
+ *
+ * Carrying (R-task-7) needs NO column and NO job: an open task is visible in every week whose Monday is
+ * >= `origin_week_start`. That single fact is why this product has no cron (Q-17).
+ */
+export const tasks = sqliteTable(
+  'tasks',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    goalId: text('goal_id').notNull(),
+    title: text('title').notNull(),
+    /** R-task-3 — the done-condition is OPTIONAL. `''`, never null. */
+    cond: text('cond').notNull().default(''),
+    description: text('description').notNull().default(''),
+    status: text('status', { enum: TASK_STATUSES }).notNull().default('open'),
+    /** R-task-5 — the current week at creation. Immutable for the life of the task. */
+    originWeekStart: text('origin_week_start').notNull(),
+    /** R-task-14/19 — set on complete, cleared on uncheck. `done` is derived from it, never stored. */
+    doneWeekStart: text('done_week_start'),
+    /** D-4 — the instant of completion. The "Done Fri 28 Aug" label is rendered from this. */
+    doneAt: text('done_at'),
+    /** D-15 — the optional reason from the Move/Cancel confirm sheet, retained on the record. */
+    exitReason: text('exit_reason'),
+    exitedAt: text('exited_at'),
+    movedToBacklogItemId: text('moved_to_backlog_item_id'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    version: integer('version').notNull().default(1),
+  },
+  (t) => [
+    // R-task-7 — the open-task week scan: `status='open' AND origin_week_start <= :week`.
+    index('ix_tasks_open_week').on(t.userId, t.status, t.originWeekStart),
+    // R-task-8 — the done-task week lookup: `status='done' AND done_week_start = :week`.
+    index('ix_tasks_done_week').on(t.userId, t.status, t.doneWeekStart),
+    // R-goal-24 / R-nav-7 — per-goal counts and the carry signal.
+    index('ix_tasks_goal').on(t.userId, t.goalId, t.status),
+  ],
+);
+
+/** R-task-24/25 — insertion-ordered external links. Max 20 per task (Q-12), enforced in the schema. */
+export const taskLinks = sqliteTable(
+  'task_links',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    taskId: text('task_id').notNull(),
+    url: text('url').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('ix_task_links_task').on(t.userId, t.taskId, t.createdAt, t.id)],
+);
+
+/**
+ * R-task-30/31 — the read-only activity timeline. APPEND-ONLY: never updated, never deleted (except by
+ * the Q-5 subtree cascade), and never authored by the client. `text` and `glyph` are rendered by the
+ * server at append time so the log reads the same forever even if the copy changes later.
+ *
+ * `week_start` is set ONLY on a `carried` event, and the unique index below is what makes the LAZY carry
+ * producer safe (Q-17, R-task-29): the entry is generated on first read of a week, and a re-read — or
+ * two devices reading the same new week at once — inserts nothing, because `(user, task, week)` is
+ * already taken. No cron, no per-week write amplification, and no possibility of a duplicate line.
+ */
+export const taskEvents = sqliteTable(
+  'task_events',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    taskId: text('task_id').notNull(),
+    kind: text('kind', { enum: TASK_EVENT_KINDS }).notNull(),
+    text: text('text').notNull(),
+    glyph: text('glyph').notNull(),
+    /** Structured form of the event (old/new values, reason, source) as JSON. */
+    detail: text('detail'),
+    weekStart: text('week_start'),
+    at: text('at').notNull(),
+  },
+  (t) => [
+    // Q-7 — newest first: `at` desc, then insertion sequence (`id`, a ULID) desc.
+    index('ix_task_events_task').on(t.userId, t.taskId, t.at, t.id),
+    uniqueIndex('ux_task_events_carried')
+      .on(t.userId, t.taskId, t.weekStart)
+      .where(sql`kind = 'carried'`),
+  ],
+);
+
+/**
+ * R-backlog-1/2 — deferred work on a Yearly/Quarterly/Monthly goal. Never a Life goal, never a week.
+ *
+ * D-19 — a converted item is MARKED, not deleted, and `converted_to_task_id` is unique: "converted,
+ * never duplicated" (R-backlog-6) becomes a constraint the database enforces rather than a property the
+ * code hopes for. The mockup's `find`-then-`filter` created a second task from a vanished item and never
+ * persisted the removal at all.
+ */
+export const backlogItems = sqliteTable(
+  'backlog_items',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    goalId: text('goal_id').notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    /** Q-7 / D-17 — a real timestamp, never a display string like `'Today'`. */
+    capturedAt: text('captured_at').notNull(),
+    /** D-12 — the Monday of the week the task was LIVE in when it was moved out. */
+    fromWeekStart: text('from_week_start'),
+    status: text('status', { enum: BACKLOG_STATUSES }).notNull().default('open'),
+    convertedToTaskId: text('converted_to_task_id'),
+    convertedAt: text('converted_at'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    version: integer('version').notNull().default(1),
+  },
+  (t) => [
+    // R-backlog-5 / Q-7 — newest first within a group: `captured_at` desc, `id` desc.
+    index('ix_backlog_owner').on(t.userId, t.status, t.capturedAt, t.id),
+    index('ix_backlog_goal').on(t.userId, t.goalId, t.status),
+    uniqueIndex('ux_backlog_converted_task')
+      .on(t.convertedToTaskId)
+      .where(sql`converted_to_task_id IS NOT NULL`),
+  ],
+);
+
+export const backlogLinks = sqliteTable(
+  'backlog_links',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    itemId: text('item_id').notNull(),
+    url: text('url').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('ix_backlog_links_item').on(t.userId, t.itemId, t.createdAt, t.id)],
+);
+
+/** R-idea-2 — `goal_id` is an optional LIFE-goal tag; null = Unsorted, and Q-5 nulls it rather than cascading. */
+export const ideas = sqliteTable(
+  'ideas',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    goalId: text('goal_id'),
+    text: text('text').notNull(),
+    capturedAt: text('captured_at').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('ix_ideas_owner').on(t.userId, t.capturedAt, t.id)],
+);
+
+/** R-learning-4 / D-23 — `applied` is the "changed the plan" badge, set by an explicit user action. */
+export const learnings = sqliteTable(
+  'learnings',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    goalId: text('goal_id'),
+    text: text('text').notNull(),
+    applied: integer('applied', { mode: 'boolean' }).notNull().default(false),
+    capturedAt: text('captured_at').notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    version: integer('version').notNull().default(1),
+  },
+  (t) => [index('ix_learnings_owner').on(t.userId, t.capturedAt, t.id), index('ix_learnings_goal').on(t.userId, t.goalId)],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Infrastructure tables — ported from the reference codebase unchanged except for
+// the single-user scope.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** `scope` is the `user_id`: this product has no tenant, so the owner IS the idempotency scope. */
+export const idempotencyKeys = sqliteTable(
+  'idempotency_keys',
+  {
+    scope: text('scope').notNull(),
+    key: text('key').notNull(),
+    userId: text('user_id').notNull(),
+    requestHash: text('request_hash').notNull(),
+    statusCode: integer('status_code'),
+    responseBody: text('response_body'),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.scope, t.key] }), index('ix_idem_created').on(t.createdAt)],
+);
+
+/**
+ * Auth rate limiting. Better Auth's default limiter keeps its counters in memory, which is useless here:
+ * the Worker builds a fresh auth instance per request. `D1RateLimitStore` is wired in as
+ * `rateLimit.customStorage` and keeps one row per (client ip, auth path); `last_request` is epoch ms.
+ */
+export const authRateLimits = sqliteTable(
+  'auth_rate_limits',
+  {
+    key: text('key').primaryKey(),
+    count: integer('count').notNull(),
+    lastRequest: integer('last_request').notNull(),
+  },
+  (t) => [index('ix_auth_rate_limits_last_request').on(t.lastRequest)],
+);
+
+/**
+ * The email sink — and, in this product, the ONLY place an outbound message ever goes. This Worker has
+ * no `send_email` binding and no network-capable mail adapter (a deliberate decision: see
+ * `wrangler.jsonc` and `infrastructure/email/log-email-sender.ts`), so verification and password-reset
+ * links land here and are read back through `GET /internal/outbox`.
+ *
+ * A message is stored ONLY when its recipient matches `E2E_EMAIL_PATTERN`, which is constrained to
+ * non-registrable domains — so this table can never hold a real account's links, whoever holds
+ * `INTERNAL_SECRET`. With the pattern unset nothing is stored at all.
+ */
+export const emailOutbox = sqliteTable(
+  'email_outbox',
+  {
+    id: text('id').primaryKey(),
+    to: text('to').notNull(),
+    subject: text('subject').notNull(),
+    body: text('body').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('ix_email_outbox_to').on(t.to, t.createdAt)],
+);
+
+/**
+ * Atomic guarded batches. A permanently EMPTY table whose only job is to raise a SQL error:
+ * `GuardedBatch` prepends `INSERT INTO _guard(label) SELECT ? WHERE <precondition is false>` to every
+ * batch, so a failed precondition trips `CHECK (0)` and D1 rolls back the whole batch — which is the only
+ * way to make a zero-row guarded UPDATE take its sibling INSERTs down with it. Never insert into it,
+ * never read from it.
+ */
+export const guard = sqliteTable('_guard', { label: text('label').notNull() }, () => [
+  check('_guard_precondition_failed', sql`0`),
+]);
+
+export const schema = {
+  user,
+  session,
+  account,
+  verification,
+  userRelations,
+  sessionRelations,
+  accountRelations,
+  preferences,
+  goals,
+  weeklyFocus,
+  tasks,
+  taskLinks,
+  taskEvents,
+  backlogItems,
+  backlogLinks,
+  ideas,
+  learnings,
+  idempotencyKeys,
+  authRateLimits,
+  emailOutbox,
+  guard,
+};

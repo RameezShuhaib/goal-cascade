@@ -1,0 +1,20 @@
+# Local development secrets for `wrangler dev` (and vitest, which also loads .dev.vars).
+# Copy to `apps/api/.dev.vars` — that file is gitignored and must never be committed.
+# In production these are set with `wrangler secret put <NAME>`.
+#
+# Everything else (APP_NAME, TRUSTED_ORIGINS, EMAIL_FROM, E2E_EMAIL_PATTERN, SIGNUP_ALLOWLIST) lives in
+# `wrangler.jsonc` under `vars`, because none of it is secret.
+#
+# There is deliberately NO mail-provider key here (no RESEND_API_KEY, no SMTP anything). This Worker
+# cannot deliver email by design — verification and reset links land in `email_outbox` and are read back
+# through `GET /internal/outbox`. See `wrangler.jsonc` and `src/infrastructure/email/log-email-sender.ts`.
+
+# Signing key for Better Auth sessions and tokens. Any long random string; rotate it and every session
+# and every outstanding reset token dies. Generate one with:
+#   openssl rand -base64 32
+BETTER_AUTH_SECRET="replace-me-with-openssl-rand-base64-32"
+
+# Guards `/internal/*` (the e2e outbox reader). When UNSET, those routes 404 entirely — which is the
+# right posture for a deployment that does not need them.
+#   openssl rand -hex 24
+INTERNAL_SECRET="replace-me-with-openssl-rand-hex-24"
