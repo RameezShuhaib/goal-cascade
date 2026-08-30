@@ -52,16 +52,30 @@ describe('the error envelope — one shape for every failure', () => {
   });
 
   /**
-   * `GET /api/goals` used to be the sample stub here. It is implemented now (03-goals-plan), so the
-   * NOT_IMPLEMENTED path is asserted where it still exists: the envelope a stubbed service produces,
-   * rendered by the same handler. `/api/bootstrap` is the remaining stub; when it lands, point this at
-   * `errorResponse('NOT_IMPLEMENTED', …)` and drop the route.
+   * This assertion has been re-pointed twice as stubs were implemented: first `GET /api/goals`
+   * (03-goals-plan), then `/api/bootstrap` (05-backlog-capture). EVERY route is now implemented, so there
+   * is no stub left to point it at — which is the outcome we wanted, but it meant the test failed for a
+   * reason that had nothing to do with the envelope it exists to protect.
+   *
+   * So it no longer borrows an unimplemented endpoint to reach the 501 path. It asserts the path directly,
+   * which is what it always meant: a `NotImplementedError` thrown anywhere below the API layer renders in
+   * the SAME envelope as every other failure. That is a property of the error handler, not of whichever
+   * route happens to be unwritten this week, and phrasing it this way means implementing the next feature
+   * can never break it again.
    */
-  it('a stub route answers 501 NOT_IMPLEMENTED in the same envelope — the plumbing works, the behaviour is not written', async () => {
-    const { cookie } = await signedInOwner(t);
-    const res = await t.fetch('/api/bootstrap', { cookie });
+  it('a NotImplementedError renders 501 in the same envelope — the plumbing works, the behaviour is not written', async () => {
+    const err = new NotImplementedError('GET /api/example');
+    const res = errorResponse(err.code, err.message, err.details, err.status);
     expect(res.status).toBe(501);
     expect(await codeOf(res)).toBe('NOT_IMPLEMENTED');
+  });
+
+  it('every route is implemented — no endpoint answers 501 any more', async () => {
+    const { cookie } = await signedInOwner(t);
+    // A guard, not a formality: a route regressing to a stub is a silent product outage, and the envelope
+    // test above can no longer catch it now that it is decoupled from the router.
+    const res = await t.fetch('/api/bootstrap', { cookie });
+    expect(res.status).toBe(200);
   });
 
   it('health is public and needs no session', async () => {
