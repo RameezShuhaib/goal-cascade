@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // WebWorker instead of DOM: `self` is a `ServiceWorkerGlobalScope`, `caches` exists, `document` does not.
+    // Adding DOM back here would make `src/sw.ts` typecheck against globals it will not have at runtime.
+    "lib": ["ES2022", "WebWorker"],
+    // Drops `vite-plugin-pwa/client`, whose `virtual:pwa-register` types reference DOM.
+    "types": ["vite/client"]
+  },
+  "include": ["src/sw.ts", "src/sw"],
+  // The parent excludes `src/sw.ts`; this project exists precisely to check it.
+  "exclude": []
+}

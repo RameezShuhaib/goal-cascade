@@ -2,19 +2,89 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` is what makes `env(safe-area-inset-*)` below resolve to anything but 0 on a
+         notched phone. Without it an installed PWA letterboxes itself instead of using the full screen. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Goal Cascade</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&display=swap"
-      rel="stylesheet"
-    />
+    <meta name="description" content="Life goals, cascaded down to what you are actually doing this week." />
+
+    <!-- PWA. There is deliberately no manifest link tag here: vite-plugin-pwa injects one at build time, and
+         writing a second by hand puts two of them in `dist/index.html` (verified — it does not dedupe).
+         `tests/pwa/manifest.test.ts` guards that.
+         `theme-color` must match `MANIFEST_THEME_COLOR` / `MANIFEST_DARK_THEME_COLOR` in `src/pwa/manifest.ts`
+         (which in turn track `colors.paper` / `colors.ink` in `src/ui.ts`) — the same test reads this file and
+         fails if the three drift apart. -->
+    <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1c1c19" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Cascade" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+
     <style>
-      html, body { margin: 0; padding: 0; background: #f6f6f3; }
+      /*
+       * Manrope and Newsreader are self-hosted from `public/fonts` rather than loaded from Google Fonts. Two
+       * reasons: `default-src 'self'` in `public/_headers` stays clean with no third-party origin in the CSP,
+       * and the woff2 files are precached by the service worker (see `injectManifest.globPatterns`), so an
+       * offline open renders in the real typefaces instead of silently falling back to the system font.
+       * The files are the latin / latin-ext subsets of the *variable* fonts — one file covers 400–800 for
+       * Manrope and 400–500 italic for Newsreader, which is why there is one @font-face per subset, not per
+       * weight. Regenerate by re-downloading the URLs in a Google Fonts css2 response for the same families.
+       */
+      @font-face {
+        font-family: 'Manrope';
+        font-style: normal;
+        font-weight: 400 800;
+        font-display: swap;
+        src: url('/fonts/manrope-latin.woff2') format('woff2');
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+      @font-face {
+        font-family: 'Manrope';
+        font-style: normal;
+        font-weight: 400 800;
+        font-display: swap;
+        src: url('/fonts/manrope-latin-ext.woff2') format('woff2');
+        unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+      }
+      @font-face {
+        font-family: 'Newsreader';
+        font-style: italic;
+        font-weight: 400 500;
+        font-display: swap;
+        src: url('/fonts/newsreader-italic-latin.woff2') format('woff2');
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+      @font-face {
+        font-family: 'Newsreader';
+        font-style: italic;
+        font-weight: 400 500;
+        font-display: swap;
+        src: url('/fonts/newsreader-italic-latin-ext.woff2') format('woff2');
+        unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+      }
+
+      /*
+       * `html` owns the page colour, not `#root`: that is what propagates to the viewport canvas, so it also
+       * covers the gutters beside the centred 640px column, the safe-area strips, and the overscroll rubber
+       * band. The literal is `colors.paper` from `src/ui.ts` — the first-paint value, before React mounts.
+       */
+      html, body { margin: 0; padding: 0; background: #f6f6f3; color-scheme: light; }
       * { box-sizing: border-box; }
       a { color: oklch(0.45 0.09 125); }
       a:hover { color: oklch(0.35 0.09 125); }
       button, input, textarea, select { font-family: 'Manrope', sans-serif; }
+      /*
+       * Installed on a notched phone, the scrolling column has to clear the status bar and the display
+       * cutouts. The bottom inset is deliberately *not* applied here — the tab bar is `position: fixed` and
+       * padding on `#root` would not move it — so it is published as a custom property for the tab bar and
+       * any other fixed chrome to consume.
+       */
+      :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+      #root { padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
     </style>
   </head>
   <body>

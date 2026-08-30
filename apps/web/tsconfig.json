@@ -1,20 +1,26 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true
+    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "baseUrl": ".",
+    // The workspace symlink (`node_modules/@goal-cascade/shared` → `packages/shared`) is what resolves this at
+    // runtime; the mapping is here so `tsc` also resolves it straight to the source before `npm install` has
+    // run, and so a stale build artefact can never be picked up instead of the source of truth.
+    "paths": {
+      "@goal-cascade/shared": ["../../packages/shared/src/index.ts"],
+      "@goal-cascade/shared/*": ["../../packages/shared/src/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "tests"],
+  // The service worker needs `lib: ["ES2022", "WebWorker"]`, and WebWorker's globals collide head-on with
+  // DOM's (`self`, `caches`, `fetch`, `location` all differ). There is no tsconfig that can typecheck the app
+  // and the worker at once, so the worker is excluded here and checked by `tsconfig.sw.json` instead — which
+  // is why `build` and `typecheck` in package.json each run `tsc` twice. Deleting this line makes `tsc` pass
+  // while the worker is silently checked against the wrong globals.
+  //
+  // Only `src/sw.ts` is excluded. `src/sw/handlers.ts` stays in, so it is checked under DOM here *and* under
+  // WebWorker there — the two-lib check is what keeps it honestly portable between the two environments.
+  "exclude": ["src/sw.ts"]
 }

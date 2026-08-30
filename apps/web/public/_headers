@@ -1,0 +1,33 @@
+# Security headers for the SPA, applied by Cloudflare Workers Static Assets.
+#
+# `apps/api/wrangler.jsonc` serves this build directory as the Worker's asset store with
+# `run_worker_first: ["/api/*", "/internal/*"]`, so every HTML / JS / CSS / font response the browser gets
+# comes from here, not from a Worker handler. That makes this file a client-side change: Vite copies
+# `public/_headers` to `dist/_headers`, and the asset server applies it (it is never served as a file).
+# The API's own `/api/*` responses are not covered — those are the Worker's, and the API agent's to set.
+#
+# `connect-src 'self'` is the whole point of the one-Worker design showing up in the security posture: the
+# API is same-origin, so the app never needs to reach another host, and anything that tries is a bug or an
+# exfiltration attempt. Do not widen this to add an analytics or error-reporting endpoint without deciding
+# that trade deliberately.
+#
+# `default-src 'self'` with no third-party origin anywhere is only possible because Manrope and Newsreader
+# are **self-hosted** from `public/fonts` (see the @font-face block in `index.html`) rather than loaded from
+# `fonts.googleapis.com`. The alternative — allowing those two hosts in `style-src` and `font-src` — works,
+# but it puts a third-party origin in the critical rendering path of a personal app, means the fonts cannot
+# be precached by the service worker, and leaks every app open to a third party. Self-hosting costs ~280 KB
+# of committed woff2 and buys all three back.
+#
+# `'unsafe-inline'` is needed for styles only, and is not removable today: the mockup styles everything with
+# React `style={{…}}` attributes, which CSP counts as inline styles, plus the inline <style> block in
+# index.html. Moving to classes or a nonce would let this drop — worth doing, not worth blocking on.
+# Nothing in the bundle uses `eval`, an inline script, or a cross-origin fetch.
+#
+# `tests/pwa/headers.test.ts` asserts the dangerous parts of this policy rather than trusting the comment:
+# no third-party origin, no `unsafe-eval`, no `unsafe-inline` in `script-src`, `connect-src` still `'self'`.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'
+  Referrer-Policy: same-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
