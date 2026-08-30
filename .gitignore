@@ -4,6 +4,9 @@ dev-dist/
 .wrangler/
 .dev.vars
 .dev.vars.*
+# ...but the committed TEMPLATE is the documentation of which secrets a dev needs. It holds
+# placeholders only; the real values live in the (ignored) .dev.vars beside it.
+!.dev.vars.example
 .env
 .env.*
 *.local

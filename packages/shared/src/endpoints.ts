@@ -1,0 +1,78 @@
+/**
+ * Endpoint paths, relative to the `/api` base path. Constants and id-functions ONLY — never an inline
+ * string at a call site, on either side. The client cannot typo a path, and renaming a route is one edit.
+ */
+export const API_BASE = '/api' as const;
+
+export const ENDPOINTS = {
+  // ── session ──
+  health: '/health',
+  me: '/me',
+  mePreferences: '/me/preferences',
+
+  // ── cold open ──
+  /** Everything the app needs on cold open, in one request (the mockup's `fetchAll`). */
+  bootstrap: '/bootstrap',
+
+  // ── goals ──
+  goals: '/goals',
+  /** `GET` = the detail screen (R-goal-27); `PATCH` = edit; `DELETE?cascade=true` = subtree delete (Q-5). */
+  goal: (id: string) => `/goals/${id}`,
+  /** Re-parent. Children move with the goal; the target must have a LONGER horizon and not be a descendant. */
+  goalMove: (id: string) => `/goals/${id}/move`,
+  /** Replaces the old "push": a new target period plus an OPTIONAL one-line reason. */
+  goalReplan: (id: string) => `/goals/${id}/replan`,
+
+  // ── the weekly plan ──
+  /**
+   * `GET /plan?week=` reads any past week's focus set (D-2 — past weeks render their own sentences);
+   * `PUT /plan` saves the WHOLE current week atomically and refuses any other week (R-plan-2/7).
+   */
+  plan: '/plan',
+
+  // ── tasks (always scoped to a week via `?week=`) ──
+  tasks: '/tasks',
+  task: (id: string) => `/tasks/${id}`,
+  taskComplete: (id: string) => `/tasks/${id}/complete`,
+  taskUncheck: (id: string) => `/tasks/${id}/uncheck`,
+  /** Exit 2 of 3: the task becomes a backlog item under its goal, keeping description and links. */
+  taskMoveToBacklog: (id: string) => `/tasks/${id}/move-to-backlog`,
+  /** Exit 3 of 3: the task is dropped. */
+  taskCancel: (id: string) => `/tasks/${id}/cancel`,
+  taskLinks: (id: string) => `/tasks/${id}/links`,
+  taskLink: (id: string, linkId: string) => `/tasks/${id}/links/${linkId}`,
+
+  // ── backlog ──
+  backlog: '/backlog',
+  backlogItem: (id: string) => `/backlog/${id}`,
+  /** Move to another non-life goal. */
+  backlogItemMove: (id: string) => `/backlog/${id}/move`,
+  /** The ONLY way backlog becomes work. The item is CONVERTED (removed), never duplicated. */
+  backlogItemConvert: (id: string) => `/backlog/${id}/convert-to-task`,
+
+  // ── ideas (parking lot) ──
+  ideas: '/ideas',
+  idea: (id: string) => `/ideas/${id}`,
+  /** Re-tag / attach to a goal: the idea becomes a backlog item under that goal and is removed. */
+  ideaAttach: (id: string) => `/ideas/${id}/attach`,
+  /** "Task this week": the idea becomes a task under an active leaf and is removed. */
+  ideaConvert: (id: string) => `/ideas/${id}/convert-to-task`,
+
+  // ── learnings ──
+  learnings: '/learnings',
+  learning: (id: string) => `/learnings/${id}`,
+  /** Re-tag to a (life) goal. A learning is never converted into work. */
+  learningAttach: (id: string) => `/learnings/${id}/attach`,
+} as const;
+
+/** Headers the client must/should send. */
+export const HEADERS = {
+  idempotencyKey: 'Idempotency-Key',
+  idempotentReplayed: 'Idempotent-Replayed',
+  /** IANA zone of the caller's device. Seeds `preferences.timezone` at sign-up; the stored zone wins after. */
+  timezone: 'X-Timezone',
+  internalSecret: 'X-Internal-Secret',
+} as const;
+
+/** UUID v4 or any 16–64 chars of `[A-Za-z0-9_-]`. */
+export const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;

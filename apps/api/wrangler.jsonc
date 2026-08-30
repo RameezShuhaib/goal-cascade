@@ -1,0 +1,75 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "goal-cascade-api",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "workers_dev": true,
+  // Versioned preview URLs (`npm run preview` → `wrangler versions upload`) — e2e runs against them.
+  "preview_urls": true,
+
+  // The SPA (apps/web `vite build` → apps/web/dist) is served by THIS same Worker, so the `__Secure-`
+  // session cookie is first-party and there is no CORS in production. `run_worker_first` lists the only
+  // paths that reach the Worker script; everything else comes from the asset directory, and an unknown
+  // path falls back to index.html
+  // (https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/).
+  // `npm run deploy` at the repo root builds the SPA before `wrangler deploy` uploads it.
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/internal/*"]
+  },
+
+  // Provisioned resources — all prefixed `goal-cascade-`.
+  // NO `remote: true` on any binding: with it, `wrangler dev` and vitest (which loads this file) would
+  // talk to the real resource. `tests/security/no-real-email.test.ts` FAILS if `remote` ever appears here.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "goal-cascade-db",
+      "database_id": "84313f04-52e3-4d45-9d22-473d3ad57850",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // ── DELIBERATELY ABSENT: `send_email` ─────────────────────────────────────────────────────────────
+  // This Worker has NO outbound-mail binding and no Resend adapter, and that is a product decision, not
+  // an unfinished integration. The owner's sending domain was previously flagged for a critically high
+  // bounce rate caused by test traffic to non-resolvable addresses; a repeat can get the domain banned.
+  // So Goal Cascade removes the capability rather than guarding it: verification and password-reset
+  // links are written to `email_outbox` and read back through `GET /internal/outbox` (behind
+  // `X-Internal-Secret`). `createEmailSender` returns `LogEmailSender` with `forward = null`
+  // unconditionally, and `tests/security/no-real-email.test.ts` fails the build if either this binding
+  // or a network-capable email adapter reappears anywhere in the source tree.
+  //
+  // ── DELIBERATELY ABSENT: `triggers.crons` ─────────────────────────────────────────────────────────
+  // Goal Cascade has no scheduled work. Tasks carry forward by being READ in a later week (an open task
+  // is visible in every week >= its origin), not by a nightly job that rewrites rows. Adding a cron
+  // would mean inventing state that the read model already derives.
+
+  // Non-secret config. Secrets are set with `wrangler secret put` (production) or `apps/api/.dev.vars`
+  // (local dev; vitest also loads it). BETTER_AUTH_URL is NOT set: the auth base URL is derived from the
+  // incoming request origin so localhost, workers.dev and versioned preview URLs all work unchanged.
+  "vars": {
+    "APP_NAME": "Goal Cascade",
+    // Comma-separated extra origins trusted by Better Auth + CORS (the request origin is always trusted).
+    "TRUSTED_ORIGINS": "http://localhost:5173",
+    // `from` for outbound mail. `.local` is reserved for mDNS and can never be delegated to a registrant,
+    // so this address is non-registrable ON PURPOSE: it can never be the sender of a real message.
+    "EMAIL_FROM": "Goal Cascade <noreply@goal-cascade.local>",
+    // The ONLY addresses whose mail is stored in `email_outbox` and readable through `GET /internal/outbox`.
+    // Non-registrable suffix, so no real user can ever hold one of these addresses — a real account's
+    // verification/reset links are neither stored nor readable, whoever holds INTERNAL_SECRET. Unset =
+    // the endpoint refuses every address. A pattern whose domain is registrable is IGNORED with an error
+    // (`parseE2EEmailPatterns`), so widening it to `*` or `*@gmail.com` makes the endpoint inert rather
+    // than an account-takeover oracle.
+    "E2E_EMAIL_PATTERN": "*@test.goal-cascade.local",
+    // Sign-up allowlist. Goal Cascade is a SINGLE-USER product: only the owner may register. Comma
+    // separated, compared lowercased and trimmed against the sign-up address. Unset or empty means
+    // "refuse everything" — the safe default — never "allow everything". Enforced in Better Auth's
+    // `databaseHooks.user.create.before`, so a refused sign-up leaves NO row in `user`.
+    "SIGNUP_ALLOWLIST": "me@rameezshuhaib.com"
+  }
+}
