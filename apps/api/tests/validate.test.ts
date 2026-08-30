@@ -62,13 +62,16 @@ describe('zJson — the request body', () => {
 
   it('an empty body parses as {} so a command whose fields are all optional still works', async () => {
     const { cookie } = await signedInOwner(t);
-    // CancelTaskRequest is entirely optional → validation passes → the stub service answers 501.
+    // CancelTaskRequest is entirely optional → validation passes → the request reaches the service.
+    // It answered 501 while `TaskService` was a stub; now that it is implemented, the service is the one
+    // refusing, and it refuses on the id (R-auth-3: an unknown task is a plain 404). Either way, the
+    // assertion this test exists to make is "not 422": the empty body parsed.
     const res = await t.fetch(`/api/tasks/01J9ZQ8V2M7K3PQRSTVWXY0123/cancel`, {
       method: 'POST',
       cookie,
       idempotencyKey: crypto.randomUUID(),
     });
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -77,7 +80,11 @@ describe('zQuery — query params', () => {
 
   it('coerces `week` from its string form and passes it through', async () => {
     const { cookie } = await signedInOwner(t);
-    expect((await t.fetch('/api/tasks?week=-2', { cookie })).status).toBe(501);
+    // Was 501 while `TaskService` was a stub. Now the handler runs, which lets this assert the thing the
+    // 501 could only imply: the string `-2` reached the service as the number −2 and resolved to a week.
+    const res = await t.fetch('/api/tasks?week=-2', { cookie });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { week: { offset: number } }).week.offset).toBe(-2);
   });
 
   it('R-nav-3 / S-nav-3-1 — a FUTURE week is refused, by the schema, before any handler runs', async () => {
@@ -102,8 +109,8 @@ describe('zQuery — query params', () => {
     const res = await t.fetch('/api/tasks?week=-9', { cookie });
     expect(res.status).toBe(422);
     expect((await err(res)).error.code).toBe('WEEK_OUT_OF_RANGE');
-    // the last week INSIDE the bound is fine
-    expect((await t.fetch('/api/tasks?week=-7', { cookie })).status).toBe(501);
+    // the last week INSIDE the bound is fine (200 now that `TaskService` answers; it was 501 as a stub)
+    expect((await t.fetch('/api/tasks?week=-7', { cookie })).status).toBe(200);
   });
 });
 

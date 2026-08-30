@@ -64,6 +64,12 @@ export class GuardedBatch {
     const results = all.slice(preconditions.length);
     writes.forEach((w, i) => {
       const expected = w.expectedChanges ?? 1;
+      // `expectedChanges: 0` is this port's marker for a BEST-EFFORT statement — in its own words, one
+      // that "may legitimately no-op". Such a statement may also legitimately CHANGE a row: the lazy
+      // carry-log producer (R-task-29, Q-17) is an `INSERT … ON CONFLICT DO NOTHING` that writes 1 row on
+      // the first read of a week and 0 on every re-read, and both are correct. There is therefore nothing
+      // to assert, and an exact-equality check here would turn the successful first insert into a 409.
+      if (expected === 0) return;
       const actual = results[i]?.meta?.changes ?? 0;
       if (actual !== expected) throw new ConcurrencyError(w.label, expected, actual);
     });

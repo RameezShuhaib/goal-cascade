@@ -1,3 +1,4 @@
+export * from './activity-log';
 export * from './guarded-batch';
 export * from './provision-user';
 export * from './goal-tree-guard';
