@@ -124,8 +124,12 @@ describe('zParams — path params', () => {
     expect((await err(res)).error.code).toBe('VALIDATION_FAILED');
   });
 
-  it('a well-formed id passes validation and reaches the (stubbed) service', async () => {
+  // `GoalService` is implemented now, so "it reached the service" reads as the service's own answer for
+  // an id that belongs to nobody: 404 (R-auth-3), not the old stub's 501. The assertion is the same one
+  // — the param passed validation and a query ran — and it is now stronger, because a malformed id
+  // could never produce it.
+  it('a well-formed id passes validation and reaches the service', async () => {
     const { cookie } = await signedInOwner(t);
-    expect((await t.fetch('/api/goals/01J9ZQ8V2M7K3PQRSTVWXY0123', { cookie })).status).toBe(501);
+    expect((await t.fetch('/api/goals/01J9ZQ8V2M7K3PQRSTVWXY0123', { cookie })).status).toBe(404);
   });
 });

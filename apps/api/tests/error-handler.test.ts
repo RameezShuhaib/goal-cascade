@@ -51,9 +51,15 @@ describe('the error envelope — one shape for every failure', () => {
     expect(await codeOf(outside)).toBe('NOT_FOUND');
   });
 
+  /**
+   * `GET /api/goals` used to be the sample stub here. It is implemented now (03-goals-plan), so the
+   * NOT_IMPLEMENTED path is asserted where it still exists: the envelope a stubbed service produces,
+   * rendered by the same handler. `/api/bootstrap` is the remaining stub; when it lands, point this at
+   * `errorResponse('NOT_IMPLEMENTED', …)` and drop the route.
+   */
   it('a stub route answers 501 NOT_IMPLEMENTED in the same envelope — the plumbing works, the behaviour is not written', async () => {
     const { cookie } = await signedInOwner(t);
-    const res = await t.fetch('/api/goals', { cookie });
+    const res = await t.fetch('/api/bootstrap', { cookie });
     expect(res.status).toBe(501);
     expect(await codeOf(res)).toBe('NOT_IMPLEMENTED');
   });
