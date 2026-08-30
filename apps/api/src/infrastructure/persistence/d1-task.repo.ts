@@ -58,6 +58,19 @@ export class D1TaskRepo implements ITaskRepo {
       .all();
   }
 
+  /**
+   * Q-5 — every task under these goals, exited ones included. The subtree delete needs the ids to reach
+   * the links and events keyed by them; filtering to `open` here would orphan an exited task's log.
+   */
+  listByGoals(userId: string, goalIds: readonly string[]): Promise<Task[]> {
+    return this.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.userId, userId), inArray(tasks.goalId, ids(goalIds))))
+      .orderBy(asc(tasks.createdAt), asc(tasks.id))
+      .all();
+  }
+
   insertStmt(task: Task): WriteStmt {
     return this.db.insert(tasks).values(task);
   }
@@ -123,6 +136,16 @@ export class D1TaskEventRepo implements ITaskEventRepo {
       .where(and(eq(taskEvents.userId, userId), eq(taskEvents.taskId, taskId)))
       .orderBy(desc(taskEvents.at), desc(taskEvents.id))
       .limit(limit)
+      .all();
+  }
+
+  /** Q-5 — the whole log for a set of tasks, so the subtree delete can state its exact row count. */
+  listByTasks(userId: string, taskIds: readonly string[]): Promise<TaskEvent[]> {
+    return this.db
+      .select()
+      .from(taskEvents)
+      .where(and(eq(taskEvents.userId, userId), inArray(taskEvents.taskId, ids(taskIds))))
+      .orderBy(desc(taskEvents.at), desc(taskEvents.id))
       .all();
   }
 

@@ -65,6 +65,11 @@ export const IGoalRepo = Symbol.for('goal-cascade.IGoalRepo');
 export interface IWeeklyFocusRepo {
   /** D-2 — the focus rows for ONE week. Their goal ids ARE the set of active leaves for that week. */
   listByWeek(userId: string, weekStart: string): Promise<WeeklyFocus[]>;
+  /**
+   * R-goal-28 / Q-5 — every week's rows for a set of goals. The delete phase needs the exact row count
+   * it is about to remove, because `GuardedBatch` asserts `expectedChanges` exactly.
+   */
+  listByGoals(userId: string, goalIds: readonly string[]): Promise<WeeklyFocus[]>;
   findByGoalAndWeek(userId: string, goalId: string, weekStart: string): Promise<WeeklyFocus | null>;
   insertStmt(focus: WeeklyFocus): WriteStmt;
   updateStmt(userId: string, goalId: string, weekStart: string, patch: { sentence: string; updatedAt: string }): WriteStmt;
@@ -88,6 +93,12 @@ export interface ITaskRepo {
   listVisibleInWeek(userId: string, weekStart: string): Promise<Task[]>;
   /** R-goal-24 / R-goal-28 — open tasks under a set of goals, for the carry signal and the D-8 guard. */
   listOpenByGoals(userId: string, goalIds: readonly string[]): Promise<Task[]>;
+  /**
+   * Q-5 — EVERY task under a set of goals, whatever its status. The subtree delete needs the ids (to
+   * remove their links and events, which are keyed by task) and the exact count for `expectedChanges`;
+   * an exited task still has both, so `listOpenByGoals` would leave them orphaned.
+   */
+  listByGoals(userId: string, goalIds: readonly string[]): Promise<Task[]>;
   insertStmt(task: Task): WriteStmt;
   /** Guarded on `version = expectedVersion`; the patch MUST bump `version` and set `updatedAt`. */
   updateGuardedStmt(
@@ -112,6 +123,8 @@ export const ITaskLinkRepo = Symbol.for('goal-cascade.ITaskLinkRepo');
 export interface ITaskEventRepo {
   /** R-task-30 — newest first: `at` desc, then insertion sequence (`id`) desc. */
   listByTask(userId: string, taskId: string, limit?: number): Promise<TaskEvent[]>;
+  /** Q-5 — the whole log for a set of tasks, so the subtree delete knows its exact `expectedChanges`. */
+  listByTasks(userId: string, taskIds: readonly string[]): Promise<TaskEvent[]>;
   /** Append-only (R-task-31): there is deliberately no update and no single-row delete. */
   insertStmt(event: TaskEvent): WriteStmt;
   /**
@@ -130,6 +143,11 @@ export interface IBacklogRepo {
   /** R-backlog-6 — `status = 'open'` only. A converted item never appears in a backlog list again. */
   listOpen(userId: string): Promise<BacklogItem[]>;
   listOpenByGoals(userId: string, goalIds: readonly string[]): Promise<BacklogItem[]>;
+  /**
+   * Q-5 — every item under a set of goals, converted ones included: a converted item still owns link
+   * rows, and the subtree delete needs both the ids and the exact count for `expectedChanges`.
+   */
+  listByGoals(userId: string, goalIds: readonly string[]): Promise<BacklogItem[]>;
   insertStmt(item: BacklogItem): WriteStmt;
   updateGuardedStmt(
     userId: string,

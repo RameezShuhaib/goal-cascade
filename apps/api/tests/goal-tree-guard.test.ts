@@ -7,13 +7,12 @@ import { createTestApp, ids, signedInOwner } from './helpers/app';
 
 /**
  * SPEC D-5 — the tree invariants must hold against a request submitted DIRECTLY, not just against a
- * disabled button. `GoalTreeGuard` runs in the route before the (not-yet-implemented) `GoalService`, so
- * these tests prove the guard is genuinely in the request path today: a violation answers 409, while a
- * legal request falls through to the stub's 501.
+ * disabled button. `GoalTreeGuard` runs in the route BEFORE `GoalService`, so these tests prove the
+ * guard is genuinely in the request path: a violation answers 409 and writes nothing, while a legal
+ * request is carried out (201 on create, 200 on move — it was the stub's 501 before 03-goals-plan).
  *
- * That 501-vs-409 distinction is the whole point. When a feature agent implements `GoalService`, these
- * tests keep passing unchanged — and if anyone removes the guard from the route, the 409s become 501s
- * and this file fails.
+ * That refused-vs-accepted distinction is the whole point. Remove a guard call from the route and the
+ * 409s turn into successes, and this file fails.
  */
 const t = createTestApp({ now: '2026-08-31T10:00:00.000Z' });
 
@@ -117,14 +116,14 @@ describe('R-goal-5/6 — create is guarded on the server, before any write', () 
     const { cookie, userId } = await signedInOwner(t);
     const { life } = await makeLine(userId);
     expect((await create(cookie, { title: 'Second life', horizon: 'Life', parentId: life.id })).status).toBe(422);
-    // legal → falls through to the unimplemented service
-    expect((await create(cookie, { title: 'Second life', horizon: 'Life' })).status).toBe(501);
+    // legal → falls through to the service, which creates it (201)
+    expect((await create(cookie, { title: 'Second life', horizon: 'Life' })).status).toBe(201);
   });
 
-  it('S-goal-5-1 — a legal create passes the guard and reaches the (stubbed) service', async () => {
+  it('S-goal-5-1 — a legal create passes the guard and reaches the service', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const { quarterly } = await makeLine(userId);
-    expect((await create(cookie, { title: 'Legal', horizon: 'Monthly', parentId: quarterly.id })).status).toBe(501);
+    expect((await create(cookie, { title: 'Legal', horizon: 'Monthly', parentId: quarterly.id })).status).toBe(201);
   });
 
   it('R-auth-3 — a parent belonging to ANOTHER owner is a plain 404, indistinguishable from a missing one', async () => {
@@ -168,10 +167,10 @@ describe('R-goal-17/18/21 — move is guarded on the server', () => {
     expect(await codeOf(res)).toBe('LIFE_GOAL_IMMUTABLE');
   });
 
-  it('S-goal-17-1 — a legal move passes the guard and reaches the (stubbed) service', async () => {
+  it('S-goal-17-1 — a legal move passes the guard and reaches the service', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const { quarterly, yearly2 } = await makeLine(userId);
-    expect((await move(cookie, quarterly.id, yearly2.id)).status).toBe(501);
+    expect((await move(cookie, quarterly.id, yearly2.id)).status).toBe(200);
   });
 });
 
@@ -209,6 +208,6 @@ describe('R-goal-28 / D-8 — a leaf carrying open tasks cannot silently become 
     const { cookie, userId } = await signedInOwner(t);
     const { quarterly, monthly } = await makeLine(userId);
     await makeOpenTask(userId, monthly.id); // the task is on the leaf, not on the parent
-    expect((await create(cookie, { title: 'sibling', horizon: 'Monthly', parentId: quarterly.id })).status).toBe(501);
+    expect((await create(cookie, { title: 'sibling', horizon: 'Monthly', parentId: quarterly.id })).status).toBe(201);
   });
 });

@@ -42,6 +42,16 @@ export class D1BacklogRepo implements IBacklogRepo {
       .all();
   }
 
+  /** Q-5 — every item under these goals, converted ones included (they still own link rows). */
+  listByGoals(userId: string, goalIds: readonly string[]): Promise<BacklogItem[]> {
+    return this.db
+      .select()
+      .from(backlogItems)
+      .where(and(eq(backlogItems.userId, userId), inArray(backlogItems.goalId, ids(goalIds))))
+      .orderBy(desc(backlogItems.capturedAt), desc(backlogItems.id))
+      .all();
+  }
+
   insertStmt(item: BacklogItem): WriteStmt {
     return this.db.insert(backlogItems).values(item);
   }
