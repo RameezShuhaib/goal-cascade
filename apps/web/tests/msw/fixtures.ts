@@ -250,6 +250,20 @@ export const treeResponse = (over: Record<string, Partial<GoalView>> = {}, w = w
   serverNow: NOW,
 });
 
+/**
+ * `GoalDetailResponse.replanOptions` — the server's own derivation (R-goal-23 / D-3), which the fixture
+ * mirrors as literals rather than re-deriving: `NOW` is 2026-08-31 in Europe/Amsterdam, so the list is
+ * the periods strictly after BOTH today's period and the goal's current one. A Life goal is not
+ * re-plannable (R-goal-21) and offers none.
+ */
+const REPLAN_OPTIONS: Record<string, string[]> = {
+  'Sep 2026': ['Oct 2026', 'Nov 2026'],
+  'Q3 2026': ['Q4 2026', 'Q1 2027'],
+  '2026': ['2027'],
+};
+
+export const replanOptionsOf = (g: GoalView): string[] => (g.parentId === null ? [] : (REPLAN_OPTIONS[g.period] ?? []));
+
 /** One goal's detail screen, built out of the same tree so the two can never disagree. */
 export const detailOf = (
   id: string,
@@ -270,6 +284,7 @@ export const detailOf = (
     backlog: extra.backlog ?? [],
     backlogIsAggregate: extra.backlogIsAggregate ?? self.parentId === null,
     learnings: extra.learnings ?? [],
+    replanOptions: replanOptionsOf(self),
     serverNow: NOW,
   };
 };
@@ -293,6 +308,8 @@ export const goalDetailResponse = () => ({
   backlog: [backlogItem()],
   backlogIsAggregate: true,
   learnings: [learning()],
+  // `goal()` is the Life root, and a Life goal is not re-plannable (R-goal-21).
+  replanOptions: [],
   serverNow: NOW,
 });
 export const bootstrapResponse = () => ({

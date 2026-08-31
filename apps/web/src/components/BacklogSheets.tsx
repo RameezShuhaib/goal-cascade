@@ -277,14 +277,13 @@ export function TaskCreateSheet({
      * The ambiguous-target refusal. R-backlog-7 / D-18: an item on a Quarterly goal with two active leaves
      * beneath it has no correct silent answer, so the user picks.
      *
-     * It arrives as `422 VALIDATION_FAILED` carrying `details.candidates`, because the shared error table
-     * has no code for it. Branching on the DETAILS rather than the code is what makes this work either
-     * way — if `AMBIGUOUS_CONVERSION_TARGET: 409` is ever added to `packages/shared/src/errors.ts` this
-     * keeps working unchanged. (Flagged in `docs/work/08-web-app/build.md`.)
+     * `409 AMBIGUOUS_CONVERSION_TARGET` — its own code precisely so the client branches on the code and
+     * renders a chooser rather than a field error. `details.candidates` is the server's own list of
+     * `{ id, title }`, and the picker below lists exactly it.
      */
-    const candidates = err.details?.candidates;
-    if (Array.isArray(candidates) && candidates.length > 0) {
-      setServerCandidates(candidates as { id: string; title: string }[]);
+    if (err.code === 'AMBIGUOUS_CONVERSION_TARGET') {
+      const candidates = err.details?.candidates;
+      setServerCandidates(Array.isArray(candidates) ? (candidates as { id: string; title: string }[]) : []);
       setGoalId('');
       setRefused('More than one focus could take this. Which one?');
       return;

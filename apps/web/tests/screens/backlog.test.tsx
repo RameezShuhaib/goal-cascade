@@ -188,15 +188,16 @@ describe('Backlog — conversion, the only way backlog becomes work', () => {
   });
 
   it('S-backlog-7-2: an ambiguous refusal from the server re-renders the picker from ITS candidate list', async () => {
-    // The server answers `422 VALIDATION_FAILED` with `details.candidates` (there is no dedicated code in
-    // the shared error table yet), so the sheet branches on the details rather than on the code.
+    // The server answers `409 AMBIGUOUS_CONVERSION_TARGET` with `details.candidates` — its own code, not a
+    // validation failure (the input was fine; the product has no single answer), so the sheet branches on
+    // the code and lists the server's candidates.
     withBacklog();
     let attempt = 0;
     server.use(
       http.post('/api/backlog/:id/convert-to-task', () => {
         attempt += 1;
         return attempt === 1
-          ? apiError('VALIDATION_FAILED', 'ambiguous conversion target', {
+          ? apiError('AMBIGUOUS_CONVERSION_TARGET', 'more than one active focus can receive this item — choose one', {
               candidates: [
                 { id: F.M, title: 'Lift three times a week' },
                 { id: F.D, title: 'Sleep before midnight' },

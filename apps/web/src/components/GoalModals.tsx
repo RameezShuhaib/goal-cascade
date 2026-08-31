@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { HORIZONS, PULSES, type GoalView, type Horizon, type Pulse } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useCreateGoal, useDeleteGoal, useGoals, useMoveGoal, usePatchGoal, useReplanGoal } from '../api/queries';
+import { useCreateGoal, useDeleteGoal, useGoal, useGoals, useMoveGoal, usePatchGoal, useReplanGoal } from '../api/queries';
 import { toApiError } from '../api/errors';
 import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
 import { FieldError, commandError } from './states';
 import { ancestorsOf, descendantIds, flatTree, node, plural, rank } from '../utils/tree';
-import { defaultPeriod, replanPeriods, useOwnerToday } from '../utils/periods';
+import { defaultPeriod, useOwnerToday } from '../utils/periods';
 
 /**
  * The four goal sheets: create/edit, move, re-plan, delete.
@@ -266,15 +266,16 @@ export function MoveGoalSheet({ goalId }: { goalId: string }) {
  * R-goal-22/23 — a contextual next period plus an OPTIONAL one-line reason. This replaced the old push
  * flow, and R-nav-14 removed that flow's mandatory reason for good; nothing here may become required.
  *
- * D-3 — the options are derived from today and are strictly AFTER the goal's current period, so re-plan
- * can never offer the period the goal is already in. If the server disagrees with the client's derivation
- * it says so, and `details.options` — its own list — replaces the local one.
+ * D-3 — the options are the SERVER's: `GoalDetailResponse.replanOptions`, derived once from the owner's
+ * calendar day and strictly after the period the goal is already in, so re-plan can never offer it. The
+ * client does not re-derive them — two implementations of a date rule drift on the first period boundary.
+ * A refusal still carries `details.options`, the same list, which replaces what is on screen.
  */
 export function ReplanGoalSheet({ goalId }: { goalId: string }) {
   const S = useSkin();
   const ui = useUI();
   const goalsQ = useGoals(0);
-  const today = useOwnerToday();
+  const detailQ = useGoal(goalId, 0);
   const replan = useReplanGoal();
   const [index, setIndex] = useState(0);
   const [reason, setReason] = useState('');
@@ -298,7 +299,7 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
     );
   }
 
-  const options = serverOptions ?? replanPeriods(goal.horizon, today, goal.period);
+  const options = serverOptions ?? detailQ.data?.replanOptions ?? [];
   const chosen = options[Math.min(index, options.length - 1)];
 
   return (
@@ -314,7 +315,9 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
             {label}
           </button>
         ))}
-        {options.length === 0 && <div style={{ fontSize: 13, color: S.T.mut }}>No later period to move to.</div>}
+        {options.length === 0 && (
+          <div style={{ fontSize: 13, color: S.T.mut }}>{detailQ.isPending ? 'Loading periods…' : 'No later period to move to.'}</div>
+        )}
       </div>
       <input aria-label="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why? (optional)" style={S.input} />
       <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 5 }}>No mandatory fields. Fast and guilt-free.</div>

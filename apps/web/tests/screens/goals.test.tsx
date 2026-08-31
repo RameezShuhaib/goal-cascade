@@ -237,3 +237,35 @@ describe('Goals — delete (Q-5)', () => {
     await waitFor(() => expect(cascaded).toContain(F.Q));
   });
 });
+
+describe('Goals — re-plan (R-goal-23 / D-3)', () => {
+  it('the period chips are the SERVER’s `replanOptions`, not a list the client re-derives', async () => {
+    withTree();
+    // Deliberately NOT what a client-side derivation from `serverNow` (2026-08-31) would produce for a
+    // goal already in Q3 2026 — if a chip reads one of these, it came off the wire.
+    server.use(http.get('/api/goals/:id', () => HttpResponse.json({ ...F.detailOf(F.Q), replanOptions: ['Q2 2027', 'Q3 2027'] })));
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Rebuild the gym habit' }));
+    await user.click(screen.getByRole('button', { name: 'Re-plan…' }));
+
+    const sheet = await screen.findByRole('dialog', { name: 'Re-plan goal' });
+    expect(await within(sheet).findByRole('button', { name: 'Q2 2027' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Q3 2027' })).toBeInTheDocument();
+
+    await user.click(within(sheet).getByRole('button', { name: 'Q3 2027' }));
+    await user.click(within(sheet).getByRole('button', { name: 'Re-plan it' }));
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/replan'))).toMatchObject({ period: 'Q3 2027' }));
+  });
+
+  it('R-goal-21: a Life goal is not re-plannable, so the action is not offered at all', async () => {
+    withTree();
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Be strong at 60' }));
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Re-plan…' })).not.toBeInTheDocument();
+  });
+});
