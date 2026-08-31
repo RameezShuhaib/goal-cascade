@@ -5,7 +5,8 @@ Where the two disagree, BUSINESS-RULES wins and the divergence is recorded in §
 
 Conventions used throughout:
 
-- **Week model.** Weeks start Monday. The client addresses weeks by *offset* relative to the current week (`0` = current, negative = past, future not addressable). The stored model uses an absolute `weekStart` date (see §5, D-1). `offset = (weekStart − mondayOf(today)) / 7 days`.
+- **Week model.** Weeks start Monday. The client addresses weeks by *offset* relative to the current week (`0` = current, negative = past, positive = a week being planned ahead, bounded by `PLAN_AHEAD_WEEKS`; R-plan-15). The stored model uses an absolute `weekStart` date (see §5, D-1). `offset = (weekStart − mondayOf(today)) / 7 days`.
+- **Amendments.** §6 records amendment sets applied after the first draft. Every rule an amendment supersedes or modifies is marked in place with `⚠` and the rule that replaces it; §6 carries the before/after so intent can be diffed. A rule with no `⚠` is unchanged.
 - **Horizon rank.** `Life=0, Yearly=1, Quarterly=2, Monthly=3`. "Shorter horizon" = higher rank.
 - Ids in §3 refer to rules in §2. Test names and conformance reporting key off scenario ids.
 
@@ -39,16 +40,17 @@ The mockup's `Goal.focus: string` is **not** a Goal field in this spec — see W
 | `goalId` | string | required | The non-Life leaf goal this focus belongs to. |
 | `weekStart` | date (Monday) | required | The week this focus applies to. |
 | `sentence` | string | required | One sentence, non-empty after trim; a blank sentence means "no focus" and the record must not exist. |
-| `createdAt` / `updatedAt` | timestamp | **[srv]** | Audit timestamps. |
+| `sortKey` | int | **[srv]** | 0-based position of this sentence among the leaf's sentences for that week (R-plan-14). Assigned from entry order on every plan save. |
+| `createdAt` / `updatedAt` | timestamp | **[srv]** | Audit timestamps. `createdAt` survives an update-in-place and is what R-plan-19 measures. |
 
-Unique on `(goalId, weekStart)`.
+Unique on `(goalId, weekStart, sortKey)`. ⚠ **Amendment 1** — the former `(goalId, weekStart)` uniqueness (exactly one sentence per leaf per week) is superseded by R-plan-13: a leaf may hold 1–5 rows for one week.
 
 ### Task
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `id` | string | **[srv]** | Identifier. |
-| `goalId` | string | required | The active non-Life leaf goal whose weekly focus holds it. |
+| `goalId` | string | required | The active non-Life leaf goal whose weekly focus **set** holds it. A task references the leaf and the week, never an individual focus sentence (R-task-33). |
 | `title` | string | required | What to do. Non-empty after trim. |
 | `cond` | string | optional (`''`) | Done-condition — how you'll know it's done. |
 | `desc` | string | optional (`''`) | Free-text notes. |
@@ -56,7 +58,7 @@ Unique on `(goalId, weekStart)`.
 | `done` | boolean | **[srv]** | Derived from `doneWeek != null`; set via the complete/uncheck operations, never written directly. |
 | `doneWeek` | week (Monday date) \| null | **[srv]** | The week the task was completed in; `null` while open. |
 | `doneAt` | timestamp \| null | **[srv]** | Instant of completion; renders as `Done Fri 28 Aug`. |
-| `originWeek` | week (Monday date) | **[srv]** | The week the task was created in. Immutable for the life of the task. |
+| `originWeek` | week (Monday date) | **[srv]** | The week the task was created **into** — the current week, or a later week inside the plannable window (R-task-34). Server-assigned and immutable for the life of the task. |
 | `events` | TaskEvent[] | **[srv]** | Activity timeline, newest first. |
 | `createdAt` | timestamp | **[srv]** | Audit timestamp. |
 
@@ -86,6 +88,7 @@ The whole entity is server-owned and append-only. It is never created, edited, o
 | `links` | `{ url: string }[]` | optional (`[]`) | External links. |
 | `capturedAt` | timestamp | **[srv]** | When it was captured; renders as `Added 25 Aug` / `Added Today`. |
 | `fromWeek` | week (Monday date) \| null | **[srv]** | Set when the item came from a task moved out of a week; renders `from week of 24 Aug`. |
+| `sortKey` | string | **[srv]** | Manual position within its **own goal's** list (R-backlog-17). Opaque, lexicographically ordered; the client never parses or mints one. |
 
 No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 
@@ -122,8 +125,8 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 - **R-goal-6** — A Monthly goal can never have sub-goals: the `+ Sub-goal` action is absent on Monthly rows and on a Monthly goal's detail screen. The server refuses the create regardless of what the client sends. (BUSINESS-RULES §Goal bullet 2; `GoalsScreen.tsx` `g.horizon !== 'Monthly' &&`; `GoalDetailScreen.tsx` same guard. §5 D-6.)
 - **R-goal-7** — Nesting never exceeds Life › Yearly › Quarterly › Monthly, i.e. max depth 4 and each level strictly shorter than the last. This is a consequence of R-goal-5 + R-goal-6 and must hold as a stored invariant.
 - **R-goal-8 (leaf)** — A goal is a **leaf** iff it has zero children. (`utils/tree.ts:isLeaf`.)
-- **R-goal-9 (active)** — A goal is **active** iff it is a leaf, is not a Life goal, and has a WeeklyFocus for the current week. Goals that are not leaves are never active. (`utils/tree.ts:isActive`; `leaves()` requires `g.parentId`.)
-- **R-goal-10 (dormant)** — A non-Life leaf with no focus for the current week is **dormant**: rendered muted with `DORMANT — no focus this week` in the tree, and `DORMANT / No weekly focus this week. Activate it in weekly planning.` on its detail screen. Dormancy must read as intentional, not broken. (`GoalsScreen.tsx`, `GoalDetailScreen.tsx`.)
+- **R-goal-9 (active)** ⚠ **modified by A1 — see §6** — A goal is **active** iff it is a leaf, is not a Life goal, and has **at least one** WeeklyFocus for **the week in question**. Goals that are not leaves are never active. (`utils/tree.ts:isActive`; `leaves()` requires `g.parentId`.)
+- **R-goal-10 (dormant)** ⚠ **modified by A1 — see §6** — A non-Life leaf with **no** focus row for the week in question is **dormant**: rendered muted with `DORMANT — no focus this week` in the tree, and `DORMANT / No weekly focus this week. Activate it in weekly planning.` on its detail screen. Dormancy must read as intentional, not broken. (`GoalsScreen.tsx`, `GoalDetailScreen.tsx`.)
 - **R-goal-11 (dormancy propagates up)** — A non-leaf goal is muted iff **no** leaf anywhere in its subtree is active; one active leaf anywhere below lights the whole ancestor chain. (`utils/tree.ts:subtreeActive` — recursive `some`.)
 - **R-goal-12** — Goals never hold tasks directly; tasks hang off the leaf's weekly focus. (BUSINESS-RULES §Goal bullet 3.)
 - **R-goal-13** — `period` defaults from the horizon on create and is derived from **today**: Yearly → the current year, Quarterly → the current quarter, Monthly → the current month, Life → `''`. (`utils/tree.ts:defaultPeriod`, corrected by §5 D-3.)
@@ -138,43 +141,57 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 - **R-goal-22 (re-plan)** — Re-plan sets `period` to a contextual next period and takes an **optional** one-line reason. Nothing is mandatory; the sheet says "No mandatory fields. Fast and guilt-free." (BUSINESS-RULES §Goal bullet 5; `ConfirmSheet`.)
 - **R-goal-23 (re-plan options)** — Options are derived from today and the goal's horizon: Monthly → the next two months; Quarterly → the next two quarters; Yearly → next year. Life goals are not re-plannable (R-goal-21). (`utils/tree.ts:replanPeriods`, corrected by §5 D-3.)
 - **R-goal-24 (life-goal quiet signal)** — A life-goal card shows `N task[s] carrying · oldest W week[s]` when open tasks exist under it whose `originWeek` is before the current week. `N` = count of those tasks; `W` = the largest age in weeks. The line is hidden when `N = 0`. There are no audit pages, review wizards, or reports anywhere in the product. (BUSINESS-RULES §Goal bullet 7; `GoalsScreen.tsx:carryLine`.)
-- **R-goal-25** — The goals tree groups every branch under its Life root, is expand/collapse per node (expanded by default), and shows per row: title, horizon chip, pulse dot, `N in backlog` when the goal holds backlog items, the focus sentence when active, and the dormant line when a dormant leaf. (`GoalsScreen.tsx:renderRows`.)
+- **R-goal-25** ⚠ **modified by A1 (R-nav-21)** — The goals tree groups every branch under its Life root, is expand/collapse per node (expanded by default), and shows per row: title, horizon chip, pulse dot, `N in backlog` when the goal holds backlog items, the focus sentence when active, and the dormant line when a dormant leaf. (`GoalsScreen.tsx:renderRows`.)
 - **R-goal-26** — A life-goal summary chip shows `<A> of <B> branches active` where `B` is the number of non-Life leaves under it and `A` how many are active. When `B = 0`, the chip reads `0 of 0 branches`. (`GoalsScreen.tsx`, corrected by §5 D-16.)
-- **R-goal-27** — A goal's detail screen shows breadcrumbs to the root, title, horizon · period chip, `why`, sub-goal list with per-child active/dormant labels, the weekly-focus block when active, the dormant block when a dormant leaf, a backlog block (R-backlog-11/12), and the learnings attached to its Life line.
-- **R-goal-28** — Adding a child to a leaf, or moving a goal under a leaf, makes that leaf a non-leaf: its current-week focus is deleted and its open tasks are re-parented per §5 D-2/D-8. The operation must never leave a focus or task attached to a non-leaf.
+- **R-goal-27** ⚠ **modified by A1 (R-plan-13, R-nav-21)** — A goal's detail screen shows breadcrumbs to the root, title, horizon · period chip, `why`, sub-goal list with per-child active/dormant labels, the weekly-focus block when active, the dormant block when a dormant leaf, a backlog block (R-backlog-11/12), and the learnings attached to its Life line.
+- **R-goal-28** ⚠ **modified by A1 — see §6** — Adding a child to a leaf, or moving a goal under a leaf, makes that leaf a non-leaf: every focus row it holds for the current week **and for any later week** is deleted (past rows survive as history, D-2) and its open tasks are re-parented per §5 D-2/D-8. The operation must never leave a focus or task attached to a non-leaf.
 - **R-goal-29** — `title` and `why` are trimmed on save; a whitespace-only title is a validation failure, not a silent no-op.
 
 ### Plan (weekly focus)
 
-- **R-plan-1** — A weekly focus is one sentence per non-Life leaf per week, written on the Weekly-planning screen. (BUSINESS-RULES §Weekly focus bullet 1.)
-- **R-plan-2** — Planning edits the **current week only**. `Edit plan` appears in the Tasks header only when the viewed week is 0, and saving the plan returns to the Tasks screen at week 0. (`TasksScreen.tsx` `w === 0 &&`; `store.savePlan` sets `view:'home', viewWeek:0`.)
-- **R-plan-3** — The planning screen lists every non-Life leaf, grouped by Life root, with a Life-goal filter chip row (`All` + one chip per life goal). Screen copy: "Check the branches that are active this week, one focus sentence each. Unchecked branches go dormant." (`PlanScreen.tsx`.)
-- **R-plan-4** — A leaf's checkbox is pre-checked iff it is currently active; its textarea is pre-filled with the current focus. Placeholder: `This week's focus — one sentence`. (`store.planChecked` / `planDraft`.)
+- **R-plan-1** ⚠ **superseded by R-plan-13** — A weekly focus is one sentence per non-Life leaf per week, written on the Weekly-planning screen. (BUSINESS-RULES §Weekly focus bullet 1.)
+- **R-plan-2** ⚠ **superseded by R-plan-15 / R-plan-17 / R-nav-20** — Planning edits the **current week only**. `Edit plan` appears in the Tasks header only when the viewed week is 0, and saving the plan returns to the Tasks screen at week 0. (`TasksScreen.tsx` `w === 0 &&`; `store.savePlan` sets `view:'home', viewWeek:0`.)
+- **R-plan-3** ⚠ **modified by R-plan-17 / R-plan-18** (the screen names its week; one textarea becomes a list) — The planning screen lists every non-Life leaf, grouped by Life root, with a Life-goal filter chip row (`All` + one chip per life goal). Screen copy: "Check the branches that are active this week, one focus sentence each. Unchecked branches go dormant." (`PlanScreen.tsx`.)
+- **R-plan-4** ⚠ **superseded by R-plan-18** — A leaf's checkbox is pre-checked iff it is currently active; its textarea is pre-filled with the current focus. Placeholder: `This week's focus — one sentence`. (`store.planChecked` / `planDraft`.)
 - **R-plan-5** — Checking a leaf activates it **only if a non-empty focus sentence is supplied**; checked-with-blank-sentence saves as no focus (dormant). The client must surface this rather than silently dropping the check. (`store.savePlan`: `checked && draft.trim() ? draft.trim() : ''`; §5 D-9.)
 - **R-plan-6** — Unchecking a leaf clears its focus for the week → the leaf becomes dormant. Its existing open tasks are **not** deleted (R-task-9).
-- **R-plan-7** — Save-plan is a whole-week replace over all non-Life leaves in one transaction: leaves checked with text get/keep a focus; every other non-Life leaf's current-week focus is removed. (`store.savePlan` maps all leaves.)
+- **R-plan-7** ⚠ **superseded by R-plan-16** — Save-plan is a whole-week replace over all non-Life leaves in one transaction: leaves checked with text get/keep a focus; every other non-Life leaf's current-week focus is removed. (`store.savePlan` maps all leaves.)
 - **R-plan-8** — Non-leaf and Life goals are never touched by save-plan and can never hold a focus.
-- **R-plan-9 (pull-based planning)** — Under each checked leaf, a `FROM THE BACKLOG` list shows every backlog item whose `goalId` is the leaf itself or any of its ancestors (excluding the Life root, which cannot hold items). Tapping one opens the task-create modal pre-filled with the item's title and bound to that leaf. (`PlanScreen.tsx` `chainIds = [l.id, ...ancestors]`.)
+- **R-plan-9 (pull-based planning)** ⚠ **modified by R-backlog-25** (the pull targets the week being planned) — Under each checked leaf, a `FROM THE BACKLOG` list shows every backlog item whose `goalId` is the leaf itself or any of its ancestors (excluding the Life root, which cannot hold items). Tapping one opens the task-create modal pre-filled with the item's title and bound to that leaf. (`PlanScreen.tsx` `chainIds = [l.id, ...ancestors]`.)
 - **R-plan-10** — The backlog list is hidden for unchecked leaves and when the pool is empty.
-- **R-plan-11** — Saving the plan shows the toast `Plan saved`.
+- **R-plan-11** ⚠ **modified by A1** — Saving the plan shows the toast `Plan saved`; when the week saved is not the current week the toast names it: `Plan saved for week of <Mon d Mon>`.
 - **R-plan-12** — Draft check-state and draft sentences are client-local until Save; leaving the screen without saving discards them.
+
+#### Amendment 1 — several sentences, and weeks you can plan ahead
+
+- **R-plan-13 (several focus sentences per leaf per week)** — A non-Life leaf may hold **one to five** WeeklyFocus rows for a given week. Each row is one sentence, non-empty after trim; a blank sentence still means the row must not exist (§1). Zero rows = dormant (R-goal-10). Five is the cap (Q-12): a focus is an intent, and a leaf that needs a sixth is writing a task list into the plan. *Supersedes R-plan-1's "one sentence".*
+- **R-plan-14 (order of the sentences)** — Within a leaf and a week, sentences are ordered by `sortKey` ascending, then `createdAt` ascending, then `id` ascending — total and stable, never storage order (Q-7). `sortKey` is a 0-based integer the server assigns from the entry's position among **that goal's** entries in the plan save; re-ordering is a re-save. Every single-line surface renders the **first** sentence (R-nav-21).
+- **R-plan-15 (the plannable window)** — The plan is writable for the current week and the next `PLAN_AHEAD_WEEKS = 4` weeks — offsets `0 … +4` inclusive. A plan write naming any other week is refused with `WEEK_NOT_PLANNABLE`, wholesale, never partially applied. Past weeks are readable and never writable: history stays truthful (D-2), which is the bug that made focus per-week in the first place.
+  - The bound is **validation, not a picker clamp**, and that is the asymmetry with history. The 8-week history bound (R-nav-4, Q-13) limits a *control* over weeks that already exist; anything older is still addressable by naming its `weekStart`. Every week inside the forward window is a week a write would *create*, so the forward bound is enforced at the schema and refused at the edge.
+  - Four, not eight: the stated need is to lay out a month, and the current week plus four covers 35 days — any calendar month from any starting weekday. Staleness scales with distance (R-plan-19), so each extra week doubles down on plans that can rot; and beyond a month the product's own unit is the goal's `period` and Re-plan (R-goal-22/23), not a weekly focus.
+- **R-plan-16 (whole-week replace, one named week)** — A plan save names exactly one plannable `weekStart` and replaces the focus set **for that week only**, in one transaction, over all non-Life leaves. Entries carry an optional `id`: an entry with an `id` updates that row in place and **keeps its `createdAt`**; an entry without one inserts; every focus row for that week not named by an entry is deleted. `sortKey` is re-assigned from entry order on every save. Entries may repeat a `goalId` — that is how a leaf gets several sentences — and their relative order in the request is their order in the week. Focus rows for *other* weeks are never touched. *Supersedes R-plan-7.*
+  - Preserving `createdAt` across an update-in-place is load-bearing: delete-and-recreate would reset the age of every sentence on every save and make R-plan-19 unimplementable.
+- **R-plan-17 (the plan screen plans one week)** — The planning screen names the week it is planning and carries its own week control spanning `0 … +4`. It never offers a past week. Saving returns to the Tasks screen **at the week that was planned**, not at week 0. *Supersedes R-plan-2's return behaviour.*
+- **R-plan-18 (per-leaf sentence editor)** — Under each leaf the screen renders that week's sentences as an ordered list of fields, each individually removable, with `+ Add another focus` up to the cap. The leaf's checkbox is checked iff it holds at least one non-blank sentence. Blank fields are discarded on save without failing it; a *checked* leaf whose fields are all blank is R-plan-5's case and must be surfaced, not silently dropped (D-9). *Supersedes R-plan-4.*
+- **R-plan-19 (a plan can now go stale, and says so quietly)** — For a focus row, `plannedAgeWeeks = weeksBetween(weekStartOf(updatedAt), weekStart)`. Once the row's week has **arrived** (its offset is `≤ 0`), a row with `plannedAgeWeeks ≥ 2` renders a muted line `planned <N> weeks ago` beneath its sentence, on the Plan screen and in the Tasks screen focus block. Muted text only: never a chip, never coloured, never blocking. A plan written last week for this week (age 1) is ordinary planning and carries no label. A week that has not arrived yet carries no label either — it is not stale, it is early. This is the R-goal-24 quiet-signal pattern and it is the entire answer to "should a three-week-old plan be distinguishable": yes, and by one muted line.
+- **R-plan-20 (an arrived plan is just the plan)** — When a planned week becomes the current week, nothing is asked of the user and nothing is written. The plan is editable because it is now the current week (R-plan-15), not because it was re-confirmed. An arrival prompt, a staleness confirmation, or a "still relevant?" step is a review wizard and is out of scope — it must be refused, not deferred (R-nav-14).
 
 ### Task
 
 - **R-task-1** — A task lives under an active non-Life leaf's weekly focus, referenced by `goalId`. (BUSINESS-RULES §Task bullet 1.)
 - **R-task-2 (creation sources — four)** — (a) `+ Task` on the Tasks screen or a goal's focus block, (b) a Backlog pull, (c) an Idea's "Task this week", (d) the `+` drawer with "Also add to the current week". (BUSINESS-RULES §Task bullet 1; `store.openTaskCreate` / `saveBacklogDrawer`.)
 - **R-task-3** — Fields: `title` required; `cond` (done-condition) **optional**; `desc` and `links` optional. The create modal's hint reads "Done-condition (optional) / How will you know it's done?". (`TaskCreateModal`.)
-- **R-task-4** — The create modal's target selector lists **only currently active leaves**, labelled `<Life root title> — <focus sentence>`. Creating a task is impossible when no leaf is active. (`TaskCreateModal` `options = s.activeLeaves()`; §5 D-10.)
-- **R-task-5** — `originWeek` is always the **current** week at creation time, regardless of which week is being viewed. It is server-assigned and immutable thereafter. (`store.saveNewTask` `originWeek: 0`.)
-- **R-task-6** — Tasks can only be created into the current week; there is no back-dating. The `+ Task` affordance is rendered only when the viewed week is 0 and the leaf is active. (`TasksScreen.tsx`.)
+- **R-task-4** ⚠ **modified by R-task-34 / R-nav-21** — The create modal's target selector lists **only leaves active in the target week**, labelled `<Life root title> — <first focus sentence>` with `+N more` when the leaf holds several. Creating a task is impossible when no leaf is active. (`TaskCreateModal` `options = s.activeLeaves()`; §5 D-10.)
+- **R-task-5** ⚠ **superseded by R-task-34** — `originWeek` is always the **current** week at creation time, regardless of which week is being viewed. It is server-assigned and immutable thereafter. (`store.saveNewTask` `originWeek: 0`.)
+- **R-task-6** ⚠ **superseded by R-task-34** (the no-back-dating half survives verbatim) — Tasks can only be created into the current week; there is no back-dating. The `+ Task` affordance is rendered only when the viewed week is 0 and the leaf is active. (`TasksScreen.tsx`.)
 - **R-task-7 (visibility, open)** — An **open** task is visible in every viewed week `w` with `w ≥ originWeek`. It carries forward automatically with no prompt, wizard, or confirmation. (`store.visibleIn`: `t.originWeek <= w`.)
 - **R-task-8 (visibility, done)** — A **done** task is visible **only** in `doneWeek` — not in earlier weeks it was open in, not in later weeks. (`store.visibleIn`: `t.doneWeek === w`.)
 - **R-task-9** — Task visibility does not depend on whether the owning leaf is currently active; a dormant leaf's open tasks remain visible and interactive in the weeks they belong to. Dormancy suppresses the *empty* section and the `+ Task` affordance, not existing work. (§5 D-11.)
-- **R-task-10 (carry label, 1 week)** — In the viewed week, `age = w − originWeek`. At `age === 1` an open task shows a gray label `since Mon 24 Aug` (the Monday of `originWeek`). (`TaskRow.tsx`, `ui.ts:carryLabel('gray')`.)
-- **R-task-11 (carry label, 2+ weeks)** — At `age ≥ 2` an open task shows a **red chip** `N weeks · since 10 Aug`, where `N = age`. This is the only escalation in the product: no popups, no nags, no flags. (`TaskRow.tsx` `sev = age >= 2 ? 'chip' : 'gray'`.)
-- **R-task-12** — At `age === 0`, and for any done task, no carry label is shown. (`showCarry = !t.done && age >= 1`.)
+- **R-task-10 (carry label, 1 week)** ⚠ **modified by R-task-37** (`age` is clamped at the current week) — In the viewed week, `age = w − originWeek`. At `age === 1` an open task shows a gray label `since Mon 24 Aug` (the Monday of `originWeek`). (`TaskRow.tsx`, `ui.ts:carryLabel('gray')`.)
+- **R-task-11 (carry label, 2+ weeks)** ⚠ **modified by R-task-37** — At `age ≥ 2` an open task shows a **red chip** `N weeks · since 10 Aug`, where `N = age`. This is the only escalation in the product: no popups, no nags, no flags. (`TaskRow.tsx` `sev = age >= 2 ? 'chip' : 'gray'`.)
+- **R-task-12** ⚠ **modified by R-task-37** — At `age === 0`, and for any done task, no carry label is shown. (`showCarry = !t.done && age >= 1`.)
 - **R-task-13 (exits — exactly three)** — A task leaves a week in exactly one of three ways: **Complete**, **Move to Backlog**, **Cancel**. There is no fourth exit and no "defer", "snooze", or "reschedule". (BUSINESS-RULES §Task Exits.)
-- **R-task-14 (exit: complete)** — The checkbox completes a task in **any** viewed week, including past weeks; past weeks stay fully interactive. Completing sets `doneWeek = the viewed week`, `doneAt = now`, logs `Completed`. (`store.toggleTask`; §5 D-4 on the label.)
+- **R-task-14 (exit: complete)** ⚠ **clarified by R-task-35** ("any viewed week" has always meant any week up to the current one; future planning makes that guard reachable) — The checkbox completes a task in **any** viewed week, including past weeks; past weeks stay fully interactive. Completing sets `doneWeek = the viewed week`, `doneAt = now`, logs `Completed`. (`store.toggleTask`; §5 D-4 on the label.)
 - **R-task-15 (exit: move to backlog)** — Moves the task out of the week into the **owning goal's** backlog as a new BacklogItem carrying over `title`, `desc`, `links` and `fromWeek = the week it was live in`, then removes the task from the week. Confirm sheet takes an **optional** reason. Toast: `Moved to Backlog` (`— reason noted` appended when a reason was given). (`store.confirmAction` moveTask; §5 D-12 on `fromWeek`.)
 - **R-task-16 (exit: cancel)** — Drops the task. Confirm sheet takes an **optional** reason. Toast: `Task canceled`.
 - **R-task-17** — Move and Cancel are offered only on **open** tasks; the detail sheet hides both once the task is done. (`TaskDetailSheet` `{!dt.done && ...}`.)
@@ -189,7 +206,7 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 - **R-task-26** — Done tasks remain editable (title, condition, description, links); only the exits are withdrawn.
 - **R-task-27 (truncation in events)** — Values interpolated into event text are truncated: empty → `(none)`; longer than 24 chars → first 24 chars + `…`. (`utils/tree.ts:trunc`.)
 - **R-task-28** — Task rows render title, `Done when: <cond>` when a condition exists, `Done <date>` when done (with the title struck through and muted), and the carry label when applicable.
-- **R-task-29 (auto-carry log)** — When an open task first becomes visible in a week later than its origin, a `Carried to week of <Mon d Mon>` entry is logged once per week crossed. This is automatic; the user is never prompted. (BUSINESS-RULES §Task Activity; mock data `t3`; §5 D-14 — no code produces it.)
+- **R-task-29 (auto-carry log)** ⚠ **modified by R-task-38** (never logged for a week that has not arrived) — When an open task first becomes visible in a week later than its origin, a `Carried to week of <Mon d Mon>` entry is logged once per week crossed. This is automatic; the user is never prompted. (BUSINESS-RULES §Task Activity; mock data `t3`; §5 D-14 — no code produces it.)
 - **R-task-30 (activity timeline — the complete set)** — The timeline is read-only, newest first, and can contain exactly these entries:
 
   | Entry | Glyph | Trigger |
@@ -212,24 +229,69 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 - **R-task-31** — Activity entries are appended by the server as a side effect of the operation that caused them. They are never user-authored, never editable, never deletable, and never require input. (BUSINESS-RULES §Task Activity: "Never requires user input.")
 - **R-task-32** — The `Moved to Backlog` / `Canceled` entries require the task record to survive its exit — see §5 D-15 (the mockup deletes the row and loses both the entry and the reason).
 
+#### Amendment 1 — tasks in future weeks
+
+- **R-task-33 (a task attaches to a leaf and a week, never to a sentence)** — With several focus sentences per leaf per week (R-plan-13), a task still references `(goalId, originWeek)` and nothing else. There is **no `focusId` on Task — not required, not optional.** The reasons, in order:
+  1. A required "which focus?" field breaks the product's own rule that nothing is mandatory and flows stay fast (R-task-18, R-goal-22, R-task-3's optional done-condition).
+  2. An *optional* one is worse than either extreme: it creates two classes of task and a rendering fork on every task surface, and it needs a lifecycle rule for what happens to the pointer when the whole-week replace (R-plan-16) deletes the row it names — a nullable reference nobody is required to set is a field that is wrong half the time and audited never.
+  3. A focus row is per-week and freely deleted, while an **open task carries across weeks** (R-task-7). A week-`n+3` task pointing at a week-`n` sentence is a reference whose meaning decays — the D-1 failure mode in a different column.
+  - **What is lost:** you cannot ask which of a week's sentences a task served, and tasks cannot be grouped by sentence on the Tasks screen. Accepted deliberately: the leaf is already the grouping, and several sentences are *parallel intents for one leaf*, not sub-buckets of it. If grouping is ever genuinely wanted, the honest model is a second leaf, not a second key on Task.
+- **R-task-34 (creating into a future week)** — A task is created into a **target week**, which must lie in the plannable window `0 … +4` (R-plan-15) and in which the target leaf must be active (R-goal-9, evaluated for the target week). `originWeek` is the target week: server-assigned from the target and immutable thereafter (R-task-5's immutability is unchanged). **There is still no back-dating** — a target week earlier than the current week is refused with `WEEK_OUT_OF_RANGE`, and a past week offers no create affordance from any source. The default target is the viewed week when it is plannable, and the current week otherwise. *Supersedes R-task-5's "always the current week" and R-task-6's "current week only"; R-task-6's no-back-dating clause survives verbatim.*
+  - The three fast-capture sources stay current-week-only by design: the `+` drawer's "Also add to the current week" (R-backlog-15) and an Idea's "Task this week" (R-idea-4) do not gain a week picker. Both exist to get a thought out of the way in two seconds; a week choice is a decision, and decisions belong on the planning screen.
+- **R-task-35 (completion is never in the future)** — A completion must satisfy `originWeek ≤ week ≤ currentWeek`. A future week is refused with `WEEK_OUT_OF_RANGE` — you cannot finish work in a week that has not happened. **Consequence:** a task whose `originWeek` is in the future cannot be completed *at all* until that week arrives, because no week satisfies both bounds; the refusal is the same one S-task-14-2 already specifies, and future planning is what makes it reachable rather than theoretical. The checkbox is not rendered on a task row in a future week; the row renders with its title, done-condition and actions, and no completion affordance.
+- **R-task-36 (the other two exits still work on future-dated work)** — Move to Backlog and Cancel remain available on an open future-dated task. Changing your mind about next week is not a fourth exit (R-task-13 is unchanged) — it is two of the three that already exist. `fromWeek` is the week the task was live in, which for a not-yet-arrived task is its `originWeek`, a future Monday; it renders `from week of 8 Sep` like any other and is truthful.
+- **R-task-37 (carry age is clamped at the current week)** — `age = max(0, weeksBetween(originWeek, min(viewedWeek, currentWeek)))`, and `carryWeeks` on the wire is this clamped value.
+  - Past and current views are unchanged (`min` is the viewed week there), so R-task-10, R-task-11 and S-task-11-2 hold verbatim.
+  - In a **future** view the clamp is the whole point: `min(viewedWeek, currentWeek)` never runs ahead of today, so work that has not come due can never earn a label. A task planned for `+1` and viewed at `+3` is age **0** — no grey label, and above all **no red chip on work nobody is late with**. Without the clamp the naive `viewWeek − originWeek` would read 2 and fire the product's only escalation at a plan.
+  - An **already-late** open task (origin in the past) projected into a future week keeps the age it has *today*: it is late now and it is still open then, so the chip is correct there.
+- **R-task-38 (future work is not in today's numbers)** — R-task-7 already settles this and is confirmed unchanged: an open task is visible in every week `≥ originWeek`, so a task with a future origin is **not** visible in the current week and not in any earlier one. What must hold as a consequence:
+  - The Tasks screen shows only the tasks visible in the **viewed** week (R-task-7/8), so at week 0 a future-origin task is absent.
+  - The goal filter pill counts (R-nav-7) count open tasks visible in the **viewed** week, so today's counts exclude future work; at a future week they include it.
+  - The life-goal carrying signal (R-goal-24) counts open tasks whose `originWeek` is *before the current week*, which can never match a future origin. It is unchanged and needs no guard.
+  - `N in backlog` (R-goal-25) and every backlog count are unaffected — backlog items have no week.
+  - **The carry log stops at today.** R-task-29's `Carried to week of …` entry is logged once per week *crossed*; a week that has not arrived has not been crossed. The producer is clamped at the current week and must never append a `carried` event for a `weekStart > currentWeek`, however far ahead a week is *viewed*. Viewing week `+3` must write nothing to any task's timeline. *Modifies R-task-29.*
+
 ### Backlog
 
 - **R-backlog-1** — A backlog item is deferred future work attached to a single Yearly, Quarterly, or Monthly goal.
 - **R-backlog-2 (never Life, never a week)** — A backlog item may **never** be attached to a Life goal and never to a week. Every goal picker in the backlog flows lists `nonLife()` only. (BUSINESS-RULES §Backlog bullet 1; `BacklogDrawer`, `BacklogScreen` move chips, `IdeasScreen` attach chips.)
 - **R-backlog-3** — A backlog item has no checkbox, no done-condition, no due date, and no status, and must be rendered visibly differently from a task.
 - **R-backlog-4 (creation sources — four)** — (a) the global `+` drawer (goal defaults to the last used), (b) a goal detail `+ Add`, (c) a task moved out of a week (R-task-15), (d) an Idea attached to a goal (R-idea-5).
-- **R-backlog-5** — Items are ordered newest first within their group, by `capturedAt` descending, `id` descending as tie-break. (BUSINESS-RULES §Backlog bullet 5; §5 D-17.)
+- **R-backlog-5** ⚠ **superseded within a goal by R-backlog-17/18; retained across goals by R-backlog-21** — Items are ordered newest first within their group, by `capturedAt` descending, `id` descending as tie-break. (BUSINESS-RULES §Backlog bullet 5; §5 D-17.)
 - **R-backlog-6 (conversion — the only way backlog becomes work)** — `Add to this week` opens the standard task-create modal pre-filled with the item's title, description and links. **On save the item is converted: the backlog item is deleted and a task is created in one atomic operation.** It is never duplicated, never left behind, never copied. The task logs `Created — pulled from Backlog`. (BUSINESS-RULES §Backlog bullet 4; `store.saveNewTask`.)
-- **R-backlog-7** — Conversion is target-bound: the created task's `goalId` is the **active leaf at or under the item's goal**. From the planning screen it is the leaf whose card the item was tapped under; from the backlog screens it is resolved by lookup. When more than one active leaf qualifies, the user must choose — the client must not pick silently. (`store.pullToWeek` → `activeLeafFor`; §5 D-18.)
-- **R-backlog-8 (inactive-branch prompt)** — If no leaf at or under the item's goal has a focus this week, conversion is refused and a sheet appears: title `This branch isn't active this week`, body `"<item title>" can only become a task under an active weekly focus.`, actions `[Set a weekly focus]` (navigates to weekly planning) and `[Cancel]` (dismisses; the item is untouched). (`store.pullToWeek` else-branch; `InactiveBranchSheet`.)
+- **R-backlog-7** ⚠ **modified by R-backlog-25** ("active" is read against the target week) — Conversion is target-bound: the created task's `goalId` is the **active leaf at or under the item's goal**. From the planning screen it is the leaf whose card the item was tapped under; from the backlog screens it is resolved by lookup. When more than one active leaf qualifies, the user must choose — the client must not pick silently. (`store.pullToWeek` → `activeLeafFor`; §5 D-18.)
+- **R-backlog-8 (inactive-branch prompt)** ⚠ **modified by R-backlog-25** — If no leaf at or under the item's goal has a focus in the target week, conversion is refused and a sheet appears: title `This branch isn't active this week`, body `"<item title>" can only become a task under an active weekly focus.`, actions `[Set a weekly focus]` (navigates to weekly planning) and `[Cancel]` (dismisses; the item is untouched). (`store.pullToWeek` else-branch; `InactiveBranchSheet`.)
 - **R-backlog-9** — Converting an item that no longer exists (already converted, deleted, or moved) is refused; no task is created. (§5 D-19.)
-- **R-backlog-10 (other actions)** — Besides conversion: `Move to another goal` (target = any non-Life goal, toast `Moved to <goal title>`) and `Delete`. There is no edit-in-place and no archive.
+- **R-backlog-10 (other actions)** ⚠ **modified by R-backlog-20** (a move re-keys the item) — Besides conversion: `Move to another goal` (target = any non-Life goal, toast `Moved to <goal title>`) and `Delete`. There is no edit-in-place and no archive.
 - **R-backlog-11 (goal detail, non-Life)** — A non-Life goal's detail screen shows `Backlog (N)` listing only the items attached to **that** goal, an inline `+ Add` quick-capture (Enter or `Save item` commits; `Never mind` cancels), and per-item `Add to this week` / `Move to another goal` / `Delete`. Empty state: `Nothing deferred on this goal.` (`GoalDetailScreen.tsx`; move action added by §5 D-20.)
 - **R-backlog-12 (goal detail, Life — read-only aggregate)** — A **Life** goal's detail screen shows `Backlog across this line (N)`: a **read-only** roll-up of every item on any descendant goal, each row labelled `<owning goal title> · added <date>`. No per-item actions here — only `Open Backlog →`. (BUSINESS-RULES §Backlog bullet 5; `GoalDetailScreen.tsx` `isLife` branch.)
-- **R-backlog-13 (full backlog page)** — The Backlog page groups items by branch path `<Life goal> › <owning goal>`, newest first, showing title, `Added <date>`, description, `N link[s]`, and `from <week of …>` when the item came out of a week. Tapping a row reveals its actions. Empty state: `Nothing in the backlog.` / `Future work lives here until you pull it into a week.` (`BacklogScreen.tsx`.)
+- **R-backlog-13 (full backlog page)** ⚠ **modified by R-backlog-21** (within a group, the goal's manual order) — The Backlog page groups items by branch path `<Life goal> › <owning goal>`, newest first, showing title, `Added <date>`, description, `N link[s]`, and `from <week of …>` when the item came out of a week. Tapping a row reveals its actions. Empty state: `Nothing in the backlog.` / `Future work lives here until you pull it into a week.` (`BacklogScreen.tsx`.)
 - **R-backlog-14 (`+` drawer)** — The `+` tab opens `Add to Backlog`: goal chips (non-Life, defaulting to the last-used goal), title (required), description, links, and a checkbox `Also add to the current week`, plus a `View Backlog →` shortcut. (BUSINESS-RULES §Nav; `BacklogDrawer`.)
 - **R-backlog-15 (`+` drawer with "also add to the current week")** — When the box is ticked and a leaf at or under the chosen goal is active, a **task only** is created (no backlog item) with `Created — added to this week`; toast `Added to this week`. When the box is ticked but no leaf is active, a backlog item is created instead and the toast explains: `Branch isn't active this week — parked in Backlog`. When the box is unticked, a backlog item is created; toast `Added to Backlog`. (`store.saveBacklogDrawer`; copy corrected by §5 D-21.)
 - **R-backlog-16** — `title` is trimmed; a whitespace-only title is refused and the Save button stays disabled.
+
+#### Amendment 1 — manual ordering
+
+- **R-backlog-17 (`sortKey`)** — Every backlog item carries a server-owned `sortKey`, unique within `(owner, goalId)`. It is an **opaque, lexicographically ordered string** (mid-point / fractional keys), never a position index: an index has to be rewritten across the whole list on every insert and is racy against a concurrent one. Within a goal the order is `sortKey` ascending, then `capturedAt` descending, then `id` descending — total and stable even if two keys ever collide (Q-7). The client never parses, computes or sends a key. *This answers §4 Q-7's "add an explicit `sortKey` only if manual re-ordering is ever requested." It has been.*
+- **R-backlog-18 (where a new item lands)** — At the **top** of its goal's list: a new item gets a key that sorts before every existing key in that goal. Every capture flow in the product puts the newest thing where you can see it, and this keeps R-backlog-5's arrangement (newest first) exactly true for any list nobody has re-ordered. *Amends R-backlog-5 within a goal: `capturedAt` desc becomes the default the key reproduces, not the order itself.*
+- **R-backlog-19 (reorder is a relative move)** — One command, `version`-guarded (Q-2), naming the item and a **neighbour**: `after: <id>`, `before: <id>`, `toTop`, or `toBottom`, all within the item's own goal. Never a position index. The server mints a key strictly between the neighbours; a neighbour in another goal, a converted item, or a missing id is refused and the order is unchanged. If mid-point keys exhaust their precision the server re-keys that goal's list inside the same transaction — invisible to the client and changing no order.
+- **R-backlog-20 (moving, converting, deleting)** — Moving an item to another goal (R-backlog-10) assigns it a **fresh key at the top of the destination goal's list**; its old position is not preserved, because a per-goal order has nothing to preserve it against, and the destination's own order is the only one that now applies. `capturedAt` and `fromWeek` are still unchanged (S-backlog-10-1 holds). Conversion (R-backlog-6) and delete leave a **gap**: siblings are never re-keyed, and a converted row retains its `sortKey` where it stops participating in any order.
+- **R-backlog-21 (manual order is per goal, and only per goal)** — Every list that spans more than one goal keeps `capturedAt` desc, `id` desc: the Life-goal read-only aggregate (R-backlog-12) and the ordering *of* the groups on the Backlog page (R-backlog-13). Within one group — which is one goal — the Backlog page and the goal-detail block both render that goal's manual order. A manual order **across** goals is not defined and must not be invented; two items on different goals have no relative position.
+- **R-backlog-22 (reorder is keyboard-first — non-negotiable)** — Drag is never the only way to re-order. Every re-orderable backlog list provides **all** of:
+  1. a roving-tabindex list: one tab stop for the list, `↑`/`↓` moving focus between rows, `Home`/`End` to the ends;
+  2. a **visible, always-rendered** `Reorder "<title>"` control on each row — never hover-only, never a handle that appears on pointer-over, meeting the enforced contrast rule and a ≥44px touch target;
+  3. a **grab mode**: `Space`/`Enter` on that control picks the row up; `↑`/`↓` move it one position; `Home`/`End` move it to top/bottom; `Space`/`Enter` drops it and commits; `Escape` cancels and restores the original position with **nothing written**;
+  4. `Move up` / `Move down` / `Move to top` / `Move to bottom` in the row's existing action menu, so the whole feature is reachable without ever entering grab mode.
+  Focus stays on the moved row's control after a drop, a cancel, or a failure, and is never lost to the document. This is a requirement of the feature, not a follow-up: the accessibility pass that made sheets dismissible and focus-trapped is enforced by tests, and a drag-only list would be a regression on work already completed.
+- **R-backlog-23 (what a screen reader says)** — The list owns exactly one live region: `aria-live="assertive" aria-atomic="true"` for the duration of a grab — successive arrow presses must not be swallowed by a polite queue — reverting to `polite` when the grab ends. The announcements, verbatim:
+  - pick up → `Reorder: "<title>", position N of M. Arrow keys to move, Enter to drop, Escape to cancel.`
+  - each move → `"<title>", position K of M.`
+  - drop → `"<title>" moved to position K of M in <goal title>.`
+  - cancel → `Reorder canceled. "<title>" returned to position N of M.`
+  - server refusal → `Reorder failed. "<title>" returned to position N of M.` — plus the non-toast error a lost write requires (Q-14; a toast alone is insufficient, R-nav-13).
+  A pointer or touch drag announces the same lines, from the same region.
+- **R-backlog-24 (drag is a second front-end on one command)** — Pointer and touch drag call the same relative reorder as the keyboard (R-backlog-19). There is no drag-only write path and no drag-only ordering semantics. Touch must not require a long-press as its only entry: the row control works on touch too.
+- **R-backlog-25 (conversion into a future week)** — `Add to this week` becomes week-aware: a conversion names a target week in the plannable window, and the receiving leaf must be active **in that week**. R-backlog-7's ambiguity rule (two or more candidates ⇒ the user chooses) and R-backlog-8's refusal are both re-read against the **target** week, not against today. From the planning screen the target is the week being planned (R-plan-9). The refusal copy generalises: `This branch isn't active that week` when the target is not the current week. Everything else about conversion is unchanged — one atomic operation, once, never duplicated (R-backlog-6/9, D-19). *Amends R-backlog-7 and R-backlog-8.*
 
 ### Idea
 
@@ -256,19 +318,29 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 
 - **R-nav-1** — Five tabs, fixed bottom: `Tasks · Goals · + · Ideas · Learnings`. The `+` is a circular button that opens the Add-to-Backlog drawer, not a page. (BUSINESS-RULES §Nav bullet 1; `TabBar.tsx`.)
 - **R-nav-2** — The Goals tab stays highlighted while on a goal detail screen. The Backlog page has no tab; it is reached from the `+` drawer (`View Backlog →`) or a Life goal's detail screen (`Open Backlog →`).
-- **R-nav-3** — The Tasks header carries a week switcher: `‹` / `Week of <Mon d Mon>` (tap to open the picker) / `›`. The forward chevron is disabled at week 0; future weeks are never selectable. (`TasksScreen.tsx`.)
-- **R-nav-4** — The week picker offers the current week and the previous N weeks as chips (`This week`, then `Week of …`); the chevrons address the same range. The bound is a single number — the mockup's picker (6) and chevron clamp (9) disagree; see §5 D-24. Recommended bound: the last 8 weeks.
-- **R-nav-5** — Past weeks show the badge `Past week — still editable` and remain fully interactive.
+- **R-nav-3** ⚠ **superseded by R-nav-16** — The Tasks header carries a week switcher: `‹` / `Week of <Mon d Mon>` (tap to open the picker) / `›`. The forward chevron is disabled at week 0; future weeks are never selectable. (`TasksScreen.tsx`.)
+- **R-nav-4** ⚠ **superseded by R-nav-16** (the 8-week history bound survives) — The week picker offers the current week and the previous N weeks as chips (`This week`, then `Week of …`); the chevrons address the same range. The bound is a single number — the mockup's picker (6) and chevron clamp (9) disagree; see §5 D-24. Recommended bound: the last 8 weeks.
+- **R-nav-5** ⚠ **extended by R-nav-17** — Past weeks show the badge `Past week — still editable` and remain fully interactive.
 - **R-nav-6** — Changing the week via the picker resets the goal filter to `All`.
 - **R-nav-7** — The Tasks screen shows goal filter pills: `All` plus one pill per Life root that has a visible section, each with its count of **open** tasks visible in the viewed week.
-- **R-nav-8** — A leaf gets a section on the Tasks screen when it has ≥1 visible task in the viewed week, or (week 0 only) it is active. Sections show the full goal path, the focus sentence (week 0 only), the task rows, and `+ Task` (week 0, active leaf only). (`TasksScreen.tsx`.)
-- **R-nav-9** — Tasks empty states: week 0 → `A new week, still unplanned.` / `Pick which branches are active this week, then write each focus.` / `[Plan this week]`; past week → `Nothing happened this week.` / `No tasks were live in this week.` with no CTA.
-- **R-nav-10** — `Edit plan` appears in the Tasks header only at week 0 (R-plan-2).
+- **R-nav-8** ⚠ **superseded by R-nav-21 / R-nav-22** (its "week 0 only" clause on the focus sentence also contradicted D-2) — A leaf gets a section on the Tasks screen when it has ≥1 visible task in the viewed week, or (week 0 only) it is active. Sections show the full goal path, the focus sentence (week 0 only), the task rows, and `+ Task` (week 0, active leaf only). (`TasksScreen.tsx`.)
+- **R-nav-9** ⚠ **extended by R-nav-20** — Tasks empty states: week 0 → `A new week, still unplanned.` / `Pick which branches are active this week, then write each focus.` / `[Plan this week]`; past week → `Nothing happened this week.` / `No tasks were live in this week.` with no CTA.
+- **R-nav-10** ⚠ **superseded by R-nav-20** — `Edit plan` appears in the Tasks header only at week 0 (R-plan-2).
 - **R-nav-11** — Every page carries the same top-right cluster: a light/dark theme toggle plus at most one primary action (`+ New goal` on Goals, `+ Add` on Backlog, `Edit plan` on Tasks, none on Ideas/Learnings/Plan/Goal detail). (BUSINESS-RULES §Nav bullet 3; `TopActions.tsx`.)
 - **R-nav-12** — The theme preference is per-user and persisted across sessions; it must be a real light/dark token set, not a display filter. (§5 D-25.)
 - **R-nav-13** — Toasts are transient confirmations, auto-dismissing after ~2.6s; they are never the only record of a state change.
 - **R-nav-14 (removed by design)** — There is no weekly review wizard, no push flow with mandatory reasons, no audit-trail view, no week report, and no carry-count flag. Any such feature is out of scope and must be refused, not deferred. (BUSINESS-RULES §Nav last bullet.)
 - **R-nav-15** — Every destructive or state-changing confirm sheet closes on overlay tap without acting.
+
+#### Amendment 1 — a week switcher with a future
+
+- **R-nav-16 (the switcher spans the whole window)** — The chevrons and the picker address exactly the same range: the previous `WEEK_HISTORY_WEEKS − 1 = 7` weeks, the current week, and the next `PLAN_AHEAD_WEEKS = 4` — thirteen weeks, offsets `−7 … +4`. The back chevron is disabled at `−7`, the forward chevron at `+4`. The picker labels them `Week of …` / `Last week` / `This week` / `Next week` / `Week of …`, with the future group visually separated from the past. D-24's rule stands unchanged — one bound per direction, honoured by both controls, no week reachable by one control and invisible to the other. *Supersedes R-nav-3's "future weeks are never selectable" and R-nav-4's "the current week and the previous N".*
+- **R-nav-17 (week badges)** — A past week shows `Past week — still editable` (R-nav-5, unchanged). A **future** week shows `Future week — planning ahead`. The current week shows neither. A future week's task rows carry no completion checkbox (R-task-35).
+- **R-nav-18 (a future week that holds work is visible from the picker)** — A future week with at least one focus row, or at least one task originating in it, is marked in the picker with a dot. Without it, a plan written for `+2` is invisible from every screen except `+2` itself — because R-task-38 deliberately keeps it out of today's numbers — and the owner has no way to remember it exists.
+- **R-nav-19 (creating into a future week leaves you there)** — A task created into a target week other than the one being viewed moves the Tasks screen **to the target week**, and the toast names it: `Added to week of <Mon d Mon>`. Nothing may be created into a week and then vanish from the screen that created it: under R-task-38 a future-origin task is correctly invisible in the current week, and without this rule that reads as a lost write.
+- **R-nav-20 (`Edit plan` and empty states across the window)** — `Edit plan` renders in the Tasks header at **any** week in the plannable window and opens the plan screen on that week (*supersedes R-nav-10 and R-plan-2*). Empty states: week 0 keeps R-nav-9's copy verbatim; a **future** week with nothing planned reads `Nothing planned for this week yet.` / `Lay it out before it starts.` with `[Plan week of <Mon d Mon>]`; a past week keeps `Nothing happened this week.` / `No tasks were live in this week.` with no CTA. *Amends R-nav-9.*
+- **R-nav-21 (focus sentences render in whatever week is viewed)** — A leaf's section shows the sentences stored for the **viewed** week — past, present or future. That is the point of D-2, and R-nav-8's "(week 0 only)" clause contradicted it. Where several sentences exist they render as an ordered list in the section and in the goal detail block; where only one line is available (a tree row, a target-picker label) the **first** sentence renders (R-plan-14) followed by `+N more` when `N > 0`. *Amends R-nav-8 and R-goal-25.*
+- **R-nav-22 (sections and `+ Task` across the window)** — A leaf gets a section on the Tasks screen when it has ≥1 visible task in the viewed week, **or** the viewed week is plannable and the leaf is active in *that* week. `+ Task` renders when the viewed week is plannable and the leaf is active in it. A past week renders sections for its visible tasks only, and never a `+ Task`. *Supersedes R-nav-8's week-0-only clauses.*
 
 ### Auth
 
@@ -313,7 +385,7 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 
 - **S-goal-22-1** (R-goal-22, happy) — *When* a Monthly goal is re-planned to the next month with no reason. *Then* `period` becomes the chosen month, the operation succeeds, and the toast reads `Re-planned to <period>`.
 - **S-goal-23-1** (R-goal-23, happy) — *Given* today is in September 2026 and a Monthly goal. *When* the re-plan sheet opens. *Then* the options are `Oct 2026` and `Nov 2026`, derived from today — and given today is in December 2026, they are `Jan 2027` and `Feb 2027`.
-- **S-goal-9-1** (R-goal-9, unhappy) — *Given* a non-leaf goal that has a focus row from before it gained a child. *Then* it is reported as not active and holds no focus (the stale row must not exist — D-2).
+- **S-goal-9-1** (R-goal-9, unhappy) ⚠ **narrowed by A1** — *Given* a non-leaf goal that has a focus row from before it gained a child. *Then* it is reported as not active. *And* it holds no focus row for the current week **or any later week** — those must not exist (R-goal-28). *But* its rows for weeks already past survive and still render when those weeks are viewed: at the time they were written the goal was a leaf, and history stays truthful (D-2).
 - **S-goal-10-1** (R-goal-10, happy) — *Given* a non-Life leaf with no focus this week. *Then* its tree row is muted and reads `DORMANT — no focus this week`, and its detail screen shows the DORMANT block.
 - **S-goal-11-1** (R-goal-11, happy) — *Given* Life `L` › Yearly `Y` › Quarterly `Q` › Monthly `M`, with `M` active. *Then* `L`, `Y` and `Q` all render un-muted. *When* `M`'s focus is cleared. *Then* all four render muted.
 - **S-goal-11-2** (R-goal-11, happy) — *Given* Yearly `Y` with two Quarterly children, one holding an active leaf and one entirely dormant. *Then* `Y` is un-muted and the dormant Quarterly is muted.
@@ -326,11 +398,28 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 - **S-plan-5-1** (R-plan-5, happy) — *Given* a dormant leaf. *When* it is checked, a sentence is typed, and the plan is saved. *Then* the leaf is active, its focus is the trimmed sentence, and it appears on the Tasks screen for week 0.
 - **S-plan-5-2** (R-plan-5, unhappy) — *When* a leaf is checked but the sentence is left blank and the plan is saved. *Then* no focus is stored, the leaf is dormant, and the user is told the check did not stick (not silently dropped).
 - **S-plan-6-1** (R-plan-6, happy) — *Given* an active leaf with two open tasks. *When* it is unchecked and the plan saved. *Then* its focus is cleared, it renders dormant, and both tasks still exist and remain visible in week 0 (R-task-9).
-- **S-plan-2-1** (R-plan-2, unhappy) — *Given* the viewed week is `-2`. *Then* `Edit plan` is not rendered; *and* a plan-save request naming a past week is refused.
+- **S-plan-2-1** (⚠ now R-plan-15, unhappy — text unchanged, rule re-pointed) — *Given* the viewed week is `-2`. *Then* `Edit plan` is not rendered; *and* a plan-save request naming a past week is refused (with `WEEK_NOT_PLANNABLE`).
 - **S-plan-7-1** (R-plan-7, happy) — *Given* leaves `A` (active) and `B` (dormant). *When* the plan is saved with `A` unchecked and `B` checked with a sentence. *Then* in one transaction `A`'s focus is removed and `B`'s is created.
 - **S-plan-9-1** (R-plan-9, happy) — *Given* a checked leaf `M` whose Quarterly parent holds backlog item `X` and whose Monthly self holds item `Y`, and an unrelated Yearly goal holds `Z`. *Then* `FROM THE BACKLOG` under `M` lists `X` and `Y` and not `Z`.
 - **S-plan-9-2** (R-plan-9, happy) — *When* a listed backlog item is tapped. *Then* the task-create modal opens pre-filled with the item's title and bound to that leaf.
 - **S-plan-8-1** (R-plan-8, unhappy) — *When* a plan-save payload includes a focus for a Life goal or a non-leaf goal. *Then* it is refused.
+
+#### Plan — Amendment 1
+
+- **S-plan-13-1** (R-plan-13, happy) — *Given* a dormant leaf `M`. *When* the plan is saved with three sentences for `M` in the current week. *Then* three focus rows exist for `(M, thisWeek)`, `M` is active, and its Tasks-screen section lists all three in order.
+- **S-plan-13-2** (R-plan-13, unhappy) — *When* a plan-save names six sentences for one leaf in one week. *Then* it is refused as a validation failure and **none** of the six is written; the leaf's existing focus set is unchanged.
+- **S-plan-13-3** (R-plan-13, happy) — *Given* three sentence fields for `M`, the middle one left blank. *When* the plan is saved. *Then* two rows exist, in the order the two non-blank fields appeared, and no empty row was created.
+- **S-plan-13-4** (R-plan-13/R-plan-18, unhappy) — *When* `M` is checked and **all** its sentence fields are blank. *Then* no row is written, `M` is dormant, and the user is told the check did not stick (D-9) — the same surfaced failure as S-plan-5-2, not a silent drop.
+- **S-plan-14-1** (R-plan-14, happy) — *Given* `M` holds sentences `A, B, C`. *When* the plan is re-saved with the fields ordered `C, A, B`. *Then* a refetch returns `C, A, B`; the order is the request's, not `createdAt`'s, and is identical on every subsequent read.
+- **S-plan-15-1** (R-plan-15, happy) — *When* the plan is saved for offset `+2` with one sentence for `M`. *Then* the row is stored against that Monday, `M` is active when week `+2` is viewed, and `M` is unchanged (dormant, if it was) in week 0.
+- **S-plan-15-2** (R-plan-15, unhappy) — *When* a plan-save names offset `+5`. *Then* it is refused with `WEEK_NOT_PLANNABLE`, nothing is written, and offset `+5` is unreachable from the week switcher.
+- **S-plan-15-3** (R-plan-15, unhappy — history stays truthful) — *Given* week `−1` holds two focus rows. *When* a plan-save names week `−1`. *Then* it is refused with `WEEK_NOT_PLANNABLE` and both rows are byte-identical afterwards (D-2).
+- **S-plan-16-1** (R-plan-16, happy) — *Given* focus rows in weeks 0, `+1` and `+2`. *When* the plan for `+1` is saved with a different set. *Then* only `+1`'s rows change; weeks 0 and `+2` are untouched.
+- **S-plan-16-2** (R-plan-16, happy) — *Given* a focus row created three weeks ago for week `+1`. *When* the `+1` plan is re-saved with that row's `id` and an unrelated new sentence added. *Then* the original row keeps its `createdAt` (so R-plan-19 still measures three weeks), the new row is inserted, and both carry re-assigned `sortKey`s.
+- **S-plan-16-3** (R-plan-16, unhappy) — *When* a plan-save for `+1` contains one entry naming a Life goal among nine valid entries. *Then* the whole save is refused (`NOT_A_LEAF`) and week `+1` is exactly as it was — never partially applied (Q-3).
+- **S-plan-19-1** (R-plan-19, happy) — *Given* a sentence written for a week three weeks before that week began, and that week is now the current week. *Then* a muted line reads `planned 3 weeks ago` beneath it, with no chip, no colour and no prompt.
+- **S-plan-19-2** (R-plan-19, happy — the two silent cases) — *Given* a sentence written last week for this week (`plannedAgeWeeks = 1`). *Then* no label. *And given* a sentence written three weeks ago for a week that has **not** arrived yet, viewed at that future week. *Then* still no label: it is early, not stale.
+- **S-plan-20-1** (R-plan-20, unhappy) — *When* a planned week becomes the current week. *Then* nothing is written, nothing is asked, and no route, screen or sheet exists for confirming, reviewing or re-validating the arrived plan (R-nav-14).
 
 ### Task — visibility and carry
 
@@ -364,7 +453,7 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 
 ### Task — creation, editing, activity
 
-- **S-task-5-1** (R-task-5, happy) — *Given* the viewed week is `−2`. *When* a task is created (e.g. from an Idea). *Then* `originWeek` is the **current** week, so it does not appear in the viewed week −2 and does appear in week 0.
+- **S-task-5-1** (⚠ now R-task-34, happy) — *Given* the viewed week is `−2`. *When* a task is created from an Idea or the `+` drawer. *Then* the target week falls back to the **current** week (the viewed week is not plannable), `originWeek` is that Monday, and the task does not appear in week −2 and does appear in week 0.
 - **S-task-4-1** (R-task-4, unhappy) — *Given* no leaf is active this week. *When* the task-create modal is opened from any source. *Then* it offers no target, creation is blocked, and the user is routed to weekly planning — never to a hardcoded fallback goal.
 - **S-task-3-1** (R-task-3, happy) — *When* a task is saved with a title and no done-condition. *Then* it is created with `cond = ''` and no validation error.
 - **S-task-3-2** (R-task-3, unhappy) — *When* a task is saved with a whitespace-only title. *Then* it is refused and the Save button stays disabled.
@@ -375,6 +464,25 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 - **S-task-29-1** (R-task-29, happy) — *Given* an open task with `originWeek = −2`. *Then* its timeline contains exactly two `Carried to week of …` entries (for weeks −1 and 0), each logged once, with no user interaction at any point.
 - **S-task-30-1** (R-task-30, unhappy) — *When* a client attempts to create, edit, or delete a TaskEvent. *Then* it is refused; the timeline is append-only and server-authored.
 - **S-task-31-1** (R-task-31, happy) — *For* every operation in R-task-30's table, performing it produces exactly one event of the stated type with the stated glyph, and performing a no-op edit produces none.
+
+#### Task — Amendment 1
+
+- **S-task-33-1** (R-task-33, unhappy) — *When* a task create or patch carries a `focusId` (or any per-sentence reference). *Then* it is refused as an unknown key; no such field exists on the Task entity, the request schema, or any read model.
+- **S-task-33-2** (R-task-33, happy) — *Given* a leaf holding three sentences this week and two tasks. *Then* both tasks reference only the leaf and the week, and the Tasks screen renders the three sentences above one undivided list of task rows — no grouping by sentence anywhere.
+- **S-task-34-1** (R-task-34, happy) — *Given* the viewed week is `+2` and leaf `M` is active in `+2`. *When* `+ Task` is used. *Then* `originWeek` is that Monday, the task is visible at `+2` and `+3`, and it is **not** visible at week 0 or `+1`.
+- **S-task-34-2** (R-task-34, unhappy) — *When* a create names target week `+5`. *Then* it is refused with `WEEK_OUT_OF_RANGE` and no task is created.
+- **S-task-34-3** (R-task-34, unhappy) — *Given* `M` is active in week 0 but has no focus in `+1`. *When* a create names `+1` with `goalId = M`. *Then* it is refused with `BRANCH_NOT_ACTIVE` naming week `+1` — activity is read against the **target** week, not today.
+- **S-task-34-4** (R-task-34, unhappy — no back-dating) — *When* a create names target week `−1`. *Then* it is refused with `WEEK_OUT_OF_RANGE`; and no create affordance is rendered at any past week, from any of the four sources.
+- **S-task-34-5** (R-task-34, happy) — *When* an Idea's `Task this week` or the `+` drawer's `Add to this week instead` is used while viewing `+2`. *Then* the task is created into the **current** week, because those two fast-capture paths have no week choice by design.
+- **S-task-35-1** (R-task-35, unhappy) — *Given* a task with `originWeek = +1`. *When* a completion is submitted for `+1`, or for week 0, or for any week. *Then* every one is refused with `WEEK_OUT_OF_RANGE`: `originWeek ≤ week ≤ currentWeek` has no solution. *And* no checkbox is rendered on that row at `+1`.
+- **S-task-35-2** (R-task-35, happy) — *Given* the same task once its week has arrived (it is now week 0). *When* the checkbox is ticked. *Then* it completes normally with `doneWeek = thisWeek`, and a `Completed` event is logged.
+- **S-task-36-1** (R-task-36, happy) — *Given* an open task with `originWeek = +2`. *When* Cancel is confirmed with an optional reason. *Then* the task leaves every week, the reason is retained, and the toast reads `Task canceled` — no new exit was invented (R-task-13).
+- **S-task-36-2** (R-task-36, happy) — *Given* the same task. *When* Move to Backlog is confirmed from week `+2`. *Then* a backlog item exists on its goal with `fromWeek` = that future Monday, rendering `from week of <d Mon>`.
+- **S-task-37-1** (R-task-37, happy — the rule that must not fire) — *Given* an open task with `originWeek = +1`, viewed at `+3`. *Then* `carryWeeks = 0`: no grey label and **no red chip**. The naive `viewWeek − originWeek` would read 2 and escalate work nobody is late with.
+- **S-task-37-2** (R-task-37, happy) — *Given* an open task with `originWeek = −3`, viewed at `+2`. *Then* `carryWeeks = 3` and the red `3 weeks · since …` chip renders: it is late today and still open then.
+- **S-task-37-3** (R-task-37, boundary — S-task-11-2 unchanged) — *Given* an open task with `originWeek = −2`, viewed at `−1`. *Then* the clamp is inert (`min(−1, 0) = −1`), age is 1, and the grey one-week label renders exactly as before.
+- **S-task-38-2** (R-task-38 / R-task-29, unhappy) — *Given* an open task with `originWeek = −2`. *When* week `+3` is viewed. *Then* the task is listed there, and **no** `Carried to week of …` event is appended for weeks `+1`, `+2` or `+3`; the timeline still holds exactly the two entries S-task-29-1 requires.
+- **S-task-38-1** (R-task-38, happy) — *Given* one open task with `originWeek = +1` and one with `originWeek = 0`, both under Life root `L`. *When* week 0 is viewed. *Then* only the second is listed, `L`'s filter pill reads `1`, and `L`'s card shows no carrying line. *When* week `+1` is viewed. *Then* both are listed and the pill reads `2`.
 
 ### Backlog
 
@@ -396,6 +504,25 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 - **S-backlog-15-2** (R-backlog-15, unhappy) — *When* the same is saved but no leaf under the chosen goal is active. *Then* exactly one backlog item is created, no task, and the toast explains why.
 - **S-backlog-5-1** (R-backlog-5, happy) — *Given* three items captured on different days. *Then* they list newest-first within their group, and a newly created item appears at the top.
 
+#### Backlog — Amendment 1
+
+- **S-backlog-17-1** (R-backlog-17, happy) — *Given* goal `M` holding items `A, B, C` (newest first). *When* `C` is moved to the top. *Then* the order is `C, A, B` on the Backlog page, on `M`'s detail screen, and after a full refetch — and every item's `capturedAt` is unchanged.
+- **S-backlog-17-2** (R-backlog-17, happy — total and stable) — *Given* two items inserted in the same millisecond. *Then* the list order is identical on every read, resolved by `capturedAt` desc then `id` desc; no read ever returns a different arrangement of an unchanged list.
+- **S-backlog-18-1** (R-backlog-18, happy) — *Given* `M`'s list has been manually re-ordered to `C, A, B`. *When* a new item `D` is captured on `M`. *Then* the list is `D, C, A, B`.
+- **S-backlog-19-1** (R-backlog-19, happy) — *When* a reorder names `after: <B.id>`. *Then* the item lands immediately after `B`, and the command carried no position index.
+- **S-backlog-19-2** (R-backlog-19, unhappy) — *When* a reorder names a neighbour belonging to a different goal, or a converted item. *Then* it is refused and no order changes.
+- **S-backlog-19-3** (R-backlog-19, unhappy) — *When* a reorder carries a stale `version`. *Then* it is refused with `CONCURRENT_UPDATE`, the stored order is unchanged, the row returns to its original position on screen, and R-backlog-23's failure line is announced alongside a non-toast error (Q-14).
+- **S-backlog-20-1** (R-backlog-20, happy) — *Given* `M` = `C, A, B` and goal `N` = `X, Y`. *When* `A` is moved to `N`. *Then* `N` = `A, X, Y`, `M` = `C, B`, and `A`'s `capturedAt` and `fromWeek` are unchanged (S-backlog-10-1 still holds).
+- **S-backlog-20-2** (R-backlog-20, happy) — *When* the middle item of a manually ordered list is converted to a task or deleted. *Then* the survivors keep their relative order and no sibling was re-keyed.
+- **S-backlog-21-1** (R-backlog-21, happy) — *Given* Life goal `L` whose three descendant goals each have a manual order. *When* `L`'s detail screen is opened. *Then* the read-only aggregate is ordered `capturedAt` desc across all three, ignoring every per-goal manual order — and no reorder affordance is rendered there.
+- **S-backlog-22-1** (R-backlog-22, happy — keyboard only, no pointer) — *When* the user tabs to an item's `Reorder` control, presses `Enter`, presses `↓` twice, and presses `Enter`. *Then* the item has moved two positions, the new order is persisted, and focus is still on that item's `Reorder` control.
+- **S-backlog-22-2** (R-backlog-22, happy) — *When* `Escape` is pressed mid-grab. *Then* the item returns to its original position, **nothing is written**, and focus stays on its control.
+- **S-backlog-22-3** (R-backlog-22, unhappy — the regression guard) — *Then* every reorder affordance is present in the DOM without any pointer event having occurred, is reachable by keyboard, passes the enforced contrast rule, and the row menu offers `Move up` / `Move down` / `Move to top` / `Move to bottom`. A drag-only implementation, or a handle revealed only on hover, fails this scenario and therefore the build.
+- **S-backlog-23-1** (R-backlog-23, happy) — *When* a full keyboard reorder is performed. *Then* the live region emits, in order, the pick-up line, one position line per arrow press, and the drop line — with the region `assertive` for the duration of the grab and `polite` afterwards.
+- **S-backlog-25-1** (R-backlog-25, happy) — *Given* item `X` on Quarterly `Q`, and leaf `M` under `Q` active in week `+1`. *When* `X` is converted with target week `+1`. *Then* one task exists under `M` with `originWeek = +1`, `X` is `converted`, and the task logs `Created — pulled from Backlog`.
+- **S-backlog-25-2** (R-backlog-25, unhappy) — *Given* `M` is active in week 0 but not in `+1`. *When* `X` is converted with target week `+1`. *Then* it is refused with `BRANCH_NOT_ACTIVE`, the sheet reads `This branch isn't active that week`, and `X` is untouched.
+- **S-backlog-25-3** (R-backlog-25, unhappy) — *Given* **two** leaves under `Q` active in `+1`. *When* `X` is converted with target `+1` and no `goalId`. *Then* it is refused with `AMBIGUOUS_CONVERSION_TARGET` listing both — the ambiguity rule is evaluated for the target week, not today.
+
 ### Idea
 
 - **S-idea-4-1** (R-idea-4, happy) — *When* `Task this week` is used on an idea and the task is saved. *Then* the task exists with a `Created — from an Idea` event and the idea is gone.
@@ -413,13 +540,24 @@ No checkbox, done-condition, due date, or status — deliberately (R-backlog-3).
 
 ### Nav
 
-- **S-nav-3-1** (R-nav-3, unhappy) — *Given* the viewed week is 0. *Then* the forward chevron is disabled and no future week is reachable by chevron, picker, or direct request.
+- **S-nav-3-1** ⚠ **superseded by S-nav-16-1/S-nav-16-2** — *Given* the viewed week is 0. *Then* the forward chevron is disabled and no future week is reachable by chevron, picker, or direct request. **This scenario is retired: it asserts the exact behaviour Amendment 1 removes, and its replacements assert the new bound.**
 - **S-nav-4-1** (R-nav-4, happy) — *Then* the week picker and the back chevron reach the same earliest week; no week is reachable by one control and not the other.
 - **S-nav-6-1** (R-nav-6, happy) — *Given* a goal filter is applied. *When* the week is changed via the picker. *Then* the filter resets to `All`.
 - **S-nav-7-1** (R-nav-7, happy) — *Given* week 0 with two open and one done task under Life root `L`. *Then* `L`'s filter pill reads `<L title> · 2`.
 - **S-nav-8-1** (R-nav-8, happy) — *Given* an active leaf with no tasks at week 0. *Then* a section renders with its focus sentence and a `+ Task` button. *And given* the same leaf viewed at week −1 with no tasks then. *Then* no section renders for it.
 - **S-nav-9-1** (R-nav-9, happy) — *Given* nothing is planned at week 0. *Then* the empty state offers `Plan this week`; at a past week with no tasks, the empty state offers no CTA.
 - **S-nav-14-1** (R-nav-14, unhappy) — *Then* no route, screen, or endpoint exists for a weekly review wizard, an audit trail view, a week report, or a push flow with mandatory reasons.
+
+#### Nav — Amendment 1
+
+- **S-nav-16-1** (R-nav-16, happy — replaces S-nav-4-1's scope) — *Then* the chevrons and the picker reach exactly the same thirteen weeks, `−7 … +4`; no week is reachable by one control and invisible to the other.
+- **S-nav-16-2** (R-nav-16, unhappy — replaces S-nav-3-1) — *Given* the viewed week is `+4`. *Then* the forward chevron is disabled, `+5` appears in no picker, and a direct request for offset `+5` is refused by the schema before any handler runs.
+- **S-nav-17-1** (R-nav-17, happy) — *Given* the viewed week is `+1`. *Then* the badge reads `Future week — planning ahead`, and no task row renders a completion checkbox. *Given* week `−1`. *Then* `Past week — still editable`. *Given* week 0. *Then* neither.
+- **S-nav-18-1** (R-nav-18, happy) — *Given* a focus written for `+2` and nothing at `+1` or `+3`. *Then* the picker marks `+2` and only `+2`.
+- **S-nav-19-1** (R-nav-19, happy) — *Given* the viewed week is 0. *When* a task is created with target week `+1`. *Then* the Tasks screen moves to `+1`, the task is visible there, and the toast reads `Added to week of <Mon d Mon>` — the task never appears to have been swallowed.
+- **S-nav-20-1** (R-nav-20, happy) — *Given* the viewed week is `+2`. *Then* `Edit plan` is rendered and opens the plan screen **on week `+2`**; with nothing planned there the empty state reads `Nothing planned for this week yet.` with `[Plan week of <Mon d Mon>]`. *Given* week `−2`. *Then* `Edit plan` is absent and the empty state offers no CTA.
+- **S-nav-21-1** (R-nav-21, happy) — *Given* leaf `M` held two sentences in week `−2` and holds three now. *When* week `−2` is viewed. *Then* that week's two sentences render (D-2), not this week's three. *And* `M`'s goal-tree row shows the first sentence followed by `+2 more`.
+- **S-nav-22-1** (R-nav-22, happy) — *Given* leaf `M` active in `+1` with no tasks there. *When* week `+1` is viewed. *Then* a section renders with its sentences and a `+ Task` button. *And when* week `−1` is viewed with no tasks live then. *Then* no section renders for `M`, and no `+ Task` appears anywhere on that week.
 
 ### Auth
 
@@ -447,6 +585,7 @@ The mockup is single-user, in-memory, and calls a stub API (`apps/web/src/api/cl
 **Q-6 — Task deletion vs. exits.** Cancel and Move-to-Backlog delete the row in the mockup, which contradicts R-task-30's `Canceled` / `Moved to Backlog` events. `[recommended]` Tasks get a server-owned `status: 'open' | 'done' | 'canceled' | 'movedToBacklog'` with an `exitReason` and `exitedAt`. Exited tasks are excluded from every week view and every count, but the record and its timeline survive. See §5 D-15.
 
 **Q-7 — Ordering and tie-breaks.** The mockup relies on array insertion order everywhere. `[recommended]` Goals: siblings ordered by `createdAt` ascending, `id` ascending as tie-break (add an explicit `sortKey` only if manual re-ordering is ever requested). Tasks within a section: open before done, then `createdAt` ascending, `id` ascending. Backlog items, Ideas, Learnings: `capturedAt` descending, `id` descending. Task events: `at` descending, then insertion sequence descending. Every list order must be total and stable, never dependent on storage order.
+⚠ **Answered by A1.** Manual re-ordering *has* been requested, for backlog items. `BacklogItem.sortKey` now exists (R-backlog-17), scoped per goal: within a goal, `sortKey` asc then `capturedAt` desc then `id` desc; across goals, unchanged. Goals, Tasks, Ideas, Learnings and Task events keep the orders above and gain no `sortKey`. `WeeklyFocus` also gains a `sortKey` (R-plan-14), an integer, because a week's sentences are re-written wholesale on every save and never re-ordered in isolation.
 
 **Q-8 — Id generation.** `'t' + Date.now()` collides within a millisecond and is guessable. `[recommended]` Server-generated UUIDv7 (sortable, collision-free); clients never mint ids and any client-supplied id is ignored.
 
@@ -455,10 +594,12 @@ The mockup is single-user, in-memory, and calls a stub API (`apps/web/src/api/cl
 **Q-10 — What must be refused (validation floor).** `[recommended]` Refuse, with a machine-readable error code: goal create/move violating R-goal-5/6/7/17/18; any focus on a Life goal or non-leaf; a task whose `goalId` is not an active non-Life leaf at creation time; a task complete for a future week or a week before its origin; a backlog item on a Life goal; an idea or learning tagged to a non-Life goal; any write to a server-owned field; any reference to an entity the caller does not own. Refusals are validation errors, never silent no-ops (the mockup's `return` pattern).
 
 **Q-11 — Field lengths.** `[recommended]` `Goal.title` 200, `Goal.why` 200, `Goal.period` 32; `WeeklyFocus.sentence` 280; `Task.title` 200, `Task.cond` 200, `Task.desc` 4000; `link.url` 2048 and must parse as `http`/`https` (refuse other schemes); `BacklogItem.title` 200, `.desc` 4000; `Idea.text` 500; `Learning.text` 500; exit reason 280. All strings trimmed before validation; graphemes counted, not bytes.
+⚠ **A1 adds:** `BacklogItem.sortKey` ≤ 100 chars, `[A-Za-z0-9]` only, server-minted and never client-supplied; a goal whose keys would exceed it is re-keyed server-side inside the same transaction (R-backlog-19).
 
-**Q-12 — Collection sizes.** `[recommended]` Max 4 levels of goal depth (structural, R-goal-7); max 100 children per goal; max 500 goals per owner; max 20 links per task and per backlog item; max 200 open tasks per leaf per week; max 2000 backlog items per owner; max 5000 ideas and 5000 learnings per owner; max 500 events per task (older ones compacted, never deleted from the visible top). Every list endpoint is paginated with a hard page cap of 200.
+**Q-12 — Collection sizes.** `[recommended]` Max 4 levels of goal depth (structural, R-goal-7); max 100 children per goal; max 500 goals per owner; max 20 links per task and per backlog item; max 5 weekly-focus sentences per leaf per week (R-plan-13); max 200 open tasks per leaf per week; max 2000 backlog items per owner; max 5000 ideas and 5000 learnings per owner; max 500 events per task (older ones compacted, never deleted from the visible top). Every list endpoint is paginated with a hard page cap of 200.
 
-**Q-13 — History depth.** Nothing says how far back weeks are readable. `[recommended]` All history is retained; the week switcher exposes the last 8 weeks (R-nav-4) and an explicit `weekStart` may address anything back to the account's first week. Never expose a future week.
+**Q-13 — History depth.** Nothing says how far back weeks are readable. `[recommended]` All history is retained; the week switcher exposes the last 8 weeks (R-nav-4) and an explicit `weekStart` may address anything back to the account's first week. ~~Never expose a future week.~~
+⚠ **A1 supersedes the last sentence.** The forward horizon is `PLAN_AHEAD_WEEKS = 4` (R-plan-15) and it is a *hard validation bound*, not a picker bound — the two directions are deliberately asymmetric. Backwards, the bound limits a control over weeks that already exist and anything older stays addressable by `weekStart`. Forwards, every addressable week is a week a write would create, so `+5` is refused everywhere: schema, edge, service.
 
 **Q-14 — Failure and rollback.** `persist()` is fire-and-forget with a `TODO: add error handling/rollback`. `[recommended]` Optimistic UI with rollback: on a failed write, revert the local change and surface a non-toast error (a toast alone is insufficient for a lost write, per R-nav-13). Reads on reconnect are authoritative.
 
@@ -608,3 +749,94 @@ Each entry: what the mockup does → what the spec requires → why. The rule te
 *Mockup:* `rootOf(st.goals, s.node(t.goalId)!)` in `TasksScreen.openCount` and `GoalsScreen.carryLine` assume a task's goal always exists. No delete-goal action exists yet, so the assumption holds only by omission.
 *Spec:* Q-5 — deletion cascades so no task ever outlives its goal; the client still handles a missing goal defensively rather than throwing.
 *Why:* the first delete feature turns two summary lines into a white screen.
+
+---
+
+## 6. Amendments
+
+An amendment is a set of changes applied after the first draft, recorded so a reviewer can diff intent
+rather than archaeology. Every rule an amendment touches is marked `⚠` in §2 with the rule that replaces
+it. Superseded rule text is **left in place, struck through by the marker rather than deleted**, so the
+before and after sit next to each other.
+
+### Amendment 1 — several weekly focus sentences, planning ahead, tasks in future weeks, manual backlog order
+
+Requested changes: (1) several focus sentences per goal per week; (2) plan future weeks; (3) create tasks
+in future weeks, including a backlog pull; (4) manual per-goal ordering of backlog items by drag **and by
+keyboard**.
+
+**Added:** 30 rules — `R-plan-13 … R-plan-20` (8), `R-task-33 … R-task-38` (6),
+`R-backlog-17 … R-backlog-25` (9), `R-nav-16 … R-nav-22` (7). Total rules 125 → 155.
+**Scenarios added:** 54 (103 → 157). **Existing rules superseded or modified:** 31, each marked `⚠` in §2
+and listed below. **Scenarios superseded, re-pointed or narrowed:** 4.
+**New constant:** `PLAN_AHEAD_WEEKS = 4`. **New error code:** `WEEK_NOT_PLANNABLE` (409), replacing
+`WEEK_NOT_CURRENT`. **New fields:** `WeeklyFocus.sortKey` (int), `BacklogItem.sortKey` (string).
+
+#### The four questions this amendment had to settle
+
+| Question | Ruling | Rule |
+|---|---|---|
+| Do tasks attach to a focus sentence? | **No** — leaf + week only. No `focusId`, not even optional. Sentences are parallel intents for one leaf, not sub-buckets. | R-task-33 |
+| What is an "active leaf" now? | A non-Life leaf with **at least one** focus row for the week in question. Every dependent rule (dormancy, propagation, branch counts, conversion targets) holds unchanged, because all of them already asked "is there a row?", never "is there exactly one?". | R-goal-9 |
+| How far ahead can you plan? | Current week + 4. A validation bound, not a picker bound; deliberately asymmetric with the 8-week history bound. | R-plan-15 |
+| Can a past week's plan still not be edited? | **Correct, unchanged.** Writable weeks are exactly offsets `0 … +4`. Past weeks are readable forever and writable never (D-2). | R-plan-15 |
+
+#### Superseded and modified rules — before → after
+
+| Rule | Before | After |
+|---|---|---|
+| R-goal-9 | active = leaf with **a** WeeklyFocus for the **current** week | active = leaf with **at least one** WeeklyFocus for **the week in question** |
+| R-goal-10 | dormant = no focus for the current week | dormant = **no** focus row for the week in question |
+| R-goal-25 | tree row shows "the focus sentence when active" | shows the **first** sentence + `+N more` (R-nav-21) |
+| R-goal-27 | detail shows "the weekly-focus block" | shows the week's **ordered list** of sentences |
+| R-goal-28 | leaf gains a child ⇒ its **current-week** focus is deleted | ⇒ its focus rows for the current week **and every later week** are deleted; rows for past weeks survive as history |
+| R-plan-1 | one sentence per non-Life leaf per week | **one to five** sentences (R-plan-13) |
+| R-plan-2 | planning edits the **current week only**; save returns to Tasks at week 0 | planning edits any week in `0 … +4`; save returns to Tasks **at the week planned** (R-plan-15, R-plan-17) |
+| R-plan-3 | one textarea per leaf; screen copy fixed to "this week" | a removable list of fields per leaf; the screen names the week it is planning (R-plan-17/18) |
+| R-plan-4 | textarea pre-filled with **the** current focus | fields pre-filled with **the** week's sentences, in order (R-plan-18) |
+| R-plan-7 | whole-week replace over the current week | whole-week replace over **one named plannable week**, with entry `id`s so `createdAt` survives an edit (R-plan-16) |
+| R-plan-9 | backlog pull is bound to this week | bound to **the week being planned** (R-backlog-25) |
+| R-plan-11 | toast `Plan saved` | `Plan saved for week of <Mon d Mon>` when the week is not the current one |
+| R-task-4 | target list = currently active leaves, labelled with **the** focus sentence | leaves active **in the target week**, labelled with the first sentence + `+N more` |
+| R-task-5 | `originWeek` is always the **current** week | `originWeek` is the **target** week, in `0 … +4`; still server-assigned and immutable (R-task-34) |
+| R-task-6 | tasks can only be created into the current week; no back-dating; `+ Task` only at week 0 | created into any plannable week; **no back-dating, unchanged**; `+ Task` at any plannable week (R-task-34, R-nav-22) |
+| R-task-10/11/12 | `age = viewWeek − originWeek` | `age = max(0, viewWeek′ − originWeek)` where `viewWeek′ = min(viewedWeek, currentWeek)` (R-task-37) |
+| R-task-14 | complete in **any** viewed week | unchanged in substance; R-task-35 states the bound explicitly: `originWeek ≤ week ≤ currentWeek` |
+| R-task-29 | `Carried to week of …` once per week crossed | unchanged, **plus** a clamp: never logged for a week later than the current one, however far ahead the user looks (R-task-38) |
+| R-backlog-5 | items ordered `capturedAt` desc within their group | within a **goal**, `sortKey` asc then `capturedAt` desc; across goals, unchanged (R-backlog-17/21) |
+| R-backlog-7 | conversion target = active leaf at/under the item's goal | active **in the target week** (R-backlog-25) |
+| R-backlog-8 | refusal copy "This branch isn't active **this** week" | "…isn't active **that** week" when the target is not the current week |
+| R-backlog-10 | move changes `goalId`; `capturedAt`/`fromWeek` unchanged | unchanged, **plus** a fresh `sortKey` at the top of the destination (R-backlog-20) |
+| R-backlog-13 | Backlog page groups newest first | groups newest first; **within** a group, that goal's manual order (R-backlog-21) |
+| R-nav-3 | forward chevron disabled at week 0; future never selectable | forward chevron disabled at `+4`; `−7 … +4` selectable (R-nav-16) |
+| R-nav-4 | picker = the current week and the previous N | picker = `−7 … +4`, both controls, one bound per direction (R-nav-16) |
+| R-nav-5 | past weeks badged `Past week — still editable` | unchanged, plus `Future week — planning ahead` (R-nav-17) |
+| R-nav-8 | section when ≥1 visible task **or (week 0 only)** active; focus sentence **week 0 only** | section when ≥1 visible task or the week is plannable and the leaf is active in it; sentences render in **whatever week is viewed** — the old clause contradicted D-2 (R-nav-21/22) |
+| R-nav-9 | two empty states (week 0, past week) | three: the future week gets its own copy and CTA (R-nav-20) |
+| R-nav-10 | `Edit plan` at week 0 only | `Edit plan` at any plannable week, opening the plan screen on it (R-nav-20) |
+
+#### Superseded scenarios
+
+| Scenario | Disposition |
+|---|---|
+| S-nav-3-1 | **Retired.** It asserts precisely the behaviour this amendment removes. Replaced by S-nav-16-1 and S-nav-16-2. |
+| S-plan-2-1 | **Kept verbatim, re-pointed** from R-plan-2 to R-plan-15; the refusal code becomes `WEEK_NOT_PLANNABLE`. |
+| S-goal-9-1 | **Narrowed.** "The stale row must not exist" now applies to the current week and every later week; past rows survive as history. |
+| S-task-5-1 | **Re-pointed** to R-task-34 and reworded: the target week falls back to the current week when the viewed week is not plannable. |
+| S-task-11-2 | **Unchanged and load-bearing** — it is the proof that R-task-37's clamp is inert for past and current views. |
+| S-task-14-2 | **Unchanged and now reachable.** "Or a future week" was previously unhittable through the UI; it is the guard R-task-35 relies on. |
+| S-backlog-5-1 | **Kept** as the no-manual-order default (R-backlog-18 makes it still true). |
+
+#### Consequences checked and found to hold unchanged
+
+- **R-goal-11 (dormancy propagates up)** — asks only whether *any* leaf below is active; several sentences on one leaf change nothing.
+- **R-goal-26 (`A of B branches active`)** — counts leaves, not sentences. A leaf with three sentences is one active branch.
+- **R-goal-24 (life-goal carry signal)** — counts open tasks originating *before the current week*; a future origin can never qualify. No guard needed.
+- **R-task-7/8 (visibility)** — unchanged, and now the mechanism that keeps future work out of today's numbers (R-task-38).
+- **R-task-13 (exactly three exits)** — unchanged. A future-dated task uses two of the same three (R-task-36); no "move to another week" exists, and S-task-13-1 still refuses one.
+- **R-task-19 (uncheck)** — unchanged: a task completed in a past week and unchecked carries into the current week under its original origin. No future-week interaction.
+- **R-backlog-6/9 (conversion is atomic and once-only)** — unchanged; only the target week is new.
+- **R-backlog-12 (Life-goal read-only aggregate)** — unchanged, and explicitly exempt from manual order (R-backlog-21).
+- **R-nav-14 (removed by design)** — unchanged, and R-plan-20 defends it: an arriving plan gets no review step.
+- **R-auth-5 / Q-9 (week boundaries from the owner's timezone)** — unchanged and now more load-bearing: `PLAN_AHEAD_WEEKS` is counted from the same server-derived current week.
+- **Q-5 (goal deletion cascade)** — unchanged: it already deletes every WeeklyFocus in the subtree, of every week.
