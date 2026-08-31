@@ -28,10 +28,11 @@ describe('the surface an agent connects to', () => {
     const templates = (await rpc(await mcp(t, token, 'resources/templates/list'))).result.resourceTemplates as Array<{ uriTemplate: string }>;
     const prompts = (await rpc(await mcp(t, token, 'prompts/list'))).result.prompts as Array<{ name: string }>;
 
-    // 42 from the design + `change_password`, which the owner explicitly added by overruling rail 2.
-    expect(tools).toHaveLength(43);
-    expect(resources.length + templates.length).toBe(11);
-    expect(prompts).toHaveLength(5);
+    // 42 from the design + `change_password` (the owner explicitly added it by overruling rail 2),
+    // minus the 5 idea tools retired with the Ideas entity.
+    expect(tools).toHaveLength(38);
+    expect(resources.length + templates.length).toBe(10);
+    expect(prompts).toHaveLength(4);
 
     // Every tool must be understandable by the model that has to choose it. A tool with a thin
     // description is a tool that gets misused, and the descriptions are a deliverable here.
@@ -42,7 +43,6 @@ describe('the surface an agent connects to', () => {
     expect(prompts.map((p) => p.name).sort()).toEqual([
       'goal_health_check',
       'plan_the_week',
-      'process_ideas',
       'review_the_carry',
       'triage_the_backlog',
     ]);
@@ -328,23 +328,7 @@ describe('backlog', () => {
   });
 });
 
-describe('ideas and learnings', () => {
-  it('happy path: an idea becomes a task, or a backlog item, and is consumed either way', async () => {
-    const { life, month } = await tree();
-
-    const toTask = (await ok(t, token, 'capture_idea', { text: 'Try the new route', goal_id: life.id })).idea;
-    const task = await ok(t, token, 'convert_idea_to_task', { idea_id: toTask.id, goal_id: month.id });
-    expect(task.task.title).toBe('Try the new route');
-    expect((await ok(t, token, 'list_ideas')).ideas.find((i: any) => i.id === toTask.id)).toBeUndefined();
-
-    const toBacklog = (await ok(t, token, 'capture_idea', { text: 'Park this one' })).idea;
-    expect((await ok(t, token, 'attach_idea_to_goal', { idea_id: toBacklog.id, goal_id: month.id })).item.title).toBe('Park this one');
-    expect((await ok(t, token, 'list_ideas')).ideas.find((i: any) => i.id === toBacklog.id)).toBeUndefined();
-
-    const doomed = (await ok(t, token, 'capture_idea', { text: 'Discard me' })).idea;
-    expect((await ok(t, token, 'delete_idea', { idea_id: doomed.id })).deleted).toBe(true);
-  });
-
+describe('learnings', () => {
   it('happy path: learnings are tagged, badged, re-tagged and discarded — never converted', async () => {
     const { life } = await tree();
     const l = (await ok(t, token, 'capture_learning', { text: 'Mornings work better', goal_id: life.id })).learning;
@@ -359,14 +343,10 @@ describe('ideas and learnings', () => {
     }
   });
 
-  it('NOT_A_LIFE_GOAL — the tag/attach asymmetry, which is genuinely counter-intuitive', async () => {
-    const { life, month } = await tree();
-    // An idea's TAG must be a Life goal…
-    const tagErr = await refused(t, token, 'capture_idea', { text: 'x', goal_id: month.id }, 'NOT_A_LIFE_GOAL');
+  it("NOT_A_LIFE_GOAL — a learning's tag must be a Life goal, never a sub-goal", async () => {
+    const { month } = await tree();
+    const tagErr = await refused(t, token, 'capture_learning', { text: 'x', goal_id: month.id }, 'NOT_A_LIFE_GOAL');
     expect(tagErr.recovery).toMatch(/Life root|null/i);
-    // …while an idea's ATTACH target must be a NON-Life goal.
-    const idea = (await ok(t, token, 'capture_idea', { text: 'y' })).idea;
-    await refused(t, token, 'attach_idea_to_goal', { idea_id: idea.id, goal_id: life.id }, 'LIFE_GOAL_NO_BACKLOG');
   });
 });
 
@@ -410,7 +390,7 @@ describe('resources', () => {
     expect(JSON.parse(await read('goalcascade://tree')).goals.length).toBeGreaterThan(0);
     expect(JSON.parse(await read('goalcascade://week/current')).plan.length).toBeGreaterThan(0);
     expect(JSON.parse(await read('goalcascade://account')).user.id).toBeTruthy();
-    for (const uri of ['goalcascade://backlog', 'goalcascade://ideas', 'goalcascade://learnings']) {
+    for (const uri of ['goalcascade://backlog', 'goalcascade://learnings']) {
       expect(JSON.parse(await read(uri)), uri).toBeTruthy();
     }
 
@@ -448,7 +428,6 @@ describe('prompts', () => {
     expect(await get('review_the_carry', { weeks: '3' })).toMatch(/at least 3 weeks old/);
     expect(await get('review_the_carry')).toMatch(/Never offer to defer, snooze, reschedule/);
     expect(await get('triage_the_backlog', { goal: 'Health' })).toContain('under "Health"');
-    expect(await get('process_ideas')).toMatch(/One decision at a time/);
     expect(await get('goal_health_check')).toMatch(/Never propose deleting a goal/);
   });
 });

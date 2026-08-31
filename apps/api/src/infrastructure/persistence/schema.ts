@@ -334,22 +334,6 @@ export const backlogLinks = sqliteTable(
   (t) => [index('ix_backlog_links_item').on(t.userId, t.itemId, t.createdAt, t.id)],
 );
 
-/** R-idea-2 — `goal_id` is an optional LIFE-goal tag; null = Unsorted, and Q-5 nulls it rather than cascading. */
-export const ideas = sqliteTable(
-  'ideas',
-  {
-    id: text('id').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    goalId: text('goal_id'),
-    text: text('text').notNull(),
-    capturedAt: text('captured_at').notNull(),
-    createdAt: text('created_at').notNull(),
-  },
-  (t) => [index('ix_ideas_owner').on(t.userId, t.capturedAt, t.id)],
-);
-
 /** R-learning-4 / D-23 — `applied` is the "changed the plan" badge, set by an explicit user action. */
 export const learnings = sqliteTable(
   'learnings',
@@ -486,7 +470,6 @@ export const schema = {
   taskEvents,
   backlogItems,
   backlogLinks,
-  ideas,
   learnings,
   idempotencyKeys,
   authRateLimits,

@@ -41,7 +41,9 @@ schemas. Every constraint below is the constraint already encoded in `packages/s
 
 ## 2. The tool list
 
-**42 tools: 12 read-only, 30 mutating.**
+**37 tools: 11 read-only, 26 mutating.** *(Was 42/12/30; the five Idea tools were retired with the
+Ideas entity — SPEC §6 Amendment 2. The shipped surface adds `change_password`, so the server
+advertises 38.)*
 
 | Category | Read | Mutating |
 |---|---|---|
@@ -50,7 +52,6 @@ schemas. Every constraint below is the constraint already encoded in `packages/s
 | Weekly plan / focus | 1 | 3 |
 | Tasks | 2 | 8 |
 | Backlog | 1 | 5 |
-| Ideas | 1 | 4 |
 | Learnings | 1 | 4 |
 | Account & preferences | 1 | 1 |
 
@@ -74,13 +75,13 @@ Conventions used in every table below:
 
 > Start here. Returns the owner's entire goal tree as an indented outline with ids and paths, the current
 > week, which branches are active this week and their focus sentences, plus counts of open tasks,
-> backlog items, ideas and learnings. One call is enough to answer "what is this person working on".
+> backlog items and learnings. One call is enough to answer "what is this person working on".
 
 Backed by `GET /bootstrap` (`BootstrapResponse`), reshaped.
 
 | Field | Type | Req. | Constraint | Meaning |
 |---|---|---|---|---|
-| `include` | string[] | no | subset of `["tree","week","tasks","backlog","ideas","learnings"]`, default all | Trims the payload when the agent already has context. |
+| `include` | string[] | no | subset of `["tree","week","tasks","backlog","learnings"]`, default all | Trims the payload when the agent already has context. |
 | `week_offset` | integer | no | `-520 … 0`, default `0` | Which week the snapshot is about. `0` = this week. |
 
 Output:
@@ -102,9 +103,8 @@ Output:
   "active_leaves": [ { "id": "01J…", "path": "…", "focus": "…" } ],
   "tasks": [ /* TaskView, this week */ ],
   "backlog": [ /* BacklogItemView, open only */ ],
-  "ideas": [ /* IdeaView */ ],
   "learnings": [ /* LearningView */ ],
-  "counts": { "goals": 14, "open_tasks": 9, "carrying_tasks": 3, "backlog": 11, "ideas": 4, "learnings": 6 },
+  "counts": { "goals": 14, "open_tasks": 9, "carrying_tasks": 3, "backlog": 11, "learnings": 6 },
   "server_now": "2026-08-31T09:12:00.000Z"
 }
 ```
@@ -127,7 +127,7 @@ is one request and matching is local.
 |---|---|---|---|---|
 | `query` | string | **yes** | 1–200 chars | Free text matched against `title`, `why` and the full ancestor path. |
 | `horizon` | string | no | `Life`\|`Yearly`\|`Quarterly`\|`Monthly` | Restrict to one horizon. |
-| `only` | string | no | `any` (default) \| `leaves` \| `active_leaves` \| `can_hold_backlog` \| `life` | `active_leaves` = valid task targets (R-task-4); `can_hold_backlog` = non-Life (R-backlog-2); `life` = valid Idea/Learning tags (R-idea-2, R-learning-2). |
+| `only` | string | no | `any` (default) \| `leaves` \| `active_leaves` \| `can_hold_backlog` \| `life` | `active_leaves` = valid task targets (R-task-4); `can_hold_backlog` = non-Life (R-backlog-2); `life` = valid Learning tags (R-learning-2). |
 | `limit` | integer | no | `1…20`, default `5` | Candidates returned. |
 
 Output:
@@ -198,7 +198,7 @@ Rules: R-goal-27, R-backlog-11/12, R-learning-5, R-goal-21/23.
 
 > **Call this before `delete_goal`, always.** Returns exactly what deleting this goal would destroy: the
 > sub-goals, weekly focuses, tasks (with their activity timelines) and backlog items in its whole
-> subtree, plus the ideas and learnings that would fall back to "Unsorted". Show these numbers to the
+> subtree, plus the learnings that would fall back to "Unsorted". Show these numbers to the
 > user and get their agreement before deleting.
 
 | Field | Type | Req. | Constraint | Meaning |
@@ -212,7 +212,7 @@ Output:
   "goal": { "id": "01J…", "title": "Q3 2026", "path": "Health › … › Q3 2026", "horizon": "Quarterly" },
   "would_remove": { "goals": 3, "weekly_focuses": 2, "tasks": 11, "open_tasks": 4,
                     "task_events": 63, "backlog_items": 7 },
-  "would_untag": { "ideas": 1, "learnings": 2 },
+  "would_untag": { "learnings": 2 },
   "subtree": [ { "id": "01J…", "title": "Sep 2026", "horizon": "Monthly",
                  "open_tasks": 4, "backlog_items": 3 } ],
   "requires_cascade": true,      // true iff the goal has descendants
@@ -231,7 +231,7 @@ week*, so done-in-a-past-week and exited tasks are invisible to it. Needed: a dr
 delete in the product is the one with no preview. Until it ships, `delete_goal` must be disabled for any
 goal whose `get_goal` shows children or backlog (§7, rail 1).
 
-Rules: Q-5, R-goal-28, S-idea-7-1, D-27.
+Rules: Q-5, R-goal-28, D-27.
 
 ---
 
@@ -321,7 +321,7 @@ Rules: R-goal-22/23, D-3; refuses with `LIFE_GOAL_IMMUTABLE`, `VALIDATION_FAILED
 #### `delete_goal` `[MUTATING]` **destructive**
 
 > Permanently delete a goal **and its entire subtree**: every sub-goal, weekly focus, task (with its
-> activity timeline) and backlog item below it. Ideas and learnings tagged to anything deleted fall back
+> activity timeline) and backlog item below it. Learnings tagged to anything deleted fall back
 > to "Unsorted". There is no undo and no trash. You must call `preview_goal_deletion` first and repeat
 > its counts to the user; only set `confirm_cascade` after the user has agreed to those specific numbers.
 
@@ -333,8 +333,8 @@ Backed by `DELETE /goals/:id?cascade=` (`DeleteGoalResponse`).
 | `confirm_cascade` | boolean | **yes** | must be `true` when the goal has descendants | Explicit acknowledgement of the subtree delete. Maps to `?cascade=true`. |
 | `acknowledged_counts` | object | **yes** | `{ goals, tasks, backlog_items }` from `preview_goal_deletion` | Server compares against live counts and refuses with `VALIDATION_FAILED` if the tree changed since the preview. |
 
-Output: `{ deleted: true, removed: { goals, weekly_focuses, tasks, task_events, backlog_items }, untagged: { ideas, learnings }, server_now }`.
-Rules: Q-5, S-idea-7-1, D-27; refuses with `GOAL_HAS_CHILDREN` (details carry `subGoals`/`tasks`/`backlogItems`).
+Output: `{ deleted: true, removed: { goals, weekly_focuses, tasks, task_events, backlog_items }, untagged: { learnings }, server_now }`.
+Rules: Q-5, D-27; refuses with `GOAL_HAS_CHILDREN` (details carry `subGoals`/`tasks`/`backlogItems`).
 
 `acknowledged_counts` is enforced in the MCP layer (re-run the preview, compare, refuse on mismatch) —
 no backend change needed beyond `preview_goal_deletion`.
@@ -499,7 +499,7 @@ Backed by `POST /tasks` (`CreateTaskRequest`).
 | `cond` | string | no | trimmed, ≤ 200, default `""` | Done-condition — how you'll know it's done. Optional by design; do not fabricate one. |
 | `description` | string | no | trimmed, ≤ 4000, default `""` | Notes. |
 | `links` | string[] | no | ≤ 20 items, each an `http(s)` URL ≤ 2048 chars | External links. |
-| `source` | string | no | `planning` (default) \| `drawer` | Recorded once on the `Created — …` event. `backlog` and `idea` are set by the conversion tools and must not be passed here. |
+| `source` | string | no | `planning` (default) \| `drawer` | Recorded once on the `Created — …` event. `backlog` is set by the conversion tool and must not be passed here. |
 
 Output: `{ task: TaskDetailView, server_now }`.
 Rules: R-task-1/2/3/4/5/6, D-10; refuses with `NOT_A_LEAF`, `BRANCH_NOT_ACTIVE`, `VALIDATION_FAILED`.
@@ -741,87 +741,7 @@ Rules: R-backlog-6/7/8/9, Q-4, D-18, D-19; refuses with `BRANCH_NOT_ACTIVE`,
 
 ---
 
-### 2.6 Ideas (parking lot)
-
-#### `list_ideas` `[READ-ONLY]`
-
-> Parked thoughts, grouped by Life goal then "Unsorted", newest first.
-
-Backed by `GET /ideas`. Input: none. Output: `{ ideas: [{ …IdeaView, goal_title }], grouped: {...}, server_now }`.
-Rules: R-idea-7, S-idea-7-1.
-
----
-
-#### `capture_idea` `[MUTATING]`
-
-> Park a distracting thought in two seconds. Text only. The optional tag is a **Life goal** or nothing.
-
-Backed by `POST /ideas` (`CreateIdeaRequest`).
-
-| Field | Type | Req. | Constraint | Meaning |
-|---|---|---|---|---|
-| `text` | string | **yes** | trimmed, 1–500 | The thought. |
-| `goal_id` | string \| null | no | ULID of a **Life** goal, or `null` (default) | Tag. A non-Life goal is refused. |
-
-Output: `{ idea: IdeaView, server_now }`. Rules: R-idea-1/2; refuses with `NOT_A_LIFE_GOAL`.
-
----
-
-#### `attach_idea_to_goal` `[MUTATING]`
-
-> Send an idea to a goal's backlog. The idea's text becomes a backlog item on the chosen **non-Life**
-> goal and the idea is removed, in one operation.
-
-Backed by `POST /ideas/:id/attach` (`AttachIdeaRequest`).
-
-| Field | Type | Req. | Constraint | Meaning |
-|---|---|---|---|---|
-| `idea_id` | string | **yes** | ULID | Target. |
-| `goal_id` | string | **yes** | ULID; **non-Life** goal | Receiving goal. |
-
-Output: `{ item: BacklogItemView, idea_id, server_now }`.
-Rules: R-idea-5, R-backlog-2/4; refuses with `LIFE_GOAL_NO_BACKLOG`.
-
-Note the asymmetry, and it is intentional: an idea's *tag* must be a **Life** goal (R-idea-2), while an
-idea's *attach target* must be a **non-Life** goal (R-idea-5). Different fields, different rules.
-
----
-
-#### `convert_idea_to_task` `[MUTATING]`
-
-> "Task this week": the idea becomes a task under an active leaf and is consumed — but only if the task
-> is actually created. If no branch is active, activate one first; never route the task to a fallback
-> goal.
-
-Backed by `POST /ideas/:id/convert-to-task` (`ConvertIdeaRequest`).
-
-| Field | Type | Req. | Constraint | Meaning |
-|---|---|---|---|---|
-| `idea_id` | string | **yes** | ULID | Target. |
-| `goal_id` | string | **yes** | ULID; **active non-Life leaf** | Where the task lands. |
-| `title` | string | no | trimmed, 1–200 | Override; defaults to the idea's text (truncated to 200, remainder into the description). |
-| `cond` | string | no | trimmed, ≤ 200, default `""` | Done-condition. |
-
-Output: `{ task: TaskDetailView, idea_id, server_now }`.
-Rules: R-idea-4, R-task-4, D-22; refuses with `NOT_A_LEAF`, `BRANCH_NOT_ACTIVE`.
-
----
-
-#### `delete_idea` `[MUTATING]`
-
-> Discard a parked idea. No confirmation is required by the product, but say what you are deleting first.
-
-Backed by `DELETE /ideas/:id`.
-
-| Field | Type | Req. | Constraint | Meaning |
-|---|---|---|---|---|
-| `idea_id` | string | **yes** | ULID | Target. |
-
-Output: `{ deleted: true, server_now }`. Rules: R-idea-6.
-
----
-
-### 2.7 Learnings
+### 2.6 Learnings
 
 #### `list_learnings` `[READ-ONLY]`
 
@@ -892,7 +812,7 @@ Output: `{ deleted: true, server_now }`. Rules: R-learning-6.
 
 ---
 
-### 2.8 Account and preferences
+### 2.7 Account and preferences
 
 #### `get_account` `[READ-ONLY]`
 
@@ -936,7 +856,6 @@ owner-scoped and require the same session as the tools.
 | `goalcascade://week/current` | `application/json` | This week's `week`, `plan` entries with goal paths, `tasks` with carry labels, and the list of dormant leaves. | Per read; changes on every plan/task write. |
 | `goalcascade://week/{week_start}` | `application/json` | The same for a past week, addressed by its Monday (`YYYY-MM-DD`). Future weeks are never resolvable. | Immutable once past, apart from edits. |
 | `goalcascade://backlog` | `application/json` | Every open backlog item with `goal_path` and `convertible`. | Per read. |
-| `goalcascade://ideas` | `application/json` | Open ideas, grouped. | Per read. |
 | `goalcascade://learnings` | `application/json` | Learnings, grouped, with the `applied` badge. | Per read. |
 | `goalcascade://account` | `application/json` | User, preferences, timezone, current week, `week_history_weeks`. | Rarely. |
 | `goalcascade://rules/business-rules` | `text/markdown` | `docs/BUSINESS-RULES.md` **verbatim**. The product's own prose is the best available explanation of the horizon hierarchy, the three exits and the week model; shipping it beats paraphrasing it. Static. | Static, embedded at deploy. |
@@ -988,7 +907,7 @@ Show me what is carrying and help me decide what to do about it.
 1. Call list_tasks(week_offset=0, state="carrying"). Group the results by Life goal, using
    goalcascade://tree/outline for the paths.
 2. For every task at least {{weeks}} weeks old, call get_task and read its activity timeline. Tell me:
-   when it was created and from where (planning, backlog, an idea, the drawer), how many weeks it has
+   when it was created and from where (planning, backlog, the drawer), how many weeks it has
    carried, whether it has ever been renamed or had its done-condition changed, and whether its branch
    still has a focus this week.
 3. For each one, state the honest reading in one line — for example: "carried 4 weeks, no
@@ -1029,31 +948,6 @@ Help me triage the Goal Cascade backlog{{#goal}} under "{{goal}}"{{/goal}}.
 
 Converting consumes the item — it becomes a task and leaves the backlog. Say so before the first
 conversion.
-```
-
----
-
-### `process_ideas`
-
-Arguments: none.
-
-```
-Clear the Goal Cascade parking lot with me.
-
-1. Call list_ideas and read goalcascade://tree/outline.
-2. Read the ideas back grouped by Life goal, with Unsorted last. Keep it short — these are two-second
-   captures, not documents.
-3. Go through them one at a time and offer exactly the three things an idea can become:
-     - a task this week (convert_idea_to_task) — name the active leaf it would land under; if no
-       branch is active, say so and offer to set a focus first rather than picking some other goal
-     - a backlog item on a goal (attach_idea_to_goal) — the target must be a Yearly, Quarterly or
-       Monthly goal, never a Life goal
-     - deleted (delete_idea)
-   An idea can also stay parked. That is a real answer; offer it.
-4. If an idea reads more like an insight than a piece of work — something that would change the plan
-   rather than something to do — say so and offer capture_learning instead, then delete the idea.
-
-Do not batch-convert. One decision at a time, mine.
 ```
 
 ---
@@ -1120,11 +1014,10 @@ parked item on its own goal, keeping description and links), or CANCEL. There is
 not offer or simulate defer, snooze, reschedule, or move-to-another-week. Unchecking a completed task
 re-opens it under its ORIGINAL creation week, so it comes back with the age it really has.
 
-BACKLOG, IDEAS, LEARNINGS. Backlog items are deferred work on a Yearly/Quarterly/Monthly goal — never
-a Life goal, never a week — with no checkbox, no due date and no status. Converting one is the only
-way backlog becomes work, and it consumes the item. Ideas are two-second captures with an optional
-LIFE-goal tag; they can become a task, a backlog item, or nothing. Learnings are insights, tagged to a
-Life goal, and are never converted into work.
+BACKLOG AND LEARNINGS. Backlog items are deferred work on a Yearly/Quarterly/Monthly goal — never a
+Life goal, never a week — with no checkbox, no due date and no status. Converting one is the only way
+backlog becomes work, and it consumes the item. Learnings are insights, tagged to a Life goal, and are
+never converted into work.
 
 HOW TO WORK. Start with get_overview. Resolve names to ids with find_goal and ask when it reports
 ambiguity — acting on the wrong goal is the worst thing you can do here. Reasons on exits and re-plans
@@ -1171,7 +1064,7 @@ The rest, in brief:
 | Code | Recovery |
 |---|---|
 | `NOT_A_LEAF` | The goal is a Life goal or has children. Pick a leaf below it (`find_goal(only="leaves")`). |
-| `NOT_A_LIFE_GOAL` | Idea/Learning tags must be a Life goal or `null`. Use the goal's Life root. |
+| `NOT_A_LIFE_GOAL` | Learning tags must be a Life goal or `null`. Use the goal's Life root. |
 | `LIFE_GOAL_NO_BACKLOG` | Backlog items need a Yearly/Quarterly/Monthly goal. Pick a descendant. |
 | `LIFE_GOAL_IMMUTABLE` | Life goals cannot be moved or re-planned. Say so; do not work around it. |
 | `GOAL_HAS_OPEN_TASKS` | Making a leaf a parent while it still holds open tasks is refused. Move or close those tasks first, then retry. `details` names them. |
@@ -1222,11 +1115,11 @@ the reason. Each is individually overrulable.
    `find_goal` makes resolution a visible, ambiguity-reporting step, and its `ambiguous: true` flag is
    what the model is told to escalate on.
 
-5. **`delete_backlog_item` and `delete_idea` are confirm-then-act; `discard_learning` should be too.**
+5. **`delete_backlog_item` is confirm-then-act; `discard_learning` should be too.**
    There is no archive anywhere in this product. Deleting a parked item is cheap for an agent and
    irreversible for the owner, and "clean up my backlog" is exactly the kind of instruction that reads as
    a licence to bulk-delete. `delete_backlog_item` carries a required `confirmed: true`; the prompts
-   instruct one-at-a-time processing for ideas.
+   instruct one-at-a-time processing.
 
 6. **The agent never supplies an `Idempotency-Key`.** An LLM cannot reliably reason about when two calls
    are "the same operation", and a reused key across genuinely different intents returns a stale replay

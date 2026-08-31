@@ -149,7 +149,7 @@ describe('R-task-5/6 — origin is the current week, always', () => {
 
     // The client is looking at week −2; creation carries no week and cannot back-date (R-task-6).
     expect((await listWeek(t, cookie, -2)).week.weekStart).toBe(MON.aug17);
-    const task = await seedTask(t, cookie, { goalId: leaf.id, title: 'from an idea', source: 'idea' });
+    const task = await seedTask(t, cookie, { goalId: leaf.id, title: 'from the drawer', source: 'drawer' });
 
     expect(task.originWeekStart).toBe(MON.aug31);
     expect((await listWeek(t, cookie, -2)).tasks).toEqual([]);

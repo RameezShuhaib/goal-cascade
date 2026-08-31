@@ -3,7 +3,6 @@ import {
   BacklogResponse,
   BootstrapResponse,
   ENDPOINTS as E,
-  IdeasResponse,
   LearningsResponse,
   WEEK_HISTORY_WEEKS,
   type GoalsResponse,
@@ -122,7 +121,6 @@ beforeAll(async () => {
   ];
 
   await post(E.backlog, { goalId: monthly, title: 'Book the race entry' });
-  await post(E.ideas, { text: 'Try the shorter route' });
   await post(E.learnings, { text: 'Two rest days is not laziness', goalId: life });
 });
 
@@ -145,7 +143,6 @@ describe('GET /bootstrap', () => {
     expect(boot.plan.map((p) => p.goalId)).toEqual([monthly]);
     expect(boot.tasks).toEqual([]);
     expect(boot.backlog.map((i) => i.title)).toEqual(['Book the race entry']);
-    expect(boot.ideas.map((i) => i.text)).toEqual(['Try the shorter route']);
     expect(boot.learnings.map((l) => l.text)).toEqual(['Two rest days is not laziness']);
 
     // Every array is internally consistent with the tree it ships alongside.
@@ -168,11 +165,9 @@ describe('GET /bootstrap', () => {
     const boot = BootstrapResponse.parse(await (await t.fetch(`${API_BASE}${E.bootstrap}`, { cookie: f.cookie })).json());
 
     const backlog = BacklogResponse.parse(await (await t.fetch(`${API_BASE}${E.backlog}`, { cookie: f.cookie })).json());
-    const ideas = IdeasResponse.parse(await (await t.fetch(`${API_BASE}${E.ideas}`, { cookie: f.cookie })).json());
     const learnings = LearningsResponse.parse(await (await t.fetch(`${API_BASE}${E.learnings}`, { cookie: f.cookie })).json());
 
     expect(boot.backlog).toEqual(backlog.items);
-    expect(boot.ideas).toEqual(ideas.ideas);
     expect(boot.learnings).toEqual(learnings.learnings);
   });
 

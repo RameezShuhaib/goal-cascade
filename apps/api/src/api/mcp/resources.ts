@@ -3,7 +3,6 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import {
   BacklogService,
   GoalService,
-  IdeaService,
   LearningService,
   MeService,
   PlanService,
@@ -133,13 +132,6 @@ export function registerResources(server: McpServer, deps: McpDeps): void {
       const paths = pathIndex(tree.goals);
       return json(uri, { items: res.items.map((i) => ({ ...i, goal_path: paths.get(i.goalId) })), server_now: res.serverNow });
     },
-  );
-
-  server.registerResource(
-    'ideas',
-    'goalcascade://ideas',
-    { title: 'Ideas', description: 'The parking lot, newest first.', mimeType: 'application/json' },
-    async (uri) => json(uri, await dc.resolve(IdeaService).list(ctx)),
   );
 
   server.registerResource(

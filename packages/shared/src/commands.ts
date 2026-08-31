@@ -5,7 +5,6 @@ import {
   GoalView,
   Horizon,
   IanaTimezone,
-  IdeaView,
   Iso,
   LearningView,
   LongText,
@@ -67,7 +66,7 @@ export const GoalFilterQuery = z.object({ goalId: Ulid.optional() }).strict();
 
 /**
  * Q-5 — deletion cascades the WHOLE subtree (focuses, tasks, task events, backlog items) in one
- * transaction; Idea/Learning tags pointing into it null out to Unsorted rather than cascading. There is
+ * transaction; Learning tags pointing into it null out to Unsorted rather than cascading. There is
  * no soft-delete and no trash.
  *
  * `cascade` is the explicit acknowledgement of that: without it, deleting a goal that has children is
@@ -101,8 +100,8 @@ export const DeleteGoalResponse = z.object({
     taskEvents: z.int().nonnegative(),
     backlogItems: z.int().nonnegative(),
   }),
-  /** Ideas/Learnings whose tag pointed into the removed subtree and are now Unsorted (S-idea-7-1). */
-  untagged: z.object({ ideas: z.int().nonnegative(), learnings: z.int().nonnegative() }),
+  /** Learnings whose tag pointed into the removed subtree and are now Unsorted (Q-5). */
+  untagged: z.object({ learnings: z.int().nonnegative() }),
   ...ServerNow,
 });
 
@@ -277,9 +276,9 @@ export const PlanResponse = z.object({
 
 /**
  * R-task-1/3/5/6 — a task is always created in the CURRENT week (there is no back-dating, and
- * `originWeekStart` is server-assigned and immutable) under an ACTIVE non-Life leaf. The four entry
- * points (planning, a backlog pull, an idea, the + drawer) differ only in `source`, which is recorded on
- * the `created` event. `cond` (the done-condition) is optional by design.
+ * `originWeekStart` is server-assigned and immutable) under an ACTIVE non-Life leaf. The three entry
+ * points (planning, a backlog pull, the + drawer) differ only in `source`, which is recorded on the
+ * `created` event. `cond` (the done-condition) is optional by design.
  *
  * A `goalId` that is not an active non-Life leaf is refused: `NOT_A_LEAF` if it has children or is a Life
  * goal, `BRANCH_NOT_ACTIVE` if it holds no focus this week (R-task-4, D-10 — there is no fallback goal).
@@ -383,29 +382,6 @@ export const BacklogItemResponse = z.object({ item: BacklogItemView, ...ServerNo
 export const ConvertBacklogItemResponse = z.object({ task: TaskDetailView, item: BacklogItemView, ...ServerNow });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Ideas (parking lot) — two-second capture, read-only apart from tap actions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** R-idea-2 — `goalId` is an optional LIFE-goal tag; a non-Life goal is refused (`NOT_A_LIFE_GOAL`). */
-export const CreateIdeaRequest = z.object({ text: CaptureText, goalId: Ulid.nullable().default(null) }).strict();
-
-/**
- * R-idea-5 — "Attach to a goal": the idea's text becomes a backlog item on the chosen NON-Life goal and
- * the idea is removed, in one transaction.
- */
-export const AttachIdeaRequest = z.object({ goalId: Ulid }).strict();
-
-/**
- * R-idea-4 — "Task this week": the idea becomes a task under an active leaf and is consumed ONLY on
- * successful creation (D-22 — the mockup deleted it before the modal was saved and lost it on cancel).
- */
-export const ConvertIdeaRequest = z.object({ goalId: Ulid, title: Title.optional(), cond: OneLiner.default('') }).strict();
-
-export const IdeaResponse = z.object({ idea: IdeaView, ...ServerNow });
-export const AttachIdeaResponse = z.object({ item: BacklogItemView, ideaId: Ulid, ...ServerNow });
-export const ConvertIdeaResponse = z.object({ task: TaskDetailView, ideaId: Ulid, ...ServerNow });
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Learnings — an insight that might change the plan. Never converted into work.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -463,12 +439,6 @@ export type MoveBacklogItemRequest = z.infer<typeof MoveBacklogItemRequest>;
 export type ConvertBacklogItemRequest = z.infer<typeof ConvertBacklogItemRequest>;
 export type BacklogItemResponse = z.infer<typeof BacklogItemResponse>;
 export type ConvertBacklogItemResponse = z.infer<typeof ConvertBacklogItemResponse>;
-export type CreateIdeaRequest = z.infer<typeof CreateIdeaRequest>;
-export type AttachIdeaRequest = z.infer<typeof AttachIdeaRequest>;
-export type ConvertIdeaRequest = z.infer<typeof ConvertIdeaRequest>;
-export type IdeaResponse = z.infer<typeof IdeaResponse>;
-export type AttachIdeaResponse = z.infer<typeof AttachIdeaResponse>;
-export type ConvertIdeaResponse = z.infer<typeof ConvertIdeaResponse>;
 export type CreateLearningRequest = z.infer<typeof CreateLearningRequest>;
 export type PatchLearningRequest = z.infer<typeof PatchLearningRequest>;
 export type AttachLearningRequest = z.infer<typeof AttachLearningRequest>;

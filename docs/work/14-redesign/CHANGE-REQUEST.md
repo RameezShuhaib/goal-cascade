@@ -144,6 +144,13 @@ purpose.
 The one thing that cannot be decided from the request is **what happens to Ideas that already
 exist** in the account. See open questions.
 
+> **Resolved and shipped — see `docs/work/15-remove-ideas/build.md`.** The owner answered question 3:
+> *"forget about it nor i care about its data as i didnt use it."* So there is no migration, no export
+> and no conversion: the `ideas` table is dropped with its rows
+> (`apps/api/migrations/0002_drop_ideas.sql`). CR-6 is done end to end and is independent of the rest of
+> this change request; SPEC §6 Amendment 2 is its ledger. The tab bar in that change is
+> `Tasks · Goals · + · Learnings` — removing the Tasks tab belongs to CR-1/CR-4, not to CR-6.
+
 ---
 
 ## Open questions — for the owner, before any spec pass
@@ -161,13 +168,15 @@ work that has to be redone.
    and goals never hold tasks directly — tasks hang off a focus. `[recommended]` Tasks hang off
    Weekly goals, and only Weekly goals.
 
-3. **What happens to existing Ideas?** Options: silently convert each into a backlog item on its
-   tagged Life goal (untagged ones need a home); export them somewhere first; or delete them
-   outright. `[recommended]` Convert, since an Idea and a backlog item already carry nearly the
-   same fields — but this is data the owner may not want moved without being asked.
+3. ~~**What happens to existing Ideas?**~~ **ANSWERED — delete them with the table.** Options were:
+   silently convert each into a backlog item on its tagged Life goal (untagged ones need a home);
+   export them somewhere first; or delete them outright. `[recommended]` Convert. The owner overruled
+   the recommendation: *"forget about it nor i care about its data as i didnt use it."* Shipped as a
+   plain `DROP TABLE ideas` — no migration, no export.
 
-4. **What are the tabs now?** Tasks and Ideas both go. Today: Tasks · Goals · + · Ideas · Learnings.
-   A lens switcher has to live somewhere, and it is a five-way control, not a tab.
+4. **What are the tabs now?** Tasks and Ideas both go. Today, after CR-6 shipped:
+   Tasks · Goals · + · Learnings. A lens switcher has to live somewhere, and it is a five-way control,
+   not a tab. **Still open for the Tasks half** — CR-6 removed only the Ideas tab.
 
 5. **Does the Yearly lens get past/future navigation?** The request names Quarterly and Monthly
    explicitly and excludes Life. `[recommended]` Yes — by year, for consistency.
@@ -197,7 +206,7 @@ Recorded now so the eventual spec pass starts from something rather than nothing
   every ideas route removed; bootstrap read model reshaped around lenses.
 - **Contract:** `Horizon` enum, `WeekOffset`, every plan and idea schema, the error codes for
   ideas.
-- **MCP:** the 43-tool surface loses the idea tools, gains lens/period reads, and its server
+- **MCP:** the 43-tool surface loses the idea tools (**done** — 38 now), gains lens/period reads, and its server
   instructions block — which teaches connecting agents the horizon hierarchy and the focus
   concept — must be rewritten.
 - **Web:** the Goals tree screen, the Tasks screen, the Ideas screen, the tab bar, the task sheet,

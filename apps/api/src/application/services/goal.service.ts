@@ -33,7 +33,6 @@ import {
   IClock,
   IGoalRepo,
   IIdGenerator,
-  IIdeaRepo,
   ILearningRepo,
   ITaskEventRepo,
   ITaskLinkRepo,
@@ -66,7 +65,6 @@ export class GoalService {
     @inject(ITaskEventRepo) private readonly taskEvents: ITaskEventRepo,
     @inject(IBacklogRepo) private readonly backlog: IBacklogRepo,
     @inject(IBacklogLinkRepo) private readonly backlogLinks: IBacklogLinkRepo,
-    @inject(IIdeaRepo) private readonly ideas: IIdeaRepo,
     @inject(ILearningRepo) private readonly learnings: ILearningRepo,
     @inject(IIdGenerator) private readonly ids: IIdGenerator,
     @inject(IClock) private readonly clock: IClock,
@@ -218,9 +216,9 @@ export class GoalService {
 
   /**
    * Q-5 — the whole subtree, transactionally: goals, weekly focuses, tasks (with their links and
-   * events), backlog items (with their links). Idea and Learning tags pointing INTO the subtree null out
-   * to Unsorted instead of cascading, so an idea survives the deletion of the Life goal it was filed
-   * under (S-idea-7-1). No soft-delete, no trash.
+   * events), backlog items (with their links). Learning tags pointing INTO the subtree null out to
+   * Unsorted instead of cascading, so an insight survives the deletion of the Life goal it was filed
+   * under. No soft-delete, no trash.
    *
    * Without `?cascade=true`, a goal that still has children is refused with `GOAL_HAS_CHILDREN` and the
    * counts in `details` — exactly the "N sub-goals, M tasks, K backlog items" confirmation the client has
@@ -250,14 +248,12 @@ export class GoalService {
 
     const descendants = descendantIds(all, id);
     const subtree = [id, ...descendants];
-    const [taskRows, itemRows, focusRows, ideaRows, learningRows] = await Promise.all([
+    const [taskRows, itemRows, focusRows, learningRows] = await Promise.all([
       this.tasks.listByGoals(ctx.userId, subtree),
       this.backlog.listByGoals(ctx.userId, subtree),
       this.focuses.listByGoals(ctx.userId, subtree),
-      this.ideas.listAll(ctx.userId),
       this.learnings.listByGoals(ctx.userId, subtree),
     ]);
-    const taggedIdeasRead = ideaRows.filter((i) => i.goalId !== null && subtree.includes(i.goalId));
 
     if (opts.dryRun) {
       // The event count is the one number a preview cannot get from the reads above without a sixth
@@ -273,7 +269,7 @@ export class GoalService {
           taskEvents: events.length,
           backlogItems: itemRows.length,
         },
-        untagged: { ideas: taggedIdeasRead.length, learnings: learningRows.length },
+        untagged: { learnings: learningRows.length },
         serverNow: ctx.now,
       };
     }
@@ -294,7 +290,6 @@ export class GoalService {
       this.taskEvents.listByTasks(ctx.userId, taskIds),
       this.backlogLinks.listByItems(ctx.userId, itemIds),
     ]);
-    const taggedIdeas = taggedIdeasRead;
 
     const writes: GuardedWrite[] = [];
     /**
@@ -316,7 +311,6 @@ export class GoalService {
     removal('backlogLink.deleteByItems', this.backlogLinks.deleteByItemsStmt(ctx.userId, itemIds), itemLinkRows.length);
     removal('backlog.deleteByGoals', this.backlog.deleteByGoalsStmt(ctx.userId, subtree), itemRows.length);
     removal('weeklyFocus.deleteByGoals', this.focuses.deleteByGoalsStmt(ctx.userId, subtree), focusRows.length);
-    removal('idea.untagByGoals', this.ideas.untagByGoalsStmt(ctx.userId, subtree), taggedIdeas.length);
     removal('learning.untagByGoals', this.learnings.untagByGoalsStmt(ctx.userId, subtree), learningRows.length);
     writes.push({
       label: 'goal.deleteMany',
@@ -334,7 +328,7 @@ export class GoalService {
         taskEvents: eventRows.length,
         backlogItems: itemRows.length,
       },
-      untagged: { ideas: taggedIdeas.length, learnings: learningRows.length },
+      untagged: { learnings: learningRows.length },
       serverNow: ctx.now,
     };
   }
@@ -401,7 +395,7 @@ export class GoalService {
    * away. The defence against that resurrection is not deletion, it is the derivation: `isActive` /
    * `isDormant` / `subtreeActive` / `activeLeavesUnder` in `domain/goal-tree.ts`, and `toView` below, all
    * require leaf-ness AT READ TIME, and every current-week reader (`TaskService.assertActiveLeaf`,
-   * `IdeaService.requireActiveLeaf`, `BacklogService.resolveConversionTarget`) checks it too. A row that
+   * `BacklogService.resolveConversionTarget`) checks it too. A row that
    * survives therefore cannot make a non-leaf active, and once the goal is a leaf again the current
    * week's row is already gone — so it is plainly dormant, which is what S-goal-9-1 actually asserts
    * ("it is reported as not active and holds no focus").

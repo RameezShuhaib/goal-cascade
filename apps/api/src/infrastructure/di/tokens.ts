@@ -15,7 +15,6 @@ export {
   ITaskEventRepo,
   IBacklogRepo,
   IBacklogLinkRepo,
-  IIdeaRepo,
   ILearningRepo,
   IIdempotencyRepo,
   IEmailOutboxRepo,

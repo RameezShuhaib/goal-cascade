@@ -128,9 +128,6 @@ describe('idempotency middleware', () => {
       ['POST', '/api/backlog', { goalId: id, title: 'x' }],
       ['POST', `/api/backlog/${id}/move`, { goalId: id }],
       ['POST', `/api/backlog/${id}/convert-to-task`, {}],
-      ['POST', '/api/ideas', { text: 'x' }],
-      ['POST', `/api/ideas/${id}/attach`, { goalId: id }],
-      ['POST', `/api/ideas/${id}/convert-to-task`, { goalId: id }],
       ['POST', '/api/learnings', { text: 'x' }],
       ['POST', `/api/learnings/${id}/attach`, { goalId: null }],
     ];

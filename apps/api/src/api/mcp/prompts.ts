@@ -2,13 +2,13 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 /**
- * The five workflows, reproduced from `docs/research/MCP-TOOL-SURFACE.md` §4.
+ * The four workflows, reproduced from `docs/research/MCP-TOOL-SURFACE.md` §4.
  *
  * These are not convenience macros — they are where the product's *judgement* lives. Every one of them
  * ends by constraining what the agent may do on its own: `plan_the_week` forbids creating or completing
- * tasks, `review_the_carry` forbids offering a fourth exit, `process_ideas` forbids batching,
- * `goal_health_check` forbids proposing a deletion. Removing those lines would turn a careful workflow
- * into an autonomous one.
+ * tasks, `review_the_carry` forbids offering a fourth exit, `triage_the_backlog` says out loud that a
+ * conversion consumes the item, `goal_health_check` forbids proposing a deletion. Removing those lines
+ * would turn a careful workflow into an autonomous one.
  */
 const user = (text: string) => ({ messages: [{ role: 'user' as const, content: { type: 'text' as const, text } }] });
 
@@ -55,7 +55,7 @@ My notes for this week: ${notes}`),
 1. Call list_tasks(week_offset=0, state="carrying"). Group the results by Life goal, using
    goalcascade://tree/outline for the paths.
 2. For every task at least ${weeks} weeks old, call get_task and read its activity timeline. Tell me:
-   when it was created and from where (planning, backlog, an idea, the drawer), how many weeks it has
+   when it was created and from where (planning, backlog, the drawer), how many weeks it has
    carried, whether it has ever been renamed or had its done-condition changed, and whether its branch
    still has a focus this week.
 3. For each one, state the honest reading in one line — for example: "carried 4 weeks, no
@@ -97,32 +97,6 @@ Do not change any focus sentence or any goal in this workflow.`),
 
 Converting consumes the item — it becomes a task and leaves the backlog. Say so before the first
 conversion.`),
-  );
-
-  server.registerPrompt(
-    'process_ideas',
-    {
-      title: 'Clear the parking lot',
-      description: 'Go through parked ideas one at a time and offer exactly the things an idea can become.',
-      argsSchema: z.object({}),
-    },
-    () =>
-      user(`Clear the Goal Cascade parking lot with me.
-
-1. Call list_ideas and read goalcascade://tree/outline.
-2. Read the ideas back grouped by Life goal, with Unsorted last. Keep it short — these are two-second
-   captures, not documents.
-3. Go through them one at a time and offer exactly the three things an idea can become:
-     - a task this week (convert_idea_to_task) — name the active leaf it would land under; if no
-       branch is active, say so and offer to set a focus first rather than picking some other goal
-     - a backlog item on a goal (attach_idea_to_goal) — the target must be a Yearly, Quarterly or
-       Monthly goal, never a Life goal
-     - deleted (delete_idea)
-   An idea can also stay parked. That is a real answer; offer it.
-4. If an idea reads more like an insight than a piece of work — something that would change the plan
-   rather than something to do — say so and offer capture_learning instead, then delete the idea.
-
-Do not batch-convert. One decision at a time, mine.`),
   );
 
   server.registerPrompt(

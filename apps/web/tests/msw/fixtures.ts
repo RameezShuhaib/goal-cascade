@@ -2,7 +2,6 @@ import { API_TOKEN_PREFIX, MCP_PATH } from '@goal-cascade/shared';
 import type {
   BacklogItemView,
   GoalView,
-  IdeaView,
   LearningView,
   MeResponse,
   PlanEntryView,
@@ -150,15 +149,6 @@ export const backlogItem = (over: Partial<BacklogItemView> = {}): BacklogItemVie
   ...over,
 });
 
-export const idea = (over: Partial<IdeaView> = {}): IdeaView => ({
-  id: ulid(50),
-  goalId: null,
-  text: 'Try the 5am gym slot for a week',
-  capturedAt: NOW,
-  createdAt: NOW,
-  ...over,
-});
-
 export const learning = (over: Partial<LearningView> = {}): LearningView => ({
   id: ulid(60),
   goalId: null,
@@ -296,7 +286,6 @@ export const goalsResponse = () => ({ week: week(), goals: [goal(), leaf()], ser
 export const tasksResponse = () => ({ week: week(), tasks: [task()], plan: [planEntry()], serverNow: NOW });
 export const planResponse = () => ({ week: week(), entries: [planEntry()], serverNow: NOW });
 export const backlogResponse = () => ({ items: [backlogItem()], serverNow: NOW });
-export const ideasResponse = () => ({ ideas: [idea()], serverNow: NOW });
 export const learningsResponse = () => ({ learnings: [learning()], serverNow: NOW });
 export const preferencesResponse = () => ({ preferences: preferences(), serverNow: NOW });
 export const goalResponse = (over: Partial<GoalView> = {}) => ({ goal: goal(over), serverNow: NOW });
@@ -322,7 +311,6 @@ export const bootstrapResponse = () => ({
   plan: [planEntry()],
   tasks: [task()],
   backlog: [backlogItem()],
-  ideas: [idea()],
   learnings: [learning()],
   serverNow: NOW,
 });

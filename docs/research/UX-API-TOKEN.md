@@ -65,7 +65,7 @@ only rhythm:
 1. **A third circle breaks the read.** Two circles and a pill is a shape. Three circles and a pill is a
    toolbar, on every page, forever, to serve an action taken perhaps twice a year.
 2. **Ambient chrome is the wrong weight for this control.** The one button in this app that can hand away full
-   account access should not sit at the same visual weight as the light/dark toggle, on the Ideas screen, at
+   account access should not sit at the same visual weight as the light/dark toggle, on the Learnings screen, at
    all times. One tap of separation is the correct amount of ceremony: enough that it is never hit by accident,
    little enough that it is never hunted for.
 3. **It is already the right room.** The Account sheet holds identity: the email address, email verification,

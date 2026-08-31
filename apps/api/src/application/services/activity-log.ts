@@ -153,11 +153,10 @@ export function weekLabel(weekStart: string): string {
   return `Mon ${Number(day)} ${MONTHS[Number(month) - 1]}`;
 }
 
-/** R-task-2/30 — the four creation sources, each with its own line. */
+/** R-task-2/30 — the three creation sources, each with its own line. */
 const CREATED_TEXT: Record<TaskSource, string> = {
   planning: 'Created — weekly planning',
   backlog: 'Created — pulled from Backlog',
-  idea: 'Created — from an Idea',
   drawer: 'Created — added to this week',
 };
 

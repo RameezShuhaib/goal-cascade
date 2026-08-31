@@ -15,10 +15,6 @@ import {
   GoalsResponse,
   HEADERS,
   HealthResponse,
-  IdeaResponse,
-  IdeasResponse,
-  AttachIdeaResponse,
-  ConvertIdeaResponse,
   LearningResponse,
   LearningsResponse,
   MeResponse,
@@ -30,15 +26,12 @@ import {
   TaskResponse,
   TasksResponse,
   type AddTaskLinkRequest,
-  type AttachIdeaRequest,
   type AttachLearningRequest,
   type CancelTaskRequest,
   type CompleteTaskRequest,
   type ConvertBacklogItemRequest,
-  type ConvertIdeaRequest,
   type CreateBacklogItemRequest,
   type CreateGoalRequest,
-  type CreateIdeaRequest,
   type CreateLearningRequest,
   type CreateTaskRequest,
   type MoveBacklogItemRequest,
@@ -308,24 +301,6 @@ export class HttpApiClient {
   /** R-backlog-6 — the only way backlog becomes work. The item is CONVERTED, never duplicated (D-19). */
   convertBacklogItem(id: string, body: ConvertBacklogItemRequest, key: string) {
     return this.request('POST', ENDPOINTS.backlogItemConvert(id), ConvertBacklogItemResponse, { body, idempotencyKey: key });
-  }
-
-  // ---- ideas --------------------------------------------------------------
-
-  ideas() {
-    return this.request('GET', ENDPOINTS.ideas, IdeasResponse);
-  }
-  createIdea(body: CreateIdeaRequest, key: string) {
-    return this.request('POST', ENDPOINTS.ideas, IdeaResponse, { body, idempotencyKey: key });
-  }
-  deleteIdea(id: string) {
-    return this.request('DELETE', ENDPOINTS.idea(id), DeleteResponse);
-  }
-  attachIdea(id: string, body: AttachIdeaRequest, key: string) {
-    return this.request('POST', ENDPOINTS.ideaAttach(id), AttachIdeaResponse, { body, idempotencyKey: key });
-  }
-  convertIdea(id: string, body: ConvertIdeaRequest, key: string) {
-    return this.request('POST', ENDPOINTS.ideaConvert(id), ConvertIdeaResponse, { body, idempotencyKey: key });
   }
 
   // ---- learnings ----------------------------------------------------------

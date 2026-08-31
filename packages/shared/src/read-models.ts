@@ -2,7 +2,6 @@ import { z } from 'zod';
 import {
   BacklogItemView,
   GoalView,
-  IdeaView,
   Iso,
   LearningView,
   Period,
@@ -21,7 +20,7 @@ import {
  * Ordering is TOTAL and STABLE everywhere (SPEC Q-7, D-17) and is the server's job, never the client's:
  *   goals            — parents before children, then `createdAt` asc, `id` asc
  *   tasks            — open before done, then `createdAt` asc, `id` asc
- *   backlog / ideas  — `capturedAt` desc, `id` desc
+ *   backlog          — `capturedAt` desc, `id` desc
  *   learnings        — `capturedAt` desc, `id` desc
  *   task events      — `at` desc, then insertion sequence desc
  */
@@ -55,7 +54,6 @@ export const BootstrapResponse = z.object({
   plan: z.array(PlanEntryView),
   tasks: z.array(TaskView),
   backlog: z.array(BacklogItemView),
-  ideas: z.array(IdeaView),
   learnings: z.array(LearningView),
   serverNow: Iso,
 });
@@ -111,7 +109,6 @@ export const TaskDetailResponse = z.object({ task: TaskDetailView, serverNow: Is
 
 /** R-backlog-13 — the full backlog page. Converted items are never listed. */
 export const BacklogResponse = z.object({ items: z.array(BacklogItemView), serverNow: Iso });
-export const IdeasResponse = z.object({ ideas: z.array(IdeaView), serverNow: Iso });
 export const LearningsResponse = z.object({ learnings: z.array(LearningView), serverNow: Iso });
 
 export const HealthResponse = z.object({ ok: z.boolean(), app: z.string(), now: z.string() });
@@ -123,6 +120,5 @@ export type GoalDetailResponse = z.infer<typeof GoalDetailResponse>;
 export type TasksResponse = z.infer<typeof TasksResponse>;
 export type TaskDetailResponse = z.infer<typeof TaskDetailResponse>;
 export type BacklogResponse = z.infer<typeof BacklogResponse>;
-export type IdeasResponse = z.infer<typeof IdeasResponse>;
 export type LearningsResponse = z.infer<typeof LearningsResponse>;
 export type HealthResponse = z.infer<typeof HealthResponse>;

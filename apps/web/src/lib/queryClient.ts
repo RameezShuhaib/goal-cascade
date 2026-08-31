@@ -26,7 +26,6 @@ export const keys = {
   task: (id: string) => ['task', id] as const,
   backlogAll: ['backlog'] as const,
   backlog: (goalId?: string) => ['backlog', goalId ?? null] as const,
-  ideas: ['ideas'] as const,
   learnings: ['learnings'] as const,
   /** Whether an agent token exists, and its `last4`. Never the token itself — it is shown once, in memory. */
   agentToken: ['agentToken'] as const,
@@ -50,7 +49,6 @@ export const OWNER_KEYS: readonly (readonly unknown[])[] = [
   keys.tasksAll,
   ['task'],
   keys.backlogAll,
-  keys.ideas,
   keys.learnings,
   keys.agentToken,
   ['bootstrap'],

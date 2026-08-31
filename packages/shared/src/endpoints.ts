@@ -66,14 +66,6 @@ export const ENDPOINTS = {
   /** The ONLY way backlog becomes work. The item is CONVERTED (removed), never duplicated. */
   backlogItemConvert: (id: string) => `/backlog/${id}/convert-to-task`,
 
-  // ── ideas (parking lot) ──
-  ideas: '/ideas',
-  idea: (id: string) => `/ideas/${id}`,
-  /** Re-tag / attach to a goal: the idea becomes a backlog item under that goal and is removed. */
-  ideaAttach: (id: string) => `/ideas/${id}/attach`,
-  /** "Task this week": the idea becomes a task under an active leaf and is removed. */
-  ideaConvert: (id: string) => `/ideas/${id}/convert-to-task`,
-
   // ── learnings ──
   learnings: '/learnings',
   learning: (id: string) => `/learnings/${id}`,

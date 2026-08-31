@@ -25,7 +25,7 @@ export const READ_MODEL_CACHE = 'goal-cascade-read-models';
  * is merely uncached (safe), but a *write* path that leaks in would be served stale (not safe). Hence the
  * allowlist-of-prefixes shape rather than "anything under /api that is a GET".
  */
-export const READ_MODEL_PREFIXES: readonly string[] = ['/api/goals', '/api/tasks', '/api/plan', '/api/backlog', '/api/ideas', '/api/learnings'];
+export const READ_MODEL_PREFIXES: readonly string[] = ['/api/goals', '/api/tasks', '/api/plan', '/api/backlog', '/api/learnings'];
 
 /**
  * `/api/me` is deliberately absent, and this is the single most important line in the file.

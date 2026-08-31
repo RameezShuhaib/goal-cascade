@@ -21,12 +21,7 @@ export function Sheets() {
       return <TaskDetailSheet taskId={sheet.taskId} />;
     case 'taskCreate':
       return (
-        <TaskCreateSheet
-          goalId={sheet.goalId}
-          title={sheet.title}
-          fromBacklogId={sheet.fromBacklogId}
-          fromIdeaId={sheet.fromIdeaId}
-        />
+        <TaskCreateSheet goalId={sheet.goalId} title={sheet.title} fromBacklogId={sheet.fromBacklogId} />
       );
     case 'backlogDrawer':
       return <BacklogDrawer goalId={sheet.goalId} />;

@@ -32,9 +32,8 @@ import {
 import { GuardedBatch } from './guarded-batch';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared helpers. `capture.service.ts` imports these: an Idea's "Attach to a goal" produces a backlog
-// item and its "Task this week" produces a task, and both must produce EXACTLY the rows this file
-// produces or the two paths would drift into two slightly different backlog items.
+// Shared helpers. `capture.service.ts` imports `newestFirst` so the two capture-style lists answer in
+// exactly one order — Q-7 requires a total, stable order, and two implementations of it would drift.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -73,15 +72,14 @@ export function toBacklogItemView(item: BacklogItem, links: readonly BacklogLink
   };
 }
 
-/** R-task-30 — the `Created — …` line each of the four sources logs. */
+/** R-task-30 — the `Created — …` line each of the three sources logs. */
 export const CREATED_EVENT_TEXT: Record<TaskSource, string> = {
   planning: 'Created — weekly planning',
   backlog: 'Created — pulled from Backlog',
-  idea: 'Created — from an Idea',
   drawer: 'Created — added to this week',
 };
 
-/** Everything a conversion needs to know to mint a task. Deliberately free of any backlog/idea concept. */
+/** Everything a conversion needs to know to mint a task. Deliberately free of any backlog concept. */
 export type NewTaskDraft = {
   goalId: string;
   title: string;
@@ -89,7 +87,7 @@ export type NewTaskDraft = {
   description: string;
   links: readonly string[];
   source: TaskSource;
-  /** Structured provenance for the `created` event (`{ backlogItemId }` / `{ ideaId }`). */
+  /** Structured provenance for the `created` event (`{ backlogItemId }`). */
   detail: Record<string, unknown>;
 };
 
@@ -198,7 +196,7 @@ export function toNewTaskDetailView(w: TaskWrites): TaskDetailView {
 /**
  * R-backlog-2 — a backlog item attaches to a Yearly/Quarterly/Monthly goal. Never a Life goal (whose
  * detail screen shows a READ-ONLY roll-up of its descendants' items instead, R-backlog-12) and never a
- * week. Enforced on create, on move, and on an Idea's attach — every goal picker in every backlog flow.
+ * week. Enforced on create and on move — every goal picker in every backlog flow.
  */
 export function assertCanHoldBacklog(goal: Goal): void {
   if (isLifeHorizon(goal.horizon)) {
@@ -208,7 +206,7 @@ export function assertCanHoldBacklog(goal: Goal): void {
   }
 }
 
-/** Builds the item row + its link rows for a new backlog item. Shared with the Idea attach flow. */
+/** Builds the item row + its link rows for a new backlog item. */
 export function buildBacklogItem(
   ctx: RequestContext,
   ids: IIdGenerator,

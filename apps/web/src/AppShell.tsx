@@ -6,13 +6,13 @@ import { TasksScreen } from './screens/TasksScreen';
 import { GoalsScreen } from './screens/GoalsScreen';
 import { GoalDetailScreen } from './screens/GoalDetailScreen';
 import { BacklogScreen } from './screens/BacklogScreen';
-import { IdeasScreen, LearningsScreen } from './screens/CaptureScreens';
+import { LearningsScreen } from './screens/CaptureScreens';
 import { PlanScreen } from './screens/PlanScreen';
 
 /**
  * The signed-in tree. This is what replaced `MockupShell`.
  *
- * There is no router (R-nav-1 fixes five tabs; `lib/useUrlSync.ts` mirrors the screen into the address bar
+ * There is no router (R-nav-1 fixes the tabs; `lib/useUrlSync.ts` mirrors the screen into the address bar
  * so a copied URL is still a working deep link). The screen and the open sheet are `UIContext` state, and
  * every one of these screens reads its data from `api/queries.ts` — no props carry server data down, and
  * nothing below here holds a copy of it.
@@ -35,7 +35,6 @@ export function AppShell() {
       {ui.screen === 'goals' && <GoalsScreen />}
       {ui.screen === 'goal' && <GoalDetailScreen />}
       {ui.screen === 'backlog' && <BacklogScreen />}
-      {ui.screen === 'ideas' && <IdeasScreen />}
       {ui.screen === 'learnings' && <LearningsScreen />}
       {ui.screen === 'plan' && <PlanScreen />}
       <TabBar />

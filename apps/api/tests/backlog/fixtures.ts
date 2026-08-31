@@ -3,7 +3,6 @@ import { GuardedBatch } from '../../src/application/services';
 import {
   IBacklogRepo,
   IGoalRepo,
-  IIdeaRepo,
   ILearningRepo,
   ITaskRepo,
   IWeeklyFocusRepo,
@@ -63,18 +62,13 @@ export async function seedFocus(f: Fixture, goalId: string, weekStart: string, s
   return focus;
 }
 
-/** Q-5 — the goals agent's cascade nulls Idea/Learning tags rather than deleting them (S-idea-7-1). */
+/** Q-5 — the goals agent's cascade nulls Learning tags rather than deleting them. */
 export async function deleteGoalAndUntag(f: Fixture, goalId: string): Promise<void> {
   const c = f.t.container();
-  const ideas = c.resolve<IIdeaRepo>(IIdeaRepo);
   const learnings = c.resolve<ILearningRepo>(ILearningRepo);
-  const taggedIdeas = (await ideas.listAll(f.userId)).filter((i) => i.goalId === goalId).length;
   const taggedLearnings = (await learnings.listAll(f.userId)).filter((l) => l.goalId === goalId).length;
 
   await c.resolve(GuardedBatch).run([
-    ...(taggedIdeas > 0
-      ? [{ label: 'seed.untagIdeas', stmt: ideas.untagByGoalsStmt(f.userId, [goalId]), expectedChanges: taggedIdeas }]
-      : []),
     ...(taggedLearnings > 0
       ? [
           {

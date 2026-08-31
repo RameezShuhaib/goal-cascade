@@ -14,11 +14,11 @@
  * the sign-in round trip — the auth gate runs off `/me`, not the URL, and it will remount the tree underneath
  * whatever was pending.
  */
-export type DeepLinkTab = 'tasks' | 'goals' | 'ideas' | 'learnings' | 'backlog' | 'plan';
+export type DeepLinkTab = 'tasks' | 'goals' | 'learnings' | 'backlog' | 'plan';
 export type DeepLink = { kind: 'tab'; tab: DeepLinkTab } | { kind: 'goal'; goalId: string };
 
 const STORAGE_KEY = 'goal-cascade.deeplink';
-const TABS: readonly DeepLinkTab[] = ['tasks', 'goals', 'ideas', 'learnings', 'backlog', 'plan'];
+const TABS: readonly DeepLinkTab[] = ['tasks', 'goals', 'learnings', 'backlog', 'plan'];
 
 /**
  * Ids come off the URL, so they are attacker-supplied. Constrain the shape here rather than trusting whatever

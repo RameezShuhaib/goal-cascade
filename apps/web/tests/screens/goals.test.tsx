@@ -239,7 +239,7 @@ describe('Goals — delete (Q-5)', () => {
           seen.deleted = url.pathname;
           seen.cascade = url.searchParams.get('cascade');
         }
-        return HttpResponse.json({ deleted: !dryRun, removed, untagged: { ideas: 0, learnings: 0 }, serverNow: F.NOW });
+        return HttpResponse.json({ deleted: !dryRun, removed, untagged: { learnings: 0 }, serverNow: F.NOW });
       }),
     );
     return seen;
@@ -262,7 +262,7 @@ describe('Goals — delete (Q-5)', () => {
     // The sentence names the two categories that exist and omits the one at zero — the browser
     // walkthrough's nit. Every count is still the server's; only the zero is unsaid.
     expect(
-      await screen.findByText('This removes 40 tasks and 6 backlog items. Ideas and learnings tagged here move to Unsorted. There is no undo.'),
+      await screen.findByText('This removes 40 tasks and 6 backlog items. Learnings tagged here move to Unsorted. There is no undo.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/0 sub-goals/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Delete everything' }));
@@ -284,7 +284,7 @@ describe('Goals — delete (Q-5)', () => {
     await openDelete(user, 'Lift three times a week');
 
     // One category, so no comma and no "and" — and `1 task`, not `1 tasks`.
-    expect(await screen.findByText(/^This removes 1 task\. Ideas and learnings/)).toBeInTheDocument();
+    expect(await screen.findByText(/^This removes 1 task\. Learnings tagged here/)).toBeInTheDocument();
     expect(screen.queryByText(/sub-goal/)).not.toBeInTheDocument();
     expect(screen.queryByText(/backlog item/)).not.toBeInTheDocument();
   });
@@ -314,7 +314,7 @@ describe('Goals — delete (Q-5)', () => {
         return HttpResponse.json({
           deleted: false,
           removed: { goals: 3, weeklyFocuses: 1, tasks: 3, taskEvents: 0, backlogItems: 1 },
-          untagged: { ideas: 0, learnings: 0 },
+          untagged: { learnings: 0 },
           serverNow: F.NOW,
         });
       }),
@@ -363,7 +363,7 @@ describe('Goals — delete (Q-5)', () => {
         return HttpResponse.json({
           deleted: true,
           removed: { goals: 3, weeklyFocuses: 1, tasks: 3, taskEvents: 9, backlogItems: 1 },
-          untagged: { ideas: 0, learnings: 1 },
+          untagged: { learnings: 1 },
           serverNow: F.NOW,
         });
       }),

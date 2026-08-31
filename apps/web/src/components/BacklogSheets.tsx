@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { GoalView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useBacklog, useCreateBacklogItem, useCreateTask, useConvertBacklogItem, useConvertIdea, useGoals } from '../api/queries';
+import { useBacklog, useCreateBacklogItem, useCreateTask, useConvertBacklogItem, useGoals } from '../api/queries';
 import { toApiError } from '../api/errors';
 import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
@@ -210,7 +210,7 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
 }
 
 /**
- * R-task-3/4 — the standard task-create sheet, used by all four creation sources (R-task-2). The
+ * R-task-3/4 — the standard task-create sheet, used by all three creation sources (R-task-2). The
  * done-condition is optional, and stays optional.
  *
  * Which COMMAND runs depends on where the sheet was opened from, and the difference matters:
@@ -219,18 +219,15 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
  *    converted and creates the task. The mockup created a task and filtered the item out of a local array
  *    without ever telling the API — so a real server never learned the item was consumed, and a second
  *    attempt made a duplicate task from a vanished item (D-19).
- *  - an idea → `POST /ideas/:id/convert-to-task`, which consumes the idea only on success (D-22).
  */
 export function TaskCreateSheet({
   goalId: initialGoalId,
   title: initialTitle,
   fromBacklogId,
-  fromIdeaId,
 }: {
   goalId: string;
   title?: string;
   fromBacklogId?: string;
-  fromIdeaId?: string;
 }) {
   const S = useSkin();
   const ui = useUI();
@@ -238,7 +235,6 @@ export function TaskCreateSheet({
   const backlogQ = useBacklog();
   const createTask = useCreateTask();
   const convertItem = useConvertBacklogItem();
-  const convertIdea = useConvertIdea();
 
   const goals = goalsQ.data?.goals ?? [];
   const [goalId, setGoalId] = useState(initialGoalId);
@@ -259,13 +255,13 @@ export function TaskCreateSheet({
       : goals.filter((g) => g.isLeaf && g.isActive && g.parentId !== null);
 
   const close = () => ui.closeSheet();
-  const busy = createTask.isPending || convertItem.isPending || convertIdea.isPending;
+  const busy = createTask.isPending || convertItem.isPending;
 
   const onError = (e: unknown) => {
     const err = toApiError(e);
     // R-backlog-8 — no active leaf under the item's goal after all (another tab cleared the focus).
     if (err.code === 'BRANCH_NOT_ACTIVE') {
-      ui.openSheet({ kind: 'inactiveBranch', itemId: fromBacklogId ?? fromIdeaId ?? '', title: title || (initialTitle ?? '') });
+      ui.openSheet({ kind: 'inactiveBranch', itemId: fromBacklogId ?? '', title: title || (initialTitle ?? '') });
       return;
     }
     // R-backlog-6 / D-19 — someone converted it from another tab, or this is a retry of a request that
@@ -298,10 +294,6 @@ export function TaskCreateSheet({
     const done = () => close();
     if (fromBacklogId) {
       convertItem.mutate({ id: fromBacklogId, ...(goalId ? { goalId } : {}), title: title.trim(), cond: cond.trim() }, { onSuccess: done, onError });
-      return;
-    }
-    if (fromIdeaId) {
-      convertIdea.mutate({ id: fromIdeaId, goalId, title: title.trim(), cond: cond.trim() }, { onSuccess: done, onError });
       return;
     }
     createTask.mutate({ goalId, title: title.trim(), cond: cond.trim(), description: '', links: [], source: 'planning' }, { onSuccess: done, onError });
@@ -350,7 +342,7 @@ export function TaskCreateSheet({
           <input aria-label="Task title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title" style={{ ...S.input, marginBottom: 12 }} />
           <input aria-label="Done-condition (optional)" value={cond} onChange={(e) => setCond(e.target.value)} placeholder="Done-condition (optional)" style={S.input} />
           <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 5 }}>How will you know it&apos;s done?</div>
-          <FieldError>{refused ?? commandError(createTask.error) ?? commandError(convertItem.error) ?? commandError(convertIdea.error)}</FieldError>
+          <FieldError>{refused ?? commandError(createTask.error) ?? commandError(convertItem.error)}</FieldError>
           <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
             Save task
           </button>

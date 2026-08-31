@@ -46,7 +46,7 @@ export function instantLabel(iso: string): string {
 }
 
 /**
- * `Today` / `25 Aug` — how a capture date reads in a list (R-backlog-13, R-idea-8).
+ * `Today` / `25 Aug` — how a capture date reads in a list (R-backlog-13, R-learning-7).
  *
  * "Today" is measured against the SERVER's clock (`lib/serverClock`), not the device's, so a phone whose
  * clock has drifted does not label yesterday's capture as today's. The mockup stored this string on the

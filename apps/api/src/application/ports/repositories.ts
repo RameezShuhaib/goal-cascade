@@ -4,7 +4,6 @@ import type {
   BacklogItem,
   BacklogLink,
   Goal,
-  Idea,
   IdempotencyRecord,
   Learning,
   OutboxEmail,
@@ -195,17 +194,6 @@ export interface IBacklogLinkRepo {
   deleteByItemsStmt(userId: string, itemIds: readonly string[]): WriteStmt;
 }
 export const IBacklogLinkRepo = Symbol.for('goal-cascade.IBacklogLinkRepo');
-
-export interface IIdeaRepo {
-  findById(userId: string, id: string): Promise<Idea | null>;
-  /** Q-7 — `capturedAt` desc, `id` desc. */
-  listAll(userId: string): Promise<Idea[]>;
-  insertStmt(idea: Idea): WriteStmt;
-  deleteStmt(userId: string, id: string): WriteStmt;
-  /** Q-5 / S-idea-7-1 — a tag pointing into a deleted subtree nulls out to Unsorted, never cascades. */
-  untagByGoalsStmt(userId: string, goalIds: readonly string[]): WriteStmt;
-}
-export const IIdeaRepo = Symbol.for('goal-cascade.IIdeaRepo');
 
 export interface ILearningRepo {
   findById(userId: string, id: string): Promise<Learning | null>;

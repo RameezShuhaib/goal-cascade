@@ -93,7 +93,7 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
           source: z
             .enum(['planning', 'drawer'])
             .default('planning')
-            .describe('Recorded once on the Created event. "backlog" and "idea" are set by the conversion tools.'),
+            .describe('Recorded once on the Created event. "backlog" is set by the conversion tool.'),
         })
         .strict(),
     },

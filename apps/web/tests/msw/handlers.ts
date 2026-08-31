@@ -56,7 +56,7 @@ export const handlers: HttpHandler[] = [
     return HttpResponse.json({
       deleted: !dryRun,
       removed: { goals: 1, weeklyFocuses: 0, tasks: 0, taskEvents: 0, backlogItems: 0 },
-      untagged: { ideas: 0, learnings: 0 },
+      untagged: { learnings: 0 },
       serverNow: F.NOW,
     });
   }),
@@ -101,11 +101,6 @@ export const handlers: HttpHandler[] = [
     ),
   ),
 
-  http.get('/api/ideas', () => HttpResponse.json(F.ideasResponse())),
-  http.post('/api/ideas', cmd(() => HttpResponse.json({ idea: F.idea(), serverNow: F.NOW }, { status: 201 }))),
-  http.delete('/api/ideas/:id', () => HttpResponse.json({ deleted: true, serverNow: F.NOW })),
-  http.post('/api/ideas/:id/attach', cmd(() => HttpResponse.json({ item: F.backlogItem(), ideaId: F.ulid(50), serverNow: F.NOW }))),
-  http.post('/api/ideas/:id/convert-to-task', cmd(() => HttpResponse.json({ task: F.taskDetail(), ideaId: F.ulid(50), serverNow: F.NOW }, { status: 201 }))),
 
   http.get('/api/learnings', () => HttpResponse.json(F.learningsResponse())),
   http.post('/api/learnings', cmd(() => HttpResponse.json({ learning: F.learning(), serverNow: F.NOW }, { status: 201 }))),
