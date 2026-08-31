@@ -7,7 +7,7 @@ import { createQueryClient } from '../src/lib/queryClient';
 import { ApiProvider } from '../src/context/ApiContext';
 import { ThemeProvider } from '../src/context/ThemeContext';
 import { UIProvider } from '../src/context/UIContext';
-import { UIToast } from '../src/App';
+import { UIToast } from '../src/components/Toast';
 
 /**
  * The full provider stack, a fresh no-retry `QueryClient`, and a `userEvent` instance. MSW handles the

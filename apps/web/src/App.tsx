@@ -3,24 +3,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePatchPreferences, usePreferences, useSession } from './api/queries';
 import { onIdentityChanged } from './auth/identity';
 import { purgeSession } from './auth/purge';
-import { ThemeProvider, useTheme } from './context/ThemeContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { useUI } from './context/UIContext';
 import { useUrlSync, type UrlLanding } from './lib/useUrlSync';
 import AuthScreen from './components/auth/AuthScreen';
 import { Lede, PrimaryButton, Splash } from './components/auth/ui';
-import { AppProvider, useStore } from './store';
-import { TabBar } from './components/TabBar';
-import { Toast } from './components/Toast';
-import { ConfirmSheet, InactiveBranchSheet, TaskDetailSheet } from './components/TaskSheets';
-import { BacklogDrawer, TaskCreateModal } from './components/BacklogSheets';
-import { GoalModal, MoveGoalModal } from './components/GoalModals';
-import { TasksScreen } from './screens/TasksScreen';
-import { GoalsScreen } from './screens/GoalsScreen';
-import { GoalDetailScreen } from './screens/GoalDetailScreen';
-import { BacklogScreen } from './screens/BacklogScreen';
-import { IdeasScreen, LearningsScreen } from './screens/CaptureScreens';
-import { PlanScreen } from './screens/PlanScreen';
-import { colors } from './ui';
+import { UIToast } from './components/Toast';
+import { AppShell } from './AppShell';
 
 /**
  * The application root.
@@ -95,6 +84,7 @@ export default function App() {
   const themed = (children: React.ReactNode) => (
     <ThemeProvider serverTheme={prefs.data?.preferences.theme} onChange={(theme) => patchPrefs.mutate({ theme })}>
       {children}
+      {/* R-nav-13 — the ONE toast in the app. The mockup's `useStore`-driven second one is gone. */}
       <UIToast />
     </ThemeProvider>
   );
@@ -116,49 +106,7 @@ export default function App() {
     return themed(<RetryScreen onRetry={() => void me.refetch()} />);
   }
 
-  return themed(<MockupShell />);
-}
-
-/**
- * TEMPORARY — the mockup, rendered as the signed-in tree so the app still runs end to end while the screens
- * are migrated. It is still driven by `store.tsx`: server data comes from `data/mock.ts`, every mutation is
- * a local array edit plus a fire-and-forget `api.persist()`, and nothing on screen has been near the API.
- *
- * The screens agent replaces this whole component. `docs/work/06-web-data/build.md` maps every `Store`
- * method to the hook or `UIContext` action that supersedes it, and names the behaviours that must change
- * because the server now owns the invariant. Delete `store.tsx`, `api/client.ts` and `data/mock.ts` with it.
- */
-function MockupShell() {
-  return (
-    <AppProvider>
-      <MockupScreens />
-    </AppProvider>
-  );
-}
-
-function MockupScreens() {
-  const s = useStore();
-  const v = s.st.view;
-  return (
-    <div style={{ minHeight: '100vh', background: colors.paper, color: colors.ink, fontFamily: "'Manrope', sans-serif", fontSize: 15, lineHeight: 1.45 }}>
-      {v === 'home' && <TasksScreen />}
-      {v === 'goals' && <GoalsScreen />}
-      {v === 'line' && <GoalDetailScreen />}
-      {v === 'backlog' && <BacklogScreen />}
-      {v === 'ideas' && <IdeasScreen />}
-      {v === 'learn' && <LearningsScreen />}
-      {v === 'plan' && <PlanScreen />}
-      <TabBar />
-      <Toast />
-      <TaskDetailSheet />
-      <BacklogDrawer />
-      <TaskCreateModal />
-      <ConfirmSheet />
-      <InactiveBranchSheet />
-      <GoalModal />
-      <MoveGoalModal />
-    </div>
-  );
+  return themed(<AppShell />);
 }
 
 function RetryScreen({ onRetry }: { onRetry: () => void }) {
@@ -172,72 +120,5 @@ function RetryScreen({ onRetry }: { onRetry: () => void }) {
         </PrimaryButton>
       </div>
     </Splash>
-  );
-}
-
-/**
- * The toast for everything above the mockup: command failures, sign-out problems, `?verified=1`.
- *
- * It lives here rather than in `components/Toast.tsx` because that file is the mockup's, reads `useStore`,
- * and belongs to the screens agent. Once the screens are migrated there is one toast, driven by `UIContext`,
- * and this component moves into `components/`.
- */
-export function UIToast() {
-  const { toast, hideToast } = useUI();
-  const T = useTheme();
-  if (!toast) return null;
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        left: 0,
-        right: 0,
-        bottom: `calc(76px + var(--safe-bottom, 0px))`,
-        zIndex: 60,
-        display: 'flex',
-        justifyContent: 'center',
-        padding: '0 16px',
-      }}
-    >
-      <div
-        role="status"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          background: toast.tone === 'error' ? T.red : T.ink,
-          color: T.night && toast.tone !== 'error' ? T.paper : '#fff',
-          borderRadius: 20,
-          padding: '10px 18px',
-          fontSize: 13.5,
-          fontWeight: 600,
-          maxWidth: '100%',
-        }}
-      >
-        <span>{toast.message}</span>
-        {toast.action && (
-          <button
-            type="button"
-            onClick={() => {
-              toast.action?.onClick();
-              hideToast();
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              color: 'inherit',
-              fontWeight: 800,
-              fontSize: 13.5,
-              textDecoration: 'underline',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              padding: 0,
-            }}
-          >
-            {toast.action.label}
-          </button>
-        )}
-      </div>
-    </div>
   );
 }
