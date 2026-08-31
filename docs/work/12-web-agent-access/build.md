@@ -216,3 +216,80 @@ is not re-exported from there, so re-pointing is one file.
 - The section-not-a-sheet decision (§1.1), if the missing design doc says otherwise.
 - Every user-visible string in `AgentAccess.tsx` (§0) — the design's copy was written verbatim and is lost.
 - Assumption 6 is genuinely a guess, and it is the one a user meets on their first typo.
+
+---
+
+## Contract reconciliation
+
+The backend shipped `/me/api-token` while §3's assumptions were being written against an endpoint that did
+not exist yet. The API is authoritative and deployed; nothing under `apps/api/**` or `packages/shared/**`
+was touched. Everything below is what the web client now does instead.
+
+### Assumed vs. real
+
+| # | Thing | Assumed (§3) | Real (`packages/shared`, `me.routes.ts`, `goals.routes.ts`) |
+|---|---|---|---|
+| 1 | Path | `/me/agent-token`, a local constant in `ASSUMED_ENDPOINTS` | **`/me/api-token`** — `ENDPOINTS.meApiToken`. Every UI call was 404ing in production |
+| 2 | `MCP_PATH` | re-declared in `contracts.ts` as `'/mcp'` | `MCP_PATH` from `@goal-cascade/shared` — same value, one owner |
+| 3 | Status response | `{ token: { createdAt, last4 } \| null, mcpUrl?: string }` | **`ApiTokenStatusResponse`** — `mcpUrl` is **required** (`z.url()`) and `serverNow` is present too. The assumed schema would still have parsed (unknown keys are ignored), but the client treated the URL as optional and never recorded the server clock |
+| 4 | Create response | flat **`{ token: "<plaintext>", createdAt?, last4?, mcpUrl? }`** | **`CreateApiTokenResponse`** — the secret is nested: **`{ token: { createdAt, last4, plaintext }, mcpUrl, serverNow }`**. the assumed schema typed `token` as `z.string()`, so the real body would have failed to parse as `BAD_RESPONSE` — destroying, on the one screen that can never re-read it, a plaintext already written to the database |
+| 5 | Create + `Idempotency-Key` | assumed a command | **correct, and required** — `POST E.meApiToken` is behind the `idempotent` middleware, so a call bypassing `useCommand` gets `400 IDEMPOTENCY_KEY_MISSING`. Verified: `useCreateAgentToken` runs through `useCommand`, which mints the key per intent |
+| 6 | Revoke response | `{ deleted: boolean }` | **`RevokeApiTokenResponse` — `{ revoked: true, serverNow }`**. `deleted` does not exist; the parse would have thrown `BAD_RESPONSE` on a revoke that in fact succeeded |
+| 7 | Revoke + `Idempotency-Key` | not sent | **correct** — `.delete(E.meApiToken, …)` carries **no** `idempotent` middleware. Idempotence here is a property of the operation, not of a stored key |
+| 8 | Wrong password | "401, 403 or 422 — undecided" (§3 #6, flagged **low**) | **`422 VALIDATION_FAILED`**, worded identically to `change-password` so the pair cannot become a password oracle. 422 alone would have rendered the generic "Couldn't save — check the values." |
+| 9 | Delete-preview query param | `?dryRun=true` | **correct** — `DeleteGoalQuery` is `{ cascade?, dryRun? }`, both `z.stringbool()` |
+| 10 | Delete-preview response | **three** plausible shapes, unioned | **exactly one**: the whole **`DeleteGoalResponse`** with `deleted: false` — `{ removed: { goals, weeklyFocuses, tasks, taskEvents, backlogItems }, untagged: { ideas, learnings }, serverNow }`. It is guess 3 of the three. `removed.goals` counts the goal itself, so `subGoals = removed.goals - 1` |
+| 11 | Delete-preview + `Idempotency-Key` | not sent | **correct** — the route has no `idempotent` middleware, and a dry run writes nothing |
+| 12 | Token prefix | fixture used `gcs_` | **`API_TOKEN_PREFIX` = `gcm_`** (**G**oal **C**ascade **M**CP) |
+
+### What changed
+
+- **`apps/web/src/api/contracts.ts` is deleted.** Every path and schema in it has a shared equivalent, so
+  keeping any of it would be restating the contract the two sides drifted over. The two genuinely
+  web-only things it also held moved to their single consumers: the delete-preview *projection*
+  (`countsOf`, `destroysSomething`) into `components/GoalModals.tsx`, and the lenient parse of the
+  show-once response into `api/http.ts`.
+- **`api/http.ts`** — `agentTokenStatus` / `createAgentToken` / `revokeAgentToken` now hit
+  `ENDPOINTS.meApiToken` and parse `ApiTokenStatusResponse` / `RevokeApiTokenResponse`;
+  `goalDeletePreview` parses `DeleteGoalResponse` and nothing else.
+- **The show-once defensiveness is kept, and is now the only relaxed parse in the client.**
+  `ShownOnceApiTokenResponse` is **derived** from the shared `CreateApiTokenResponse`
+  (`.shape.token.partial().required({ plaintext: true })`), so a field renamed in `packages/shared` is a
+  type error here rather than a silent drift — but the only field the client *insists* on is
+  `token.plaintext`. `createdAt`, `last4`, `mcpUrl` and `serverNow` each have a local fallback, so no
+  future drift in a field the screen does not render can throw away a token already written to the
+  database. Nothing else in the client relaxes a contract; everywhere else the data can be re-read.
+- **`api/queries.ts`** — reads `d.token.createdAt` / `d.token.last4` (falling back to
+  `d.token.plaintext.slice(-4)`), and patches the status cache only when a status read has already landed,
+  because `ApiTokenStatusResponse` now carries `mcpUrl` and `serverNow` and half a response is not a read
+  model. The invalidation that follows fetches the rest.
+- **`components/AgentAccess.tsx`** — imports `MCP_PATH` from `@goal-cascade/shared`, lifts the secret from
+  `data.token.plaintext`, and `refusalCopy()` now catches `VALIDATION_FAILED` alongside 401/403. No state,
+  flow or user-visible string changed.
+- **`components/GoalModals.tsx`** — projects the sheet's three numbers out of `removed`.
+- **MSW** — `tests/msw/handlers.ts` serves `/api/me/api-token` (the POST, and only the POST, wrapped in the
+  `Idempotency-Key` check, mirroring the route); the goal DELETE returns one `DeleteGoalResponse` with
+  `deleted: !dryRun`. `tests/msw/fixtures.ts` mirrors the real shapes, derives its plaintext from
+  `API_TOKEN_PREFIX` and its `mcpUrl` from the request origin the way `me.routes.ts` does, and gained
+  `agentTokenAbsent` / `agentTokenRevoked`.
+- **Tests.** Nothing was skipped, weakened or deleted. Two assertions encoded the wrong contract and were
+  corrected rather than retired:
+  - *"the server's own mcpUrl wins when it names one"* previously worked only because the create fixture
+    omitted `mcpUrl` — the real create response always carries it. The handler now overrides **both** the
+    status and the create with the named URL, which is what a deployment on its own hostname actually
+    does, and the assertion is unchanged.
+  - *"a wrong password is refused next to the field"* stubbed a `FORBIDDEN`; it now stubs the real
+    `422 VALIDATION_FAILED` with the API's own sentence.
+  - *"when the dry run is not there, the GOAL_HAS_CHILDREN refusal still is"* kept its assertions; only
+    its premise changed, from "an API without the parameter refuses the unknown query" (no longer
+    possible — the parameter is real) to "the preview fails for any reason", which is the fallback the
+    sheet actually needs.
+  - One test was **added**: a create that answers with `token.plaintext` and nothing else still reveals
+    the token and derives the MCP URL — the defensiveness in §"show-once" above, held down by a test
+    rather than by a comment.
+
+### Still open
+
+- §3 #6's note to narrow `AGENT_TOKEN_QUIET` once the API decides: `NOT_FOUND` no longer needs to be quiet
+  for the reason given there (the route ships), but it is left in place — it is not this change's call to
+  make, and quieting it costs nothing while `refusalCopy` still explains it in the field.

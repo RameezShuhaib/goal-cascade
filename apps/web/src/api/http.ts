@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import {
   API_BASE,
+  ApiTokenStatusResponse,
   BacklogItemResponse,
   BacklogResponse,
   BootstrapResponse,
   ConvertBacklogItemResponse,
+  CreateApiTokenResponse,
   DeleteGoalResponse,
   DeleteResponse,
   ENDPOINTS,
@@ -23,6 +25,7 @@ import {
   MoveTaskToBacklogResponse,
   PlanResponse,
   PreferencesResponse,
+  RevokeApiTokenResponse,
   TaskDetailResponse,
   TaskResponse,
   TasksResponse,
@@ -51,14 +54,28 @@ import {
   type UncheckTaskRequest,
 } from '@goal-cascade/shared';
 import { recordServerNow } from '../lib/serverClock';
-import {
-  AgentTokenCreatedResponse,
-  AgentTokenRevokedResponse,
-  AgentTokenStatusResponse,
-  ASSUMED_ENDPOINTS,
-  GoalDeletePreviewResponse,
-} from './contracts';
 import { ApiError, isKnownErrorCode } from './errors';
+
+/**
+ * `POST /me/api-token`, parsed one notch looser than `CreateApiTokenResponse` — and ONLY here.
+ *
+ * This is the one response in the product that carries a value the server cannot produce a second time.
+ * A `BAD_RESPONSE` thrown over a field the screen does not even render would destroy a token that has
+ * already been written to the database, so the required set is narrowed to the single thing that matters:
+ * `token.plaintext`. `createdAt`, `last4`, `mcpUrl` and `serverNow` are taken when they are there and
+ * shrugged off when they are not — `AgentAccess` derives `last4` from the plaintext and the MCP URL from
+ * this origin, so every one of them has an answer without the server.
+ *
+ * The shape is DERIVED from the shared schema rather than restated, so a field renamed in
+ * `packages/shared` is a type error here rather than a silent drift. Nothing else in this client relaxes
+ * a contract: everywhere else a mismatch should be loud, because everywhere else the data can be re-read.
+ */
+const ShownOnceApiTokenResponse = z.object({
+  token: CreateApiTokenResponse.shape.token.partial().required({ plaintext: true }),
+  // Loosened from `z.url()` / `Iso` on purpose — see above. A malformed value costs a fallback, not a token.
+  mcpUrl: z.string().min(1).optional(),
+  serverNow: z.string().optional(),
+});
 
 export interface HttpApiClientOptions {
   /** Origin the relative `/api` paths resolve against. Defaults to `location.origin`. */
@@ -149,24 +166,27 @@ export class HttpApiClient {
 
   // ---- agent access -------------------------------------------------------
   //
-  // The three calls behind the Account sheet's "Agent access" section. Their paths and schemas live in
-  // `./contracts.ts` because the API that serves them was being written in parallel with this screen; see
-  // that file's header for what to change when the real endpoints land.
+  // The three calls behind the Account sheet's "Agent access" section — one path, three methods, exactly
+  // as `ENDPOINTS.meApiToken` and `me.routes.ts` have them. There is no list and no `:id`: one token per
+  // account, and creating replaces.
 
-  /** Status only — `{ createdAt, last4 }` or `null`. Reading whether a token exists needs no password. */
+  /** Status only — `{ createdAt, last4 }` or `null`, plus `mcpUrl`. Reading needs no password. */
   agentTokenStatus() {
-    return this.request('GET', ASSUMED_ENDPOINTS.agentToken, AgentTokenStatusResponse);
+    return this.request('GET', ENDPOINTS.meApiToken, ApiTokenStatusResponse);
   }
   /**
    * Create or replace. Re-authentication guards this call and only this call, and the plaintext comes back
-   * exactly once — there is no read that can ever return it again.
+   * exactly once — there is no read that can ever return it again. `Idempotency-Key` is REQUIRED: the route
+   * is behind the `idempotent` middleware, and a request without the header is `400 IDEMPOTENCY_KEY_MISSING`.
+   *
+   * The secret is nested at `token.plaintext`, alongside the same `createdAt`/`last4` a status read gives.
    */
   createAgentToken(body: { password: string }, key: string) {
-    return this.request('POST', ASSUMED_ENDPOINTS.agentToken, AgentTokenCreatedResponse, { body, idempotencyKey: key });
+    return this.request('POST', ENDPOINTS.meApiToken, ShownOnceApiTokenResponse, { body, idempotencyKey: key });
   }
-  /** Idempotent: revoking when there is nothing to revoke is a success. */
+  /** Idempotent by construction — revoking when there is nothing to revoke answers `{ revoked: true }`. */
   revokeAgentToken() {
-    return this.request('DELETE', ASSUMED_ENDPOINTS.agentToken, AgentTokenRevokedResponse);
+    return this.request('DELETE', ENDPOINTS.meApiToken, RevokeApiTokenResponse);
   }
 
   // ---- cold open ----------------------------------------------------------
@@ -207,10 +227,14 @@ export class HttpApiClient {
    * This exists because `GOAL_HAS_CHILDREN` only fires on descendant GOALS. A Monthly leaf holding forty
    * open tasks, their activity history and its backlog is childless by that test, so the refusal never
    * came and the confirmation the spec requires was never shown. A read is the only way to know before the
-   * fact. Schema in `./contracts.ts`.
+   * fact.
+   *
+   * The answer is a whole `DeleteGoalResponse` with `deleted: false` — the same schema the live delete
+   * returns, because it is the same handler doing the same subtree walk. `cascade` is deliberately not
+   * sent: a preview is never refused, so the parameter would change nothing.
    */
   goalDeletePreview(id: string) {
-    return this.request('DELETE', ENDPOINTS.goal(id), GoalDeletePreviewResponse, { query: { dryRun: true } });
+    return this.request('DELETE', ENDPOINTS.goal(id), DeleteGoalResponse, { query: { dryRun: true } });
   }
   moveGoal(id: string, body: MoveGoalRequest, key: string) {
     return this.request('POST', ENDPOINTS.goalMove(id), GoalResponse, { body, idempotencyKey: key });

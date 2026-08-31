@@ -1,3 +1,4 @@
+import { API_TOKEN_PREFIX, MCP_PATH } from '@goal-cascade/shared';
 import type {
   BacklogItemView,
   GoalView,
@@ -328,24 +329,50 @@ export const bootstrapResponse = () => ({
 
 // ---- agent access ----------------------------------------------------------
 //
-// Assumed shapes, mirrored from `src/api/contracts.ts`. When the API ships its own schemas these should be
-// built from them, the way every other fixture in this file is.
+// `ApiTokenStatusResponse`, `CreateApiTokenResponse` and `RevokeApiTokenResponse` from
+// `@goal-cascade/shared`, which is what `/me/api-token` actually answers with. The client parses every one
+// of these with the shared schema, so a fixture that drifts fails as a `BAD_RESPONSE` rather than passing.
 
-/** The plaintext, answered exactly once by `POST /me/agent-token` and never readable again. */
-export const PLAINTEXT_TOKEN = 'gcs_9f3b7c11e4a24d8fb0c6e57a2d1934kt';
+/** The plaintext, answered exactly once by `POST /me/api-token` and never readable again. */
+export const PLAINTEXT_TOKEN = `${API_TOKEN_PREFIX}9f3b7c11e4a24d8fb0c6e57a2d1934kt`;
 
-export const agentTokenSummary = (over: Record<string, unknown> = {}) => ({ createdAt: NOW, last4: '34kt', ...over });
+/** `last4` is exactly four characters (`ApiTokenStatusView`), and they are the plaintext's last four. */
+export const TOKEN_LAST4 = PLAINTEXT_TOKEN.slice(-4);
 
-/** `GET /me/agent-token` when one exists. */
-export const agentTokenStatus = (over: Record<string, unknown> = {}) => ({ token: agentTokenSummary(), ...over });
+/**
+ * The server derives this from the REQUEST origin — never a var, never a literal (`me.routes.ts#mcpUrl`).
+ * Read lazily so it is jsdom's origin at call time, which is what the screen tests assert against.
+ */
+export const mcpUrl = () => `${globalThis.location?.origin ?? 'http://localhost'}${MCP_PATH}`;
 
-/** `POST /me/agent-token` — create or replace. */
-export const agentTokenCreated = (over: Record<string, unknown> = {}) => ({
-  token: PLAINTEXT_TOKEN,
-  createdAt: NOW,
-  last4: '34kt',
+export const agentTokenSummary = (over: Record<string, unknown> = {}) => ({ createdAt: NOW, last4: TOKEN_LAST4, ...over });
+
+/** `GET /me/api-token` when one exists. `mcpUrl` is on the status response too — it is not secret. */
+export const agentTokenStatus = (over: Record<string, unknown> = {}) => ({
+  token: agentTokenSummary(),
+  mcpUrl: mcpUrl(),
+  serverNow: NOW,
   ...over,
 });
+
+/** `GET /me/api-token` when there is none. `token: null` is a state, not an error. */
+export const agentTokenAbsent = (over: Record<string, unknown> = {}) => ({
+  token: null,
+  mcpUrl: mcpUrl(),
+  serverNow: NOW,
+  ...over,
+});
+
+/** `POST /me/api-token` — create or replace. The plaintext is NESTED, beside its own metadata. */
+export const agentTokenCreated = (over: Record<string, unknown> = {}) => ({
+  token: { createdAt: NOW, last4: TOKEN_LAST4, plaintext: PLAINTEXT_TOKEN },
+  mcpUrl: mcpUrl(),
+  serverNow: NOW,
+  ...over,
+});
+
+/** `DELETE /me/api-token` — always `{ revoked: true }`, whether or not anything was there. */
+export const agentTokenRevoked = () => ({ revoked: true as const, serverNow: NOW });
 
 /** Better Auth's own success body (not the SPEC §5 envelope). */
 export const authUser = (over: Record<string, unknown> = {}) => ({

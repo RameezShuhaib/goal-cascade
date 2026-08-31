@@ -23,7 +23,8 @@ export const authSuccess = (user: Record<string, unknown> = F.authUser()) =>
 /** Commands must carry an Idempotency-Key — mirror the Worker's middleware so a missing one fails here too. */
 const requireKey = (request: Request) => (request.headers.get('Idempotency-Key') ? null : apiError('IDEMPOTENCY_KEY_MISSING'));
 
-const cmd =
+/** Exported so a test's own `server.use(...)` override keeps the middleware it is standing in for. */
+export const cmd =
   (respond: (request: Request) => Response | Promise<Response>) =>
   async ({ request }: { request: Request }) =>
     requireKey(request) ?? (await respond(request));
@@ -35,24 +36,25 @@ export const handlers: HttpHandler[] = [
   http.patch('/api/me/preferences', () => HttpResponse.json(F.preferencesResponse())),
   http.get('/api/bootstrap', () => HttpResponse.json(F.bootstrapResponse())),
 
-  // Agent access. The default account has no token; `server.use(...)` is how a test gives it one.
-  // Contract in `src/api/contracts.ts` — see `docs/work/12-web-agent-access/build.md`.
-  http.get('/api/me/agent-token', () => HttpResponse.json({ token: null })),
-  http.post('/api/me/agent-token', cmd(() => HttpResponse.json(F.agentTokenCreated(), { status: 201 }))),
-  http.delete('/api/me/agent-token', () => HttpResponse.json({ deleted: true })),
+  // Agent access — `ENDPOINTS.meApiToken`, three methods on one path. The default account has no token;
+  // `server.use(...)` is how a test gives it one. Only the POST is behind the API's `idempotent`
+  // middleware, so only the POST is wrapped in `cmd`: a DELETE that demanded a key here would be testing
+  // a rule the server does not have.
+  http.get('/api/me/api-token', () => HttpResponse.json(F.agentTokenAbsent())),
+  http.post('/api/me/api-token', cmd(() => HttpResponse.json(F.agentTokenCreated(), { status: 201 }))),
+  http.delete('/api/me/api-token', () => HttpResponse.json(F.agentTokenRevoked())),
 
   http.get('/api/goals', () => HttpResponse.json(F.goalsResponse())),
   http.get('/api/goals/:id', () => HttpResponse.json(F.goalDetailResponse())),
   http.post('/api/goals', cmd(() => HttpResponse.json(F.goalResponse(), { status: 201 }))),
   http.patch('/api/goals/:id', () => HttpResponse.json(F.goalResponse())),
-  // Q-5 — one route, two jobs. `?dryRun=true` answers with the counts and removes nothing; the delete
-  // confirmation sheet reads it before it offers a button.
+  // Q-5 — one route, two jobs. `?dryRun=true` answers with the SAME `DeleteGoalResponse` and `deleted:
+  // false`, removing nothing; the delete confirmation sheet reads it before it offers a button.
+  // `removed.goals` counts the goal itself, so a leaf with nothing under it is still 1.
   http.delete('/api/goals/:id', ({ request }) => {
-    if (new URL(request.url).searchParams.get('dryRun') === 'true') {
-      return HttpResponse.json({ subGoals: 0, tasks: 0, backlogItems: 0 });
-    }
+    const dryRun = new URL(request.url).searchParams.get('dryRun') === 'true';
     return HttpResponse.json({
-      deleted: true,
+      deleted: !dryRun,
       removed: { goals: 1, weeklyFocuses: 0, tasks: 0, taskEvents: 0, backlogItems: 0 },
       untagged: { ideas: 0, learnings: 0 },
       serverNow: F.NOW,

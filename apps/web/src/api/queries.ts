@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient, type UseMutationResult } from '@tanstack/react-query';
 import type {
+  ApiTokenStatusResponse,
   BacklogItemView,
   BacklogResponse,
   GoalDetailResponse,
@@ -16,7 +17,6 @@ import type {
 } from '@goal-cascade/shared';
 import { useApi } from '../context/ApiContext';
 import { useUI } from '../context/UIContext';
-import type { AgentTokenStatusResponse } from './contracts';
 import { newIdempotencyKey, type ApiClient } from './http';
 import { isApiError, isTransient, toApiError, type ApiError, type ApiErrorCode } from './errors';
 import { presentError, type Refresh } from '../lib/errorCopy';
@@ -159,8 +159,8 @@ export function useLearnings() {
  * Whether an agent token exists, and enough of it to recognise. Reading STATUS needs no password — only
  * creating or replacing does — so this is an ordinary read model like any other.
  *
- * `retry: false` because the endpoint may legitimately not be there yet on an older API: one 404 and the
- * section says so, rather than three rounds of retry behind a spinner.
+ * `retry: false` because a failure here is a state the section renders rather than one worth hiding: one
+ * request, and it says it couldn't check and offers a retry, rather than three rounds behind a spinner.
  */
 export function useAgentToken() {
   const client = useApi();
@@ -173,7 +173,7 @@ export function useAgentToken() {
  *
  * `gcTime: 0` and `staleTime: 0`: the sheet asks fresh every time it opens and the answer does not outlive
  * it. A confirmation that names counts from ten minutes ago is a confirmation that lies. `retry: false` so
- * a server without the `dryRun` parameter costs one request, after which the sheet falls back to the
+ * a preview that fails for any reason costs one request, after which the sheet falls back to the
  * `GOAL_HAS_CHILDREN` refusal path it has always had.
  */
 export function useGoalDeletePreview(id: string | null) {
@@ -444,29 +444,40 @@ const AGENT_TOKEN_QUIET = ['UNAUTHENTICATED', 'FORBIDDEN', 'VALIDATION_FAILED', 
 /**
  * Create or replace the one token, re-authenticated with the password.
  *
+ * `useCommand` is what mints the `Idempotency-Key`, and `POST /me/api-token` is behind the API's
+ * `idempotent` middleware — a call that bypassed this wrapper would be answered `400
+ * IDEMPOTENCY_KEY_MISSING`, which is the shape of a bug this codebase has already had once.
+ *
  * The plaintext in the response is **not** written to the cache — only `createdAt` and `last4` are. That is
  * the whole of "show once" on this side of the wire: the secret exists in one component's local state and
- * in nothing that outlives it.
+ * in nothing that outlives it. Both are read from `token`, where the server nests them next to the
+ * plaintext, and both are optional in the parsed shape (`http.ts`), so both have a local fallback.
  */
 export function useCreateAgentToken() {
   return useCommand<{ password: string }, Awaited<ReturnType<ApiClient['createAgentToken']>>>({
     run: (c, v, k) => c.createAgentToken({ password: v.password }, k),
+    // Patched only when a status read has already landed: `ApiTokenStatusResponse` carries `mcpUrl` and
+    // `serverNow` too, and half a response is not a read model. The invalidation below fetches the rest.
     onSuccess: (d, _v, qc) =>
-      qc.setQueryData<AgentTokenStatusResponse>(keys.agentToken, (prev) => ({
-        ...prev,
-        token: { createdAt: d.createdAt ?? new Date().toISOString(), last4: d.last4 ?? d.token.slice(-4) },
-      })),
+      qc.setQueryData<ApiTokenStatusResponse>(keys.agentToken, (prev) =>
+        prev
+          ? {
+              ...prev,
+              token: { createdAt: d.token.createdAt ?? new Date().toISOString(), last4: d.token.last4 ?? d.token.plaintext.slice(-4) },
+            }
+          : prev,
+      ),
     invalidate: [keys.agentToken],
     inline: true,
     quiet: AGENT_TOKEN_QUIET,
   });
 }
 
-/** Idempotent revoke. No password: taking access away is never the dangerous direction. */
+/** Idempotent revoke — and no `Idempotency-Key`: the route carries no `idempotent` middleware, by design. */
 export function useRevokeAgentToken() {
   return useCommand<void, Awaited<ReturnType<ApiClient['revokeAgentToken']>>>({
     run: (c) => c.revokeAgentToken(),
-    onSuccess: (_d, _v, qc) => qc.setQueryData<AgentTokenStatusResponse>(keys.agentToken, (prev) => ({ ...prev, token: null })),
+    onSuccess: (_d, _v, qc) => qc.setQueryData<ApiTokenStatusResponse>(keys.agentToken, (prev) => (prev ? { ...prev, token: null } : prev)),
     invalidate: [keys.agentToken],
     inline: true,
     quiet: AGENT_TOKEN_QUIET,

@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { AppShell } from '../../src/AppShell';
 import { renderApp } from '../render';
-import { apiError, bodyOf, lastRequest, requests, server } from '../msw/handlers';
+import { apiError, bodyOf, cmd, lastRequest, requests, server } from '../msw/handlers';
 import * as F from '../msw/fixtures';
 
 /**
@@ -47,7 +47,7 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, 'clipboard');
 });
 
-const withToken = () => server.use(http.get('/api/me/agent-token', () => HttpResponse.json(F.agentTokenStatus())));
+const withToken = () => server.use(http.get('/api/me/api-token', () => HttpResponse.json(F.agentTokenStatus())));
 
 /** Walk through create with the right password and land on the reveal. */
 async function reveal(user: ReturnType<typeof renderApp>['user']) {
@@ -77,9 +77,9 @@ describe('Agent access — placement', () => {
     await openAccount(user);
 
     expect(await screen.findByText(/ends in 34kt/)).toBeInTheDocument();
-    const status = lastRequest('GET', '/api/me/agent-token');
+    const status = lastRequest('GET', '/api/me/api-token');
     expect(status).toBeTruthy();
-    expect(requests('POST', '/api/me/agent-token')).toHaveLength(0);
+    expect(requests('POST', '/api/me/api-token')).toHaveLength(0);
   });
 
   it('with no token it says so, and offers exactly one way forward', async () => {
@@ -92,12 +92,12 @@ describe('Agent access — placement', () => {
   });
 
   it('a status read that fails says so and offers a retry, rather than pretending there is no token', async () => {
-    server.use(http.get('/api/me/agent-token', () => apiError('INTERNAL', 'boom')));
+    server.use(http.get('/api/me/api-token', () => apiError('INTERNAL', 'boom')));
     const { user } = renderApp(<AppShell />);
     await openAccount(user);
 
     expect(await screen.findByText(/Couldn’t check whether a token exists/)).toBeInTheDocument();
-    server.use(http.get('/api/me/agent-token', () => HttpResponse.json(F.agentTokenStatus())));
+    server.use(http.get('/api/me/api-token', () => HttpResponse.json(F.agentTokenStatus())));
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText(/ends in 34kt/)).toBeInTheDocument();
   });
@@ -108,11 +108,11 @@ describe('Agent access — creating and replacing', () => {
     const { user } = renderApp(<AppShell />);
     await reveal(user);
 
-    const body = await bodyOf(lastRequest('POST', '/api/me/agent-token'));
+    const body = await bodyOf(lastRequest('POST', '/api/me/api-token'));
     expect(body).toEqual({ password: 'correct horse battery' });
     // The `useCommand` wrapper is what puts the key on it — a form that called the client directly would
     // have none, which is the shape of a bug this codebase has already had once.
-    expect(lastRequest('POST', '/api/me/agent-token')?.headers.get('Idempotency-Key')).toBeTruthy();
+    expect(lastRequest('POST', '/api/me/api-token')?.headers.get('Idempotency-Key')).toBeTruthy();
   });
 
   it('the MCP URL is this origin plus /mcp — never a hardcoded hostname', async () => {
@@ -122,12 +122,31 @@ describe('Agent access — creating and replacing', () => {
     expect(screen.getByLabelText('MCP URL')).toHaveValue(`${window.location.origin}/mcp`);
   });
 
+  it('and if the create answers without one, the client derives it rather than showing nothing', async () => {
+    // The create response is parsed leniently ON PURPOSE (`api/http.ts`): everything but `token.plaintext`
+    // is optional, because a parse error here would destroy the only copy of a token already minted.
+    server.use(
+      http.post('/api/me/api-token', cmd(() => HttpResponse.json({ token: { plaintext: F.PLAINTEXT_TOKEN } }, { status: 201 }))),
+    );
+    const { user } = renderApp(<AppShell />);
+    const tokenField = await reveal(user);
+
+    expect(tokenField).toHaveValue(F.PLAINTEXT_TOKEN);
+    expect(screen.getByLabelText('MCP URL')).toHaveValue(`${window.location.origin}/mcp`);
+  });
+
   it('and the server’s own mcpUrl wins when it names one', async () => {
-    server.use(http.get('/api/me/agent-token', () => HttpResponse.json({ token: null, mcpUrl: 'https://goals.example.test/mcp' })));
+    // A deployment on its own hostname: the API derives `mcpUrl` from the REQUEST origin, so both the
+    // status read and the create answer with it, and neither is this jsdom window's origin.
+    const named = 'https://goals.example.test/mcp';
+    server.use(
+      http.get('/api/me/api-token', () => HttpResponse.json(F.agentTokenAbsent({ mcpUrl: named }))),
+      http.post('/api/me/api-token', cmd(() => HttpResponse.json(F.agentTokenCreated({ mcpUrl: named }), { status: 201 }))),
+    );
     const { user } = renderApp(<AppShell />);
     await reveal(user);
 
-    expect(screen.getByLabelText('MCP URL')).toHaveValue('https://goals.example.test/mcp');
+    expect(screen.getByLabelText('MCP URL')).toHaveValue(named);
   });
 
   it('shows the MCP URL and the token and nothing else — no ready-to-paste config block', async () => {
@@ -145,11 +164,11 @@ describe('Agent access — creating and replacing', () => {
     // A stateful status, as the real one is: no token until one is made, and only ever `last4` after.
     let exists = false;
     server.use(
-      http.get('/api/me/agent-token', () => HttpResponse.json(exists ? F.agentTokenStatus() : { token: null })),
-      http.post('/api/me/agent-token', () => {
+      http.get('/api/me/api-token', () => HttpResponse.json(exists ? F.agentTokenStatus() : F.agentTokenAbsent())),
+      http.post('/api/me/api-token', cmd(() => {
         exists = true;
         return HttpResponse.json(F.agentTokenCreated(), { status: 201 });
-      }),
+      })),
     );
     const { user } = renderApp(<AppShell />);
     await reveal(user);
@@ -173,7 +192,9 @@ describe('Agent access — creating and replacing', () => {
   });
 
   it('a wrong password is refused next to the field, with no token shown and no toast', async () => {
-    server.use(http.post('/api/me/agent-token', () => apiError('FORBIDDEN', 'wrong password')));
+    // The real refusal: `422 VALIDATION_FAILED`, worded exactly as `change-password` words it so the pair
+    // cannot become a password oracle by differing (`me.routes.ts`).
+    server.use(http.post('/api/me/api-token', cmd(() => apiError('VALIDATION_FAILED', 'the current password is not correct'))));
     const { user } = renderApp(<AppShell />);
     await openAccount(user);
 
@@ -208,11 +229,11 @@ describe('Agent access — creating and replacing', () => {
     expect(screen.getByText(/Anything using it stops working/)).toBeInTheDocument();
     // Asking once means the way out is offered beside it.
     await user.click(screen.getByRole('button', { name: 'Keep it' }));
-    expect(requests('DELETE', '/api/me/agent-token')).toHaveLength(0);
+    expect(requests('DELETE', '/api/me/api-token')).toHaveLength(0);
 
     await user.click(screen.getByRole('button', { name: 'Revoke' }));
     await user.click(screen.getByRole('button', { name: 'Revoke' }));
-    await waitFor(() => expect(requests('DELETE', '/api/me/agent-token')).toHaveLength(1));
+    await waitFor(() => expect(requests('DELETE', '/api/me/api-token')).toHaveLength(1));
   });
 });
 

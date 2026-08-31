@@ -217,21 +217,29 @@ describe('Goals — dormancy and the quiet signals', () => {
  * the button is not offered until the answer lands.
  */
 describe('Goals — delete (Q-5)', () => {
-  /** The dry run answers with these counts; a real delete records that it was authorised as a cascade. */
+  /**
+   * The dry run answers with the SAME `DeleteGoalResponse` the live delete does, `deleted: false` and
+   * nothing written — one handler, one shape (`goals.routes.ts`, `commands.ts#DeleteGoalResponse`).
+   * `removed.goals` counts the goal itself, which is why the sub-goal count the sheet renders is one less.
+   */
   const withDeletePreview = (counts: { subGoals: number; tasks: number; backlogItems: number }) => {
     const seen: { deleted: string | null; cascade: string | null } = { deleted: null, cascade: null };
+    const removed = {
+      goals: counts.subGoals + 1,
+      weeklyFocuses: 1,
+      tasks: counts.tasks,
+      taskEvents: 0,
+      backlogItems: counts.backlogItems,
+    };
     server.use(
       http.delete('/api/goals/:id', ({ request }) => {
         const url = new URL(request.url);
-        if (url.searchParams.get('dryRun') === 'true') return HttpResponse.json(counts);
-        seen.deleted = url.pathname;
-        seen.cascade = url.searchParams.get('cascade');
-        return HttpResponse.json({
-          deleted: true,
-          removed: { goals: counts.subGoals + 1, weeklyFocuses: 1, tasks: counts.tasks, taskEvents: 0, backlogItems: counts.backlogItems },
-          untagged: { ideas: 0, learnings: 0 },
-          serverNow: F.NOW,
-        });
+        const dryRun = url.searchParams.get('dryRun') === 'true';
+        if (!dryRun) {
+          seen.deleted = url.pathname;
+          seen.cascade = url.searchParams.get('cascade');
+        }
+        return HttpResponse.json({ deleted: !dryRun, removed, untagged: { ideas: 0, learnings: 0 }, serverNow: F.NOW });
       }),
     );
     return seen;
@@ -267,7 +275,12 @@ describe('Goals — delete (Q-5)', () => {
       http.delete('/api/goals/:id', async ({ request }) => {
         if (new URL(request.url).searchParams.get('dryRun') !== 'true') return apiError('INTERNAL', 'should not delete');
         await held;
-        return HttpResponse.json({ subGoals: 2, tasks: 3, backlogItems: 1 });
+        return HttpResponse.json({
+          deleted: false,
+          removed: { goals: 3, weeklyFocuses: 1, tasks: 3, taskEvents: 0, backlogItems: 1 },
+          untagged: { ideas: 0, learnings: 0 },
+          serverNow: F.NOW,
+        });
       }),
     );
     const { user } = renderApp(<AppShell />);
@@ -305,8 +318,8 @@ describe('Goals — delete (Q-5)', () => {
     server.use(
       http.delete('/api/goals/:id', ({ request }) => {
         const url = new URL(request.url);
-        // An API without the parameter refuses the unknown query outright — `.strict()` everywhere (Q-10).
-        if (url.searchParams.get('dryRun') === 'true') return apiError('VALIDATION_FAILED', 'unknown query parameter');
+        // The preview fails — any reason at all: a 5xx, a network blip, a body that does not parse.
+        if (url.searchParams.get('dryRun') === 'true') return apiError('INTERNAL', 'preview unavailable');
         if (url.searchParams.get('cascade') !== 'true') {
           return apiError('GOAL_HAS_CHILDREN', 'has children', { goalId: F.Q, subGoals: 2, tasks: 3, backlogItems: 1 });
         }

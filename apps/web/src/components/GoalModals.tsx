@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HORIZONS, PULSES, type GoalView, type Horizon, type Pulse } from '@goal-cascade/shared';
+import { HORIZONS, PULSES, type DeleteGoalResponse, type GoalView, type Horizon, type Pulse } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import {
   useCreateGoal,
@@ -11,7 +11,6 @@ import {
   usePatchGoal,
   useReplanGoal,
 } from '../api/queries';
-import { destroysSomething, type GoalDeletePreview } from '../api/contracts';
 import { toApiError } from '../api/errors';
 import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
@@ -359,6 +358,23 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
 // Delete
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Q-5's three numbers: `N sub-goals, M tasks, K backlog items`. A view concern, not a wire shape. */
+type DeleteCounts = { subGoals: number; tasks: number; backlogItems: number };
+
+/**
+ * The dry run answers with a whole `DeleteGoalResponse`, and `removed.goals` counts the goal ITSELF —
+ * so the sub-goal count is one less. The other two numbers Q-5 names are already there under their own
+ * names; `weeklyFocuses`, `taskEvents` and `untagged` are real but are not what the sentence promises.
+ */
+const countsOf = (r: DeleteGoalResponse): DeleteCounts => ({
+  subGoals: Math.max(0, r.removed.goals - 1),
+  tasks: r.removed.tasks,
+  backlogItems: r.removed.backlogItems,
+});
+
+/** True when a delete would destroy anything at all — the whole test for "does this need confirming?". */
+const destroysSomething = (c: DeleteCounts): boolean => c.subGoals + c.tasks + c.backlogItems > 0;
+
 /**
  * Q-5 — delete, and the acknowledgement it needs.
  *
@@ -373,9 +389,9 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
  * write. Nothing is derived from a client-side subtree walk — the tree in the cache does not know how many
  * tasks hang off a leaf, and a confirmation that guesses is worse than one that waits.
  *
- * The `GOAL_HAS_CHILDREN` refusal is still handled, unchanged, as the fallback: against an API without the
- * dry run the preview fails, the sheet says only what it can stand behind, and the first tap is refused
- * with the counts exactly as before. That path is why `GOAL_HAS_CHILDREN` stays `quiet` in `useCommand`.
+ * The `GOAL_HAS_CHILDREN` refusal is still handled, unchanged, as the fallback: if the preview fails for
+ * any reason the sheet says only what it can stand behind, and the first tap is refused with the counts
+ * exactly as before. That path is why `GOAL_HAS_CHILDREN` stays `quiet` in `useCommand`.
  *
  * There is no soft delete and no trash. Ideas and Learnings tagged into the subtree are un-tagged to
  * Unsorted rather than deleted with it (S-idea-7-1).
@@ -387,14 +403,14 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
   const previewQ = useGoalDeletePreview(goalId);
   const remove = useDeleteGoal();
   /** Counts recovered from a `GOAL_HAS_CHILDREN` refusal — the fallback when the dry run is unavailable. */
-  const [refused, setRefused] = useState<GoalDeletePreview | null>(null);
+  const [refused, setRefused] = useState<DeleteCounts | null>(null);
 
   const goals = goalsQ.data?.goals ?? [];
   const goal = node(goals, goalId);
   const close = () => ui.closeSheet();
   if (!goal) return null;
 
-  const counts = refused ?? previewQ.data ?? null;
+  const counts = refused ?? (previewQ.data ? countsOf(previewQ.data) : null);
   const destroys = counts ? destroysSomething(counts) : false;
   /** Still asking. The delete button is not offered yet — that wait IS the fix. */
   const checking = !counts && previewQ.isPending;

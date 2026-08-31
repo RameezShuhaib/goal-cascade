@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type RefObject } from 'react';
+import { MCP_PATH } from '@goal-cascade/shared';
 import { useAgentToken, useCreateAgentToken, useRevokeAgentToken } from '../api/queries';
 import { toApiError } from '../api/errors';
-import { MCP_PATH } from '../api/contracts';
 import { copyFrom, type CopyResult } from '../lib/clipboard';
 import { instantLabel } from '../utils/dates';
 import { useSkin } from '../skin';
@@ -52,14 +52,16 @@ const mono = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 /**
  * What a refused create/replace should say next to the password field.
  *
- * The status is read rather than the code, deliberately: it is not settled which code the API answers with
- * for a wrong password (401, 403 and 422 are all defensible), and "that password doesn't match" is the
- * honest sentence for every one of them. `NOT_FOUND` is the older-API case and says so plainly instead of
- * blaming the password.
+ * The API answers a wrong password with `422 VALIDATION_FAILED` and the same flat sentence
+ * `change-password` uses, so that the two cannot become a password oracle by differing
+ * (`me.routes.ts`) — and 422 is also what the generic "Couldn't save — check the values." is wired to,
+ * which is not a sentence about a password. So it is caught here, together with 401 and 403: whichever of
+ * the three arrives, the honest sentence is the same one. `NOT_FOUND` is the older-API case and says so
+ * plainly instead of blaming the password.
  */
 function refusalCopy(error: unknown): string {
   const err = toApiError(error);
-  if (err.status === 401 || err.status === 403) return "That password doesn't match.";
+  if (err.status === 401 || err.status === 403 || err.code === 'VALIDATION_FAILED') return "That password doesn't match.";
   if (err.code === 'NOT_FOUND') return "This deployment doesn't offer agent access yet.";
   return commandError(err) ?? "Couldn't do that just now — try again.";
 }
@@ -120,7 +122,9 @@ export function AgentAccess() {
       {
         onSuccess: (data) => {
           const mcpUrl = data.mcpUrl ?? originMcpUrl;
-          setPhase({ kind: 'revealed', token: data.token, mcpUrl });
+          // `token.plaintext`, nested next to the same `createdAt`/`last4` a status read gives — NOT a flat
+          // `token` string. This is the only place the secret ever exists on this side of the wire.
+          setPhase({ kind: 'revealed', token: data.token.plaintext, mcpUrl });
           setPassword('');
           // Lift the secret out of the mutation and drop the mutation's copy of it in the same tick.
           create.reset();
