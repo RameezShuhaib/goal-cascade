@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { BrowserRouter } from 'react-router';
 import { createQueryClient, identityPersister } from './lib/queryClient';
 import { ApiProvider } from './context/ApiContext';
 import { UIProvider } from './context/UIContext';
@@ -40,21 +41,30 @@ const persister = store ? identityPersister(store) : null;
 /**
  * The provider nest. Order is load-bearing:
  *
- *   query client → ApiProvider → UIProvider → AppRoot ( → ThemeProvider, inside the gate )
+ *   query client → BrowserRouter → ApiProvider → UIProvider → AppRoot ( → ThemeProvider, inside the gate )
  *
  * `ApiProvider` is above everything because it is dependency injection — one seam, and a test swaps the
  * network for the whole tree by passing a different client. `UIProvider` is above the gate because UI state
- * has to survive it: a deep link captured while signed out is applied after sign-in with no extra
- * bookkeeping, and `sessionEpoch` (which remounts the gate) obviously cannot live inside the thing it
+ * has to survive it, and `sessionEpoch` (which remounts the gate) obviously cannot live inside the thing it
  * remounts. `ThemeProvider` is inside `App`, because it needs `/me/preferences` and must not query before
  * the gate knows whether there is a session.
+ *
+ * ⚠ **A2 (R-nav-24)** — `BrowserRouter` sits ABOVE the auth gate, which is what makes a deep link opened
+ * while signed out survive the sign-in round trip for free: the gate renders `AuthScreen` in place of the
+ * routes and the location never changes, so the route is still there when the session lands. Routing still
+ * decides nothing about auth — the gate runs off `/me`, never off the address bar.
+ *
+ * `basename` is `/`, and the Worker serves `index.html` for every unknown path, so a pasted `/task/:id`
+ * and an installed PWA's deep link both reach the router rather than a 404.
  */
 const tree = (
-  <ApiProvider>
-    <UIProvider>
-      <AppRoot />
-    </UIProvider>
-  </ApiProvider>
+  <BrowserRouter>
+    <ApiProvider>
+      <UIProvider>
+        <AppRoot />
+      </UIProvider>
+    </ApiProvider>
+  </BrowserRouter>
 );
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

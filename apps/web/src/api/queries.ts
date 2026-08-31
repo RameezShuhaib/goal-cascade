@@ -6,10 +6,10 @@ import type {
   BacklogResponse,
   GoalDetailResponse,
   GoalView,
-  GoalsResponse,
+  Horizon,
   LearningView,
   LearningsResponse,
-  PlanResponse,
+  LensResponse,
   TaskDetailView,
   TaskView,
   TasksResponse,
@@ -83,47 +83,65 @@ export function usePreferences() {
   return useQuery({ queryKey: keys.preferences, queryFn: () => client.preferences(), enabled, staleTime: 5 * 60_000 });
 }
 
-/** Everything for one week in one request — the cold-open read (the mockup's `fetchAll`). */
+/**
+ * Everything the app needs on cold open, in one request.
+ *
+ * ⚠ **A2 (R-rm-5, R-nav-28)** — it no longer ships every goal: it carries the Life goals, the Weekly lens
+ * at the week containing today, and that week's tasks. It is also **the client's only source of the
+ * current Monday** (`week.weekStart`, R-auth-5) — see `lib/weekClock.ts`.
+ */
 export function useBootstrap(week = 0) {
   const client = useApi();
   const enabled = useSignedIn();
   return useQuery({ queryKey: keys.bootstrap(week), queryFn: () => client.bootstrap(week), enabled, ...READ_MODEL });
 }
 
-/** The whole tree, flat, with the derived flags computed for `week` (R-goal-8..11, R-goal-25). */
-export function useGoals(week = 0) {
+/**
+ * R-lens-16 — **one lens: one horizon, one period, grouped by Life goal.** This replaced `useGoals`, the
+ * whole-tree read.
+ *
+ * `period` is `undefined` when the URL names none; the server then answers with the current period
+ * (R-lens-14) and the screen rewrites the address bar to the canonical key. The client never derives a
+ * period, a Monday or a "current" flag — all four arrive on the wire (R-goal-34).
+ */
+export function useLens(lens: Horizon, period?: string, enabled = true) {
   const client = useApi();
-  const enabled = useSignedIn();
-  return useQuery({ queryKey: keys.goals(week), queryFn: () => client.goals(week), enabled, ...READ_MODEL });
-}
-
-/** R-goal-27 — one goal's detail screen: the goal, its ancestors, children, backlog and learnings. */
-export function useGoal(id: string | null, week = 0) {
-  const client = useApi();
-  const enabled = useSignedIn() && !!id;
-  return useQuery({ queryKey: keys.goal(id ?? '', week), queryFn: () => client.goal(id!, week), enabled, ...READ_MODEL });
-}
-
-/** D-2 — any addressable week's focus set; a past week renders the sentences it actually had. */
-export function usePlan(week = 0) {
-  const client = useApi();
-  const enabled = useSignedIn();
-  return useQuery({ queryKey: keys.plan(week), queryFn: () => client.plan(week), enabled, ...READ_MODEL });
-}
-
-/** R-nav-8 — the tasks visible in one week, with that week's plan alongside. Visibility is server-applied. */
-export function useTasks(week = 0, goalId?: string) {
-  const client = useApi();
-  const enabled = useSignedIn();
+  const signedIn = useSignedIn();
   return useQuery({
-    queryKey: keys.tasks(week, goalId),
-    queryFn: () => client.tasks({ week, ...(goalId ? { goalId } : {}) }),
-    enabled,
+    queryKey: keys.lens(lens, period ?? null),
+    queryFn: () => client.lens({ lens, ...(period ? { period } : {}) }),
+    enabled: signedIn && enabled,
     ...READ_MODEL,
   });
 }
 
-/** R-task-30 — one task with its full activity log. Lists omit `events`; only the detail sheet needs them. */
+/** R-lens-22 — the Zoom sheet's five rows, in one grouped read. Only fetched while the sheet is open. */
+export function useZoom(anchor: string | null, enabled = true) {
+  const client = useApi();
+  const signedIn = useSignedIn();
+  return useQuery({
+    queryKey: keys.zoom(anchor),
+    queryFn: () => client.zoom(anchor ?? undefined),
+    enabled: signedIn && enabled,
+    ...READ_MODEL,
+  });
+}
+
+/** R-goal-41 — one goal's detail page: the goal, its ancestors, children, tasks, backlog and learnings. */
+export function useGoal(id: string | null | undefined) {
+  const client = useApi();
+  const enabled = useSignedIn() && !!id;
+  return useQuery({ queryKey: keys.goal(id ?? ''), queryFn: () => client.goal(id!), enabled, ...READ_MODEL });
+}
+
+/** R-lens-12 — the tasks visible in one week. Visibility is entirely server-applied (R-task-7/8/32). */
+export function useTasks(week = 0) {
+  const client = useApi();
+  const enabled = useSignedIn();
+  return useQuery({ queryKey: keys.tasks(week), queryFn: () => client.tasks({ week }), enabled, ...READ_MODEL });
+}
+
+/** R-task-30 — one task with its full activity log. Lists omit `events`; only the task PAGE needs them. */
 export function useTask(id: string | null, week = 0) {
   const client = useApi();
   const enabled = useSignedIn() && !!id;
@@ -199,20 +217,16 @@ function applyRefresh(qc: QueryClient, r: Refresh) {
     case 'backlog':
       inv(keys.backlogAll);
       break;
-    case 'plan':
-      inv(keys.planAll);
-      inv(keys.goalsAll);
-      break;
     case 'me':
       inv(keys.me);
       break;
     case 'all':
       inv(keys.goalsAll);
       inv(['goal']);
+      inv(keys.zoomAll);
       inv(keys.tasksAll);
       inv(['task']);
       inv(keys.backlogAll);
-      inv(keys.planAll);
       inv(keys.learnings);
       inv(['bootstrap']);
       break;
@@ -340,21 +354,34 @@ export function useCommand<TVars, TData>(opts: CommandOptions<TVars, TData>): Co
 // ---- cache patch helpers ---------------------------------------------------
 //
 // Each one writes the server's fresh view into every cached shape that carries it. They are deliberately
-// dumb: replace the row, do not recompute anything derived from it. `isLeaf`, `isActive`, `carryWeeks`,
-// `backlogCount` and friends are the server's (R-goal-8..11) and are only correct in a payload the server
-// built — which is why every patch is followed by an invalidation rather than trusted as final.
+// dumb: replace the row, do not recompute anything derived from it. `carryWeeks`, `completable`,
+// `lifeRootId`, `plannedAgeWeeks`, `weeklyBreakdown` and `backlogCount` are all the SERVER's, computed for
+// the period the read model was built for, and are only correct in a payload the server built — which is
+// why every patch is followed by an invalidation rather than trusted as final.
 
+/**
+ * ⚠ **A2** — a lens response holds its goals in TWO arrays (`items` and R-lens-12's `carried` band), and
+ * the same goal is never in both. Patching one and forgetting the other would leave a renamed carried goal
+ * showing its old title until the refetch landed.
+ */
 function patchGoal(qc: QueryClient, goal: GoalView) {
-  qc.setQueriesData<GoalsResponse>({ queryKey: keys.goalsAll }, (prev) =>
-    prev ? { ...prev, goals: prev.goals.map((g) => (g.id === goal.id ? goal : g)) } : prev,
+  qc.setQueriesData<LensResponse>({ queryKey: keys.goalsAll }, (prev) =>
+    prev
+      ? {
+          ...prev,
+          items: prev.items.map((g) => (g.id === goal.id ? goal : g)),
+          carried: prev.carried.map((g) => (g.id === goal.id ? goal : g)),
+        }
+      : prev,
   );
   qc.setQueriesData<GoalDetailResponse>({ queryKey: keys.goalAll(goal.id) }, (prev) => (prev ? { ...prev, goal } : prev));
 }
 
 function patchTask(qc: QueryClient, task: TaskDetailView) {
-  qc.setQueriesData<TasksResponse>({ queryKey: keys.tasksAll }, (prev) =>
-    prev ? { ...prev, tasks: prev.tasks.map((t): TaskView => (t.id === task.id ? task : t)) } : prev,
-  );
+  const replace = (t: TaskView): TaskView => (t.id === task.id ? { ...t, ...task } : t);
+  qc.setQueriesData<TasksResponse>({ queryKey: keys.tasksAll }, (prev) => (prev ? { ...prev, tasks: prev.tasks.map(replace) } : prev));
+  // The Weekly lens carries its own week's tasks (R-lens-12), so it is patched from the same response.
+  qc.setQueriesData<LensResponse>({ queryKey: keys.goalsAll }, (prev) => (prev ? { ...prev, tasks: prev.tasks.map(replace) } : prev));
   qc.setQueryData(keys.task(task.id), (prev: { task: TaskDetailView; serverNow: string } | undefined) =>
     prev ? { ...prev, task } : { task, serverNow: task.updatedAt },
   );
@@ -367,6 +394,9 @@ function patchTask(qc: QueryClient, task: TaskDetailView) {
  */
 function dropTaskFromLists(qc: QueryClient, task: TaskDetailView) {
   qc.setQueriesData<TasksResponse>({ queryKey: keys.tasksAll }, (prev) =>
+    prev ? { ...prev, tasks: prev.tasks.filter((t) => t.id !== task.id) } : prev,
+  );
+  qc.setQueriesData<LensResponse>({ queryKey: keys.goalsAll }, (prev) =>
     prev ? { ...prev, tasks: prev.tasks.filter((t) => t.id !== task.id) } : prev,
   );
   qc.setQueryData(keys.task(task.id), (prev: { task: TaskDetailView; serverNow: string } | undefined) =>
@@ -397,8 +427,13 @@ function patchLearning(qc: QueryClient, learning: LearningView) {
   );
 }
 
-/** Everything a week's shape depends on. A plan save changes which leaves are active, so goals move too. */
-const WEEK_KEYS: readonly (readonly unknown[])[] = [keys.tasksAll, keys.planAll, keys.goalsAll, ['bootstrap']];
+/**
+ * Everything a week's shape depends on. A lens read carries its own week's tasks (R-lens-12), so a task
+ * write moves goals too — and the Zoom sheet's counts (R-lens-22) move with any goal write.
+ */
+const WEEK_KEYS: readonly (readonly unknown[])[] = [keys.tasksAll, keys.goalsAll, keys.zoomAll, ['bootstrap']];
+/** Everything a goal write can move: the lens page, the carried band, the group counts, the Zoom counts. */
+const GOAL_KEYS: readonly (readonly unknown[])[] = [keys.goalsAll, ['goal'], keys.zoomAll, ['bootstrap']];
 
 // ---- preferences -----------------------------------------------------------
 
@@ -477,9 +512,9 @@ export function useRevokeAgentToken() {
 export function useCreateGoal() {
   return useCommand<Parameters<ApiClient['createGoal']>[0], Awaited<ReturnType<ApiClient['createGoal']>>>({
     run: (c, v, k) => c.createGoal(v, k),
-    // No patch: a new goal changes its parent's `isLeaf`, `branches` and the whole ordering (Q-7), none of
-    // which this response carries. The refetch is the honest answer.
-    invalidate: [keys.goalsAll, ['goal'], ['bootstrap']],
+    // No patch: a new goal changes its group's membership, its parent's planned-ness line (R-goal-47) and
+    // the lens ordering (Q-7), none of which this response carries. The refetch is the honest answer.
+    invalidate: GOAL_KEYS,
     inline: true,
   });
 }
@@ -488,7 +523,7 @@ export function usePatchGoal() {
   return useCommand<{ id: string; patch: Parameters<ApiClient['patchGoal']>[1] }, Awaited<ReturnType<ApiClient['patchGoal']>>>({
     run: (c, v) => c.patchGoal(v.id, v.patch),
     onSuccess: (d, _v, qc) => patchGoal(qc, d.goal),
-    invalidate: [keys.goalsAll, ['goal'], ['bootstrap']],
+    invalidate: GOAL_KEYS,
     inline: true,
   });
 }
@@ -497,18 +532,32 @@ export function useMoveGoal() {
   return useCommand<{ id: string; parentId: string; version?: number }, Awaited<ReturnType<ApiClient['moveGoal']>>>({
     run: (c, v, k) => c.moveGoal(v.id, { parentId: v.parentId, ...(v.version ? { version: v.version } : {}) }, k),
     onSuccess: (d, _v, qc) => patchGoal(qc, d.goal),
-    // Descendants moved with it and every ancestor's `branches` roll-up changed: refetch the tree.
-    invalidate: [keys.goalsAll, ['goal'], ['bootstrap']],
+    // Descendants moved with it, so every group membership below it may have changed: refetch.
+    invalidate: GOAL_KEYS,
     inline: true,
   });
 }
 
+/** ⚠ **A2 (R-goal-40)** — re-plan writes `periodKey`. A Weekly goal is not re-plannable at all. */
 export function useReplanGoal() {
-  return useCommand<{ id: string; period: string; reason?: string; version?: number }, Awaited<ReturnType<ApiClient['replanGoal']>>>({
+  return useCommand<{ id: string; periodKey: string; reason?: string; version?: number }, Awaited<ReturnType<ApiClient['replanGoal']>>>({
     run: (c, v, k) =>
-      c.replanGoal(v.id, { period: v.period, ...(v.reason ? { reason: v.reason } : {}), ...(v.version ? { version: v.version } : {}) }, k),
+      c.replanGoal(v.id, { periodKey: v.periodKey, ...(v.reason ? { reason: v.reason } : {}), ...(v.version ? { version: v.version } : {}) }, k),
     onSuccess: (d, _v, qc) => patchGoal(qc, d.goal),
-    invalidate: [keys.goalsAll, ['goal']],
+    invalidate: GOAL_KEYS,
+    inline: true,
+  });
+}
+
+/**
+ * ⚠ **A2, new (R-goal-46)** — `Repeat last week`, per Life line, into one week. It creates ORDINARY goals:
+ * there is no template, no series and no recurrence machinery to keep in step, so nothing is patched — the
+ * refetch is what the new rows arrive on.
+ */
+export function useRepeatWeek() {
+  return useCommand<{ lifeGoalId: string; weekStart: string }, Awaited<ReturnType<ApiClient['repeatWeek']>>>({
+    run: (c, v, k) => c.repeatWeek({ lifeGoalId: v.lifeGoalId, weekStart: v.weekStart }, k),
+    invalidate: GOAL_KEYS,
     inline: true,
   });
 }
@@ -521,41 +570,24 @@ export function useReplanGoal() {
 export function useDeleteGoal() {
   return useCommand<{ id: string; cascade?: boolean }, Awaited<ReturnType<ApiClient['deleteGoal']>>>({
     run: (c, v) => c.deleteGoal(v.id, { ...(v.cascade ? { cascade: true } : {}) }),
-    // A cascade removes tasks, focuses and backlog items and un-tags learnings: everything moved.
-    invalidate: [keys.goalsAll, ['goal'], keys.tasksAll, keys.backlogAll, keys.planAll, keys.learnings, ['bootstrap']],
+    // A cascade removes weekly goals, tasks and backlog items and un-tags learnings: everything moved.
+    invalidate: [...GOAL_KEYS, keys.tasksAll, keys.backlogAll, keys.learnings],
     inline: true,
     quiet: ['GOAL_HAS_CHILDREN'],
   });
 }
 
-// ---- the weekly plan -------------------------------------------------------
-
-/**
- * R-plan-7 — the whole week, atomically. This is a REPLACE: any non-Life leaf absent from `entries`, or
- * named with a blank sentence, has its focus for that week cleared.
- *
- * R-plan-2 / Q-3 — a save that names anything but the current week is refused wholesale with
- * `WEEK_NOT_CURRENT`, never partly applied. Sending `weekStart` explicitly (rather than letting the server
- * assume "now") is what makes a save that crossed a Monday boundary fail loudly instead of writing into the
- * wrong week.
- */
-export function useSavePlan() {
-  return useCommand<Parameters<ApiClient['savePlan']>[0], Awaited<ReturnType<ApiClient['savePlan']>>>({
-    run: (c, v, k) => c.savePlan(v, k),
-    onSuccess: (d, _v, qc) => qc.setQueryData<PlanResponse>(keys.plan(d.week.offset), d),
-    // Activity is "a focus row exists this week" (D-2), so every goal's `isActive` / `subtreeActive` /
-    // `focus` just changed, and with them which leaves get a section on the Tasks screen.
-    invalidate: WEEK_KEYS,
-    inline: true,
-  });
-}
-
 // ---- tasks -----------------------------------------------------------------
 
+/**
+ * ⚠ **A2 (R-task-48/49)** — the request carries `goalId` **or** `newWeeklyGoal`, never both and never
+ * neither, and the response carries the Weekly goal that was created when one was, so the caller can say
+ * so and move the lens to its week. Nothing may be created invisibly.
+ */
 export function useCreateTask() {
   return useCommand<Parameters<ApiClient['createTask']>[0], Awaited<ReturnType<ApiClient['createTask']>>>({
     run: (c, v, k) => c.createTask(v, k),
-    invalidate: [keys.tasksAll, keys.goalsAll, ['bootstrap']],
+    invalidate: WEEK_KEYS,
     inline: true,
   });
 }
@@ -577,7 +609,7 @@ export function useCompleteTask() {
   return useCommand<{ id: string; week?: number; version?: number }, Awaited<ReturnType<ApiClient['completeTask']>>>({
     run: (c, v, k) => c.completeTask(v.id, { week: v.week ?? 0, ...(v.version ? { version: v.version } : {}) }, k),
     onSuccess: (d, _v, qc) => patchTask(qc, d.task),
-    invalidate: [keys.tasksAll, keys.goalsAll, ['bootstrap']],
+    invalidate: WEEK_KEYS,
   });
 }
 
@@ -586,7 +618,7 @@ export function useUncheckTask() {
   return useCommand<{ id: string; cond?: string; version?: number }, Awaited<ReturnType<ApiClient['uncheckTask']>>>({
     run: (c, v, k) => c.uncheckTask(v.id, { ...(v.cond !== undefined ? { cond: v.cond } : {}), ...(v.version ? { version: v.version } : {}) }, k),
     onSuccess: (d, _v, qc) => patchTask(qc, d.task),
-    invalidate: [keys.tasksAll, keys.goalsAll, ['bootstrap']],
+    invalidate: WEEK_KEYS,
   });
 }
 
@@ -603,7 +635,7 @@ export function useMoveTaskToBacklog() {
       dropTaskFromLists(qc, d.task);
       patchBacklogItem(qc, d.item);
     },
-    invalidate: [keys.tasksAll, keys.backlogAll, keys.goalsAll, ['bootstrap']],
+    invalidate: [...WEEK_KEYS, keys.backlogAll],
   });
 }
 
@@ -612,7 +644,7 @@ export function useCancelTask() {
   return useCommand<{ id: string; reason?: string; version?: number }, Awaited<ReturnType<ApiClient['cancelTask']>>>({
     run: (c, v, k) => c.cancelTask(v.id, { ...(v.reason ? { reason: v.reason } : {}), ...(v.version ? { version: v.version } : {}) }, k),
     onSuccess: (d, _v, qc) => dropTaskFromLists(qc, d.task),
-    invalidate: [keys.tasksAll, keys.goalsAll, ['bootstrap']],
+    invalidate: WEEK_KEYS,
   });
 }
 
@@ -641,7 +673,7 @@ export function useCreateBacklogItem() {
   return useCommand<Parameters<ApiClient['createBacklogItem']>[0], Awaited<ReturnType<ApiClient['createBacklogItem']>>>({
     run: (c, v, k) => c.createBacklogItem(v, k),
     // R-goal-25 — the tree row's `N in backlog` count moved.
-    invalidate: [keys.backlogAll, keys.goalsAll, ['goal'], ['bootstrap']],
+    invalidate: [keys.backlogAll, ...GOAL_KEYS],
     inline: true,
   });
 }
@@ -662,7 +694,7 @@ export function useMoveBacklogItem() {
   return useCommand<{ id: string; goalId: string; version?: number }, Awaited<ReturnType<ApiClient['moveBacklogItem']>>>({
     run: (c, v, k) => c.moveBacklogItem(v.id, { goalId: v.goalId, ...(v.version ? { version: v.version } : {}) }, k),
     onSuccess: (d, _v, qc) => patchBacklogItem(qc, d.item),
-    invalidate: [keys.backlogAll, keys.goalsAll, ['goal'], ['bootstrap']],
+    invalidate: [keys.backlogAll, ...GOAL_KEYS],
   });
 }
 
@@ -670,21 +702,30 @@ export function useDeleteBacklogItem() {
   return useCommand<{ id: string }, Awaited<ReturnType<ApiClient['deleteBacklogItem']>>>({
     run: (c, v) => c.deleteBacklogItem(v.id),
     onSuccess: (_d, v, qc) => dropBacklogItem(qc, v.id),
-    invalidate: [keys.backlogAll, keys.goalsAll, ['goal'], ['bootstrap']],
+    invalidate: [keys.backlogAll, ...GOAL_KEYS],
   });
 }
 
 /**
- * R-backlog-6/7/8/9 — "Add to this week", the ONE way backlog becomes work.
+ * R-backlog-26 — "Add to this week", the ONE way backlog becomes work.
  *
- * `goalId` names the ACTIVE leaf that receives the task and is required whenever more than one such leaf
- * sits under the item's goal: D-18 forbids the server picking silently. With no active leaf at all the call
- * is refused with `BRANCH_NOT_ACTIVE`, which the "this branch isn't active this week" sheet explains — hence
- * `quiet`.
+ * ⚠ **A2** — the receiving goal is the **Weekly goal at or under the item's goal for the target week**, not
+ * an "active leaf". `goalId` is required only when more than one such goal exists (D-18 forbids the server
+ * picking silently, and the id it would pick decides which week the task belongs to for the rest of its
+ * life). With **none**, the server answers `NO_WEEKLY_GOAL` and the sheet offers `newWeeklyGoal` inline
+ * (R-task-48) rather than sending the owner away — hence `quiet`, and hence no dead end.
  */
 export function useConvertBacklogItem() {
   return useCommand<
-    { id: string; goalId?: string; title?: string; cond?: string; version?: number },
+    {
+      id: string;
+      goalId?: string;
+      newWeeklyGoal?: { parentId: string; title: string };
+      week?: number;
+      title?: string;
+      cond?: string;
+      version?: number;
+    },
     Awaited<ReturnType<ApiClient['convertBacklogItem']>>
   >({
     run: (c, v, k) =>
@@ -692,6 +733,8 @@ export function useConvertBacklogItem() {
         v.id,
         {
           ...(v.goalId ? { goalId: v.goalId } : {}),
+          ...(v.newWeeklyGoal ? { newWeeklyGoal: v.newWeeklyGoal } : {}),
+          week: v.week ?? 0,
           ...(v.title ? { title: v.title } : {}),
           cond: v.cond ?? '',
           ...(v.version ? { version: v.version } : {}),
@@ -702,9 +745,9 @@ export function useConvertBacklogItem() {
       patchBacklogItem(qc, d.item);
       patchTask(qc, d.task);
     },
-    invalidate: [keys.backlogAll, keys.tasksAll, keys.goalsAll, ['goal'], ['bootstrap']],
+    invalidate: [keys.backlogAll, ...WEEK_KEYS, ['goal']],
     inline: true,
-    quiet: ['BRANCH_NOT_ACTIVE', 'ALREADY_CONVERTED'],
+    quiet: ['NO_WEEKLY_GOAL', 'ALREADY_CONVERTED'],
   });
 }
 

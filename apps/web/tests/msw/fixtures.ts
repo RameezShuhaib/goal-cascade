@@ -2,31 +2,40 @@ import { API_TOKEN_PREFIX, MCP_PATH } from '@goal-cascade/shared';
 import type {
   BacklogItemView,
   GoalView,
+  Horizon,
   LearningView,
+  LensResponse,
+  LifeGroupView,
   MeResponse,
-  PlanEntryView,
+  PeriodView,
   PreferencesView,
   TaskDetailView,
   TaskView,
   UserView,
   WeekView,
+  ZoomResponse,
 } from '@goal-cascade/shared';
 
 /**
- * Fixtures for the data layer's tests. Deliberately minimal: this agent owns the client, the query wiring
- * and auth, so the fixtures only need to be schema-valid — the screens agent will grow them into something
- * that tells a story.
+ * Fixtures for the web tests.
  *
  * Every shape here goes through the real shared Zod schema on its way into the client, so a fixture that
  * drifts from the contract fails the test rather than passing against a hand-written type.
+ *
+ * ⚠ **A2** — this file was rebuilt, because the read model it described no longer exists. `treeResponse`
+ * (the whole tree, flat) is gone with R-lens-16; `planEntry` is gone with the entity (R-rm-2); and every
+ * goal has lost `focus`, `isLeaf`, `isActive`, `dormant`, `subtreeActive` and `branches` and gained
+ * `periodKey`, `lifeRootId`, `plannedAgeWeeks` and `weeklyBreakdown`. What replaces it is `lens()`, which
+ * builds one horizon's page the way `GoalService.lens` does.
  */
 
 export const NOW = '2026-08-31T09:00:00.000Z';
 /** 2026-08-31 is a Monday, which `WeekStart` requires. */
 export const THIS_MONDAY = '2026-08-31';
 export const LAST_MONDAY = '2026-08-24';
+export const THREE_WEEKS_AGO = '2026-08-10';
+export const NEXT_MONDAY = '2026-09-07';
 
-/** ULIDs are 26 chars of Crockford base32; a fixture just needs to satisfy the pattern. */
 export const ulid = (n: number) => '01J' + String(n).padStart(23, '0');
 
 export const user = (over: Partial<UserView> = {}): UserView => ({
@@ -52,10 +61,12 @@ export const me = (over: Partial<MeResponse> = {}): MeResponse => ({
   ...over,
 });
 
+/** ⚠ **A2** — `isPast` is new: write-eligibility is a `periodKey` comparison the SERVER owns (R-goal-34). */
 export const week = (over: Partial<WeekView> = {}): WeekView => ({
   weekStart: THIS_MONDAY,
   offset: 0,
   isCurrent: true,
+  isPast: false,
   ...over,
 });
 
@@ -66,48 +77,22 @@ export const goal = (over: Partial<GoalView> = {}): GoalView => ({
   title: 'Be strong at 60',
   why: 'so the next thirty years are mine',
   pulse: 'On track',
+  periodKey: '',
   period: '',
-  focus: '',
-  isLeaf: false,
-  isActive: false,
-  dormant: false,
-  subtreeActive: true,
+  lifeRootId: ulid(1),
   backlogCount: 0,
   carrying: null,
-  branches: { active: 1, total: 2 },
+  plannedAgeWeeks: null,
+  weeklyBreakdown: null,
   createdAt: NOW,
   updatedAt: NOW,
   version: 1,
   ...over,
 });
 
-export const leaf = (over: Partial<GoalView> = {}): GoalView =>
-  goal({
-    id: ulid(2),
-    parentId: ulid(1),
-    horizon: 'Monthly',
-    title: 'Lift three times a week',
-    period: 'Sep 2026',
-    focus: 'Three sessions, no excuses.',
-    isLeaf: true,
-    isActive: true,
-    branches: null,
-    ...over,
-  });
-
-export const planEntry = (over: Partial<PlanEntryView> = {}): PlanEntryView => ({
-  id: ulid(10),
-  goalId: ulid(2),
-  weekStart: THIS_MONDAY,
-  sentence: 'Three sessions, no excuses.',
-  createdAt: NOW,
-  updatedAt: NOW,
-  ...over,
-});
-
 export const task = (over: Partial<TaskView> = {}): TaskView => ({
   id: ulid(20),
-  goalId: ulid(2),
+  goalId: ulid(9),
   title: 'Book the Tuesday slot',
   cond: 'confirmation in the calendar',
   description: '',
@@ -119,7 +104,10 @@ export const task = (over: Partial<TaskView> = {}): TaskView => ({
   doneAt: null,
   exitReason: null,
   exitedAt: null,
+  /** ⚠ signed (R-task-43): negative means work that is not due yet. */
   carryWeeks: 0,
+  /** ⚠ new (R-task-44/50): the row renders no checkbox when this is false. */
+  completable: true,
   createdAt: NOW,
   updatedAt: NOW,
   version: 1,
@@ -128,7 +116,7 @@ export const task = (over: Partial<TaskView> = {}): TaskView => ({
 
 export const taskDetail = (over: Partial<TaskDetailView> = {}): TaskDetailView => ({
   ...task(),
-  events: [{ id: ulid(30), kind: 'created', at: NOW, text: 'Created', glyph: '＋', detail: null }],
+  events: [{ id: ulid(30), kind: 'created', at: NOW, text: 'Created — added to a goal', glyph: '＋', detail: null }],
   ...over,
 });
 
@@ -161,107 +149,189 @@ export const learning = (over: Partial<LearningView> = {}): LearningView => ({
   ...over,
 });
 
-// ---- a tree that tells a story --------------------------------------------
+// ---- an account that tells a story -----------------------------------------
 //
-// The screen tests need a cascade with real shape, not two rows: two Life lines, one active leaf, three
-// dormant ones, and an unrelated Monthly goal so the move sheet can show BOTH disabled reasons.
+// Two Life lines, one of them broken into weeks, and one Weekly goal from three weeks back that is still
+// holding an open task — which is R-lens-12's carried band, the shape the UX plan's own mockup drew in the
+// wrong place.
 //
-//   L  Be strong at 60            (Life)      branches 1 of 2
-//   └ Y  Get back under 80kg      (Yearly)
-//     └ Q  Rebuild the gym habit  (Quarterly)
-//       ├ M  Lift three times a week   (Monthly)  ACTIVE — "Three sessions, no excuses."
-//       └ D  Sleep before midnight     (Monthly)  dormant
-//   L2 Ship the thing             (Life)      branches 0 of 1
-//   └ Y2 Launch v1                (Yearly)
-//     └ M2 Write the changelog     (Monthly)  dormant
-//
-// Ordered parents-before-children, then `createdAt` — the order the server guarantees (Q-7). Nothing in
-// the app re-sorts, so a fixture in the wrong order would be a real finding.
+//   L   Be strong at 60          (Life)
+//   └ Y   Get back under 80kg    (Yearly     2026)
+//     └ Q   Rebuild the gym habit(Quarterly  2026-Q3)
+//       └ M   Lift three times a week (Monthly 2026-08)  3 weekly goals · 1 this week
+//         ├ W   Three easy runs and one long run (Weekly 2026-08-31)  ← this week's plan
+//         └ WC  Sort out the long-run route      (Weekly 2026-08-10)  ← CARRIED, oldest first
+//   L2  Ship the thing           (Life)
+//   └ Y2  Launch v1              (Yearly     2026)
+//     └ M2  Write the changelog  (Monthly    2026-08)  Nothing planned yet
 
 export const L = ulid(1);
 export const M = ulid(2);
 export const Y = ulid(3);
 export const Q = ulid(4);
-export const D = ulid(5);
 export const L2 = ulid(6);
 export const Y2 = ulid(7);
 export const M2 = ulid(8);
+export const W = ulid(9);
+export const WC = ulid(10);
 
-const BASE: GoalView[] = [
-  goal({ id: L, title: 'Be strong at 60', branches: { active: 1, total: 2 }, subtreeActive: true }),
-  goal({ id: Y, parentId: L, horizon: 'Yearly', title: 'Get back under 80kg', period: '2026', why: '', branches: null, subtreeActive: true }),
-  goal({ id: Q, parentId: Y, horizon: 'Quarterly', title: 'Rebuild the gym habit', period: 'Q3 2026', why: '', branches: null, subtreeActive: true }),
+export const lifeGoals = (): GoalView[] => [
+  goal({ id: L, title: 'Be strong at 60' }),
+  goal({ id: L2, title: 'Ship the thing', why: '', lifeRootId: L2 }),
+];
+
+export const yearlyGoals = (): GoalView[] => [
+  goal({ id: Y, parentId: L, horizon: 'Yearly', title: 'Get back under 80kg', why: '', periodKey: '2026', period: '2026', lifeRootId: L }),
+  goal({ id: Y2, parentId: L2, horizon: 'Yearly', title: 'Launch v1', why: '', periodKey: '2026', period: '2026', lifeRootId: L2 }),
+];
+
+export const quarterlyGoals = (): GoalView[] => [
+  goal({ id: Q, parentId: Y, horizon: 'Quarterly', title: 'Rebuild the gym habit', why: '', periodKey: '2026-Q3', period: 'Q3 2026', lifeRootId: L }),
+];
+
+export const monthlyGoals = (): GoalView[] => [
   goal({
     id: M,
     parentId: Q,
     horizon: 'Monthly',
     title: 'Lift three times a week',
-    period: 'Sep 2026',
     why: '',
-    focus: 'Three sessions, no excuses.',
-    isLeaf: true,
-    isActive: true,
-    subtreeActive: true,
-    branches: null,
+    periodKey: '2026-08',
+    period: 'Aug 2026',
+    lifeRootId: L,
+    backlogCount: 2,
+    weeklyBreakdown: { weeklyGoals: 3, thisWeek: 1 },
   }),
-  goal({
-    id: D,
-    parentId: Q,
-    horizon: 'Monthly',
-    title: 'Sleep before midnight',
-    period: 'Sep 2026',
-    why: '',
-    isLeaf: true,
-    dormant: true,
-    subtreeActive: false,
-    branches: null,
-  }),
-  goal({ id: L2, title: 'Ship the thing', why: '', branches: { active: 0, total: 1 }, subtreeActive: false }),
-  goal({ id: Y2, parentId: L2, horizon: 'Yearly', title: 'Launch v1', period: '2026', why: '', branches: null, subtreeActive: false }),
   goal({
     id: M2,
     parentId: Y2,
     horizon: 'Monthly',
     title: 'Write the changelog',
-    period: 'Sep 2026',
     why: '',
-    isLeaf: true,
-    dormant: true,
-    subtreeActive: false,
-    branches: null,
+    periodKey: '2026-08',
+    period: 'Aug 2026',
+    lifeRootId: L2,
+    weeklyBreakdown: { weeklyGoals: 0, thisWeek: 0 },
   }),
 ];
 
-/** The tree, with per-goal overrides keyed by id: `tree({ [F.M]: { isActive: false } })`. */
-export const tree = (over: Record<string, Partial<GoalView>> = {}): GoalView[] => BASE.map((g) => ({ ...g, ...(over[g.id] ?? {}) }));
+export const weeklyGoal = (over: Partial<GoalView> = {}): GoalView =>
+  goal({
+    id: W,
+    parentId: M,
+    horizon: 'Weekly',
+    title: 'Three easy runs and one long run',
+    why: '',
+    periodKey: THIS_MONDAY,
+    period: 'Week of 31 Aug',
+    lifeRootId: L,
+    ...over,
+  });
 
-export const treeResponse = (over: Record<string, Partial<GoalView>> = {}, w = week()) => ({
-  week: w,
-  goals: tree(over),
-  serverNow: NOW,
-});
+export const carriedGoal = (over: Partial<GoalView> = {}): GoalView =>
+  weeklyGoal({ id: WC, title: 'Sort out the long-run route', periodKey: THREE_WEEKS_AGO, period: 'Week of 10 Aug', ...over });
 
-/**
- * `GoalDetailResponse.replanOptions` — the server's own derivation (R-goal-23 / D-3), which the fixture
- * mirrors as literals rather than re-deriving: `NOW` is 2026-08-31 in Europe/Amsterdam, so the list is
- * the periods strictly after BOTH today's period and the goal's current one. A Life goal is not
- * re-plannable (R-goal-21) and offers none.
- */
-const REPLAN_OPTIONS: Record<string, string[]> = {
-  'Sep 2026': ['Oct 2026', 'Nov 2026'],
-  'Q3 2026': ['Q4 2026', 'Q1 2027'],
-  '2026': ['2027'],
+// ---- read models -----------------------------------------------------------
+
+const LABELS: Record<string, string> = {
+  '2026': '2026',
+  '2026-Q3': 'Q3 2026',
+  '2026-08': 'Aug 2026',
+  [THIS_MONDAY]: 'Week of 31 Aug',
+  [LAST_MONDAY]: 'Week of 24 Aug',
+  [THREE_WEEKS_AGO]: 'Week of 10 Aug',
+  [NEXT_MONDAY]: 'Week of 7 Sep',
 };
 
-export const replanOptionsOf = (g: GoalView): string[] => (g.parentId === null ? [] : (REPLAN_OPTIONS[g.period] ?? []));
+export const period = (over: Partial<PeriodView> & { periodKey: string }): PeriodView => ({
+  label: LABELS[over.periodKey] ?? over.periodKey,
+  isCurrent: true,
+  isPast: false,
+  hasWork: true,
+  ...over,
+});
 
-/** One goal's detail screen, built out of the same tree so the two can never disagree. */
+export const group = (over: Partial<LifeGroupView> & { id: string | null }): LifeGroupView => ({
+  title: over.id === L2 ? 'Ship the thing' : over.id === null ? 'UNSORTED' : 'Be strong at 60',
+  pulse: over.id === null ? null : 'On track',
+  openTasks: 0,
+  ...over,
+});
+
+/** One lens page, exactly as `GoalService.lens` builds it (R-lens-16). */
+export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensResponse {
+  const items = over.items ?? [];
+  const groups = over.groups ?? [...new Set(items.map((i) => i.lifeRootId))].map((id) => group({ id, openTasks: 0 }));
+  return {
+    nextCursor: null,
+    hasForwardContent: false,
+    serverNow: NOW,
+    ...over,
+    lens: over.lens,
+    period: over.lens === 'Life' ? null : (over.period ?? period({ periodKey: defaultKey(over.lens) })),
+    groups,
+    items,
+    carried: over.carried ?? [],
+    tasks: over.tasks ?? [],
+  };
+}
+
+const defaultKey = (h: Horizon) => (h === 'Yearly' ? '2026' : h === 'Quarterly' ? '2026-Q3' : h === 'Monthly' ? '2026-08' : THIS_MONDAY);
+
+/** The default page for each lens, so a screen test can render any of the five without extra setup. */
+export function lensFor(horizon: Horizon, periodKey?: string): LensResponse {
+  switch (horizon) {
+    case 'Life':
+      return lens({ lens: 'Life', items: lifeGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
+    case 'Yearly':
+      return lens({ lens: 'Yearly', items: yearlyGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
+    case 'Quarterly':
+      return lens({ lens: 'Quarterly', items: quarterlyGoals(), groups: [group({ id: L, openTasks: 2 })] });
+    case 'Monthly':
+      return lens({ lens: 'Monthly', items: monthlyGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
+    default:
+      return weeklyLens(periodKey);
+  }
+}
+
+/**
+ * The Weekly lens: this week's plan, the carried band below it, and the tasks visible in the week —
+ * R-lens-12's two cases, which are two arrays precisely because they are never mixed.
+ */
+export function weeklyLens(periodKey = THIS_MONDAY): LensResponse {
+  return lens({
+    lens: 'Weekly',
+    period: period({ periodKey, isCurrent: periodKey === THIS_MONDAY, isPast: periodKey < THIS_MONDAY }),
+    items: [weeklyGoal()],
+    carried: [carriedGoal()],
+    groups: [group({ id: L, openTasks: 2 })],
+    tasks: [
+      task({ id: ulid(20), goalId: W, title: 'Tuesday easy 6k', carryWeeks: 0 }),
+      task({ id: ulid(21), goalId: WC, title: 'Find a route with no traffic lights', carryWeeks: 3, originWeekStart: THREE_WEEKS_AGO }),
+    ],
+  });
+}
+
+export const zoomResponse = (over: Partial<ZoomResponse> = {}): ZoomResponse => ({
+  anchor: '2026-08-31',
+  rows: [
+    { lens: 'Life', periodKey: null, label: 'everything', count: 2, isCurrent: false },
+    { lens: 'Yearly', periodKey: '2026', label: '2026', count: 2, isCurrent: true },
+    { lens: 'Quarterly', periodKey: '2026-Q3', label: 'Q3 2026', count: 1, isCurrent: true },
+    { lens: 'Monthly', periodKey: '2026-08', label: 'Aug 2026', count: 2, isCurrent: true },
+    { lens: 'Weekly', periodKey: THIS_MONDAY, label: 'Week of 31 Aug', count: 1, isCurrent: true },
+  ],
+  serverNow: NOW,
+  ...over,
+});
+
+/** One goal's detail page, built out of the same account so the two can never disagree. */
 export const detailOf = (
   id: string,
-  extra: { backlog?: BacklogItemView[]; backlogIsAggregate?: boolean; learnings?: LearningView[] } = {},
+  extra: { backlog?: BacklogItemView[]; backlogIsAggregate?: boolean; learnings?: LearningView[]; tasks?: TaskView[]; pullList?: BacklogItemView[] } = {},
 ) => {
-  const all = tree();
-  const self = all.find((g) => g.id === id)!;
+  const all = [...lifeGoals(), ...yearlyGoals(), ...quarterlyGoals(), ...monthlyGoals(), weeklyGoal(), carriedGoal()];
+  const self = all.find((g) => g.id === id) ?? weeklyGoal();
   const ancestors: GoalView[] = [];
   let p = all.find((g) => g.id === self.parentId);
   while (p) {
@@ -273,93 +343,61 @@ export const detailOf = (
     ancestors,
     children: all.filter((g) => g.parentId === id),
     backlog: extra.backlog ?? [],
-    backlogIsAggregate: extra.backlogIsAggregate ?? self.parentId === null,
+    backlogIsAggregate: extra.backlogIsAggregate ?? self.horizon === 'Life',
+    pullList: extra.pullList ?? [],
+    tasks: extra.tasks ?? [],
     learnings: extra.learnings ?? [],
-    replanOptions: replanOptionsOf(self),
+    // ⚠ **A2** — `PeriodView[]`, not `Period[]`: the key is what is written, the label is what is shown.
+    replanOptions:
+      self.horizon === 'Quarterly'
+        ? [period({ periodKey: '2026-Q4', label: 'Q4 2026', isCurrent: false }), period({ periodKey: '2027-Q1', label: 'Q1 2027', isCurrent: false })]
+        : [],
     serverNow: NOW,
   };
 };
 
 // ---- whole responses -------------------------------------------------------
 
-export const goalsResponse = () => ({ week: week(), goals: [goal(), leaf()], serverNow: NOW });
-export const tasksResponse = () => ({ week: week(), tasks: [task()], plan: [planEntry()], serverNow: NOW });
-export const planResponse = () => ({ week: week(), entries: [planEntry()], serverNow: NOW });
-export const backlogResponse = () => ({ items: [backlogItem()], serverNow: NOW });
+export const backlogResponse = () => ({ items: [backlogItem()], nextCursor: null, serverNow: NOW });
+export const tasksResponse = () => ({ week: week(), tasks: [task()], nextCursor: null, serverNow: NOW });
 export const learningsResponse = () => ({ learnings: [learning()], serverNow: NOW });
 export const preferencesResponse = () => ({ preferences: preferences(), serverNow: NOW });
 export const goalResponse = (over: Partial<GoalView> = {}) => ({ goal: goal(over), serverNow: NOW });
 export const taskResponse = (over: Partial<TaskDetailView> = {}) => ({ task: taskDetail(over), serverNow: NOW });
-export const backlogItemResponse = (over: Partial<BacklogItemView> = {}) => ({ item: backlogItem(over), serverNow: NOW });
-export const goalDetailResponse = () => ({
-  goal: goal(),
-  ancestors: [],
-  children: [leaf()],
-  backlog: [backlogItem()],
-  backlogIsAggregate: true,
-  learnings: [learning()],
-  // `goal()` is the Life root, and a Life goal is not re-plannable (R-goal-21).
-  replanOptions: [],
+/** ⚠ **A2 (R-task-48)** — `POST /tasks` answers with the Weekly goal it created, when it created one. */
+export const createTaskResponse = (over: Partial<TaskDetailView> = {}, createdGoal: GoalView | null = null) => ({
+  task: taskDetail(over),
+  goal: createdGoal,
   serverNow: NOW,
 });
+export const backlogItemResponse = (over: Partial<BacklogItemView> = {}) => ({ item: backlogItem(over), serverNow: NOW });
+
+/** ⚠ **A2 (R-rm-5, R-nav-28)** — no `goals`, no `plan`: the Life goals plus the Weekly lens at this week. */
 export const bootstrapResponse = () => ({
   user: user(),
   preferences: preferences(),
   week: week(),
-  weekHistoryWeeks: 8,
-  goals: [goal(), leaf()],
-  plan: [planEntry()],
-  tasks: [task()],
+  lifeGoals: lifeGoals(),
+  lens: weeklyLens(),
   backlog: [backlogItem()],
   learnings: [learning()],
   serverNow: NOW,
 });
 
 // ---- agent access ----------------------------------------------------------
-//
-// `ApiTokenStatusResponse`, `CreateApiTokenResponse` and `RevokeApiTokenResponse` from
-// `@goal-cascade/shared`, which is what `/me/api-token` actually answers with. The client parses every one
-// of these with the shared schema, so a fixture that drifts fails as a `BAD_RESPONSE` rather than passing.
 
-/** The plaintext, answered exactly once by `POST /me/api-token` and never readable again. */
 export const PLAINTEXT_TOKEN = `${API_TOKEN_PREFIX}9f3b7c11e4a24d8fb0c6e57a2d1934kt`;
-
-/** `last4` is exactly four characters (`ApiTokenStatusView`), and they are the plaintext's last four. */
 export const TOKEN_LAST4 = PLAINTEXT_TOKEN.slice(-4);
-
-/**
- * The server derives this from the REQUEST origin — never a var, never a literal (`me.routes.ts#mcpUrl`).
- * Read lazily so it is jsdom's origin at call time, which is what the screen tests assert against.
- */
 export const mcpUrl = () => `${globalThis.location?.origin ?? 'http://localhost'}${MCP_PATH}`;
-
 export const agentTokenSummary = (over: Record<string, unknown> = {}) => ({ createdAt: NOW, last4: TOKEN_LAST4, ...over });
-
-/** `GET /me/api-token` when one exists. `mcpUrl` is on the status response too — it is not secret. */
-export const agentTokenStatus = (over: Record<string, unknown> = {}) => ({
-  token: agentTokenSummary(),
-  mcpUrl: mcpUrl(),
-  serverNow: NOW,
-  ...over,
-});
-
-/** `GET /me/api-token` when there is none. `token: null` is a state, not an error. */
-export const agentTokenAbsent = (over: Record<string, unknown> = {}) => ({
-  token: null,
-  mcpUrl: mcpUrl(),
-  serverNow: NOW,
-  ...over,
-});
-
-/** `POST /me/api-token` — create or replace. The plaintext is NESTED, beside its own metadata. */
+export const agentTokenStatus = (over: Record<string, unknown> = {}) => ({ token: agentTokenSummary(), mcpUrl: mcpUrl(), serverNow: NOW, ...over });
+export const agentTokenAbsent = (over: Record<string, unknown> = {}) => ({ token: null, mcpUrl: mcpUrl(), serverNow: NOW, ...over });
 export const agentTokenCreated = (over: Record<string, unknown> = {}) => ({
   token: { createdAt: NOW, last4: TOKEN_LAST4, plaintext: PLAINTEXT_TOKEN },
   mcpUrl: mcpUrl(),
   serverNow: NOW,
   ...over,
 });
-
-/** `DELETE /me/api-token` — always `{ revoked: true }`, whether or not anything was there. */
 export const agentTokenRevoked = () => ({ revoked: true as const, serverNow: NOW });
 
 /** Better Auth's own success body (not the SPEC §5 envelope). */

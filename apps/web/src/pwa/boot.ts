@@ -8,17 +8,18 @@
  *
  *  1. `beforeinstallprompt` fires shortly after load and is unrecoverable if nobody called `preventDefault()`
  *     on it; by the time a component has mounted and run an effect it can already be gone.
- *  2. The deep link is read off the *initial* URL. The UI shim strips those params once it applies a link, so
- *     whatever reads them has to run before the first render, not after.
- *  3. Registration is last: it is the only step that does not race anything.
+ *  2. Registration is last: it is the only step that does not race anything.
+ *
+ * ⚠ **A2** — the deep-link capture that used to be step 2 is **deleted with `pwa/deepLink.ts`**. There is a
+ * router now (R-nav-24), so a link IS the location: nothing has to read it off the initial URL before the
+ * first render, and nothing has to park it in `sessionStorage` across the sign-in round trip. The Worker
+ * already serves `index.html` for unknown paths, so an installed PWA deep-links by doing nothing at all.
  */
 import { registerSW } from 'virtual:pwa-register';
-import { captureDeepLink } from './deepLink';
 import { captureInstallPrompt } from './installState';
 import { showUpdateToast } from './updateToast';
 
 captureInstallPrompt(window);
-captureDeepLink(window.location);
 
 if ('serviceWorker' in navigator) {
   registerSW({

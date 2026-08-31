@@ -1,114 +1,26 @@
-import { HORIZONS, type GoalView, type Horizon } from '@goal-cascade/shared';
+import type { GoalView } from '@goal-cascade/shared';
 
 /**
- * PRESENTATION helpers over the goal array the server sends.
+ * What is left of the tree helpers, which is almost nothing — **and that is the point.**
  *
- * Everything the mockup computed here that the server now derives — `isLeaf`, `isActive`, `subtreeActive`,
- * `activeLeafFor`, `defaultPeriod`, `replanPeriods` — is gone (see `docs/work/06-web-data/build.md` §5.1).
- * `GoalView` carries `isLeaf` / `isActive` / `dormant` / `subtreeActive` / `carrying` / `branches` /
- * `backlogCount`, computed for the week the read model was built for, and this file must never recompute
- * one of them: a rule enforced in two places is a rule that will disagree with itself.
+ * ⚠ **A2 (R-lens-16, S-lens-16-2)** — the client no longer holds the goal tree, so it cannot walk one.
+ * Every read is one horizon and one period (R-lens-27), each item arrives with its Life-goal group already
+ * resolved by the server (`lifeRootId`), and a goal's ancestry comes from `GET /goals/:id`, which returns
+ * `ancestors`. Deleted with the tree, and not coming back under another name:
  *
- * What is left is layout: walking `parentId` for a breadcrumb, flattening the tree for a picker, and
- * rendering a URL's host. None of it is an invariant.
+ *  - `childrenOf`, `ancestorsOf`, `rootOf`, `rootIdOfGoalId`, `descendantIds`, `pathOf`, `flatTree` —
+ *    walks over an array the client no longer has;
+ *  - `activeLeavesUnder`, `leaves` — both keyed on `isLeaf`/`isActive`, which left the wire (R-goal-37,
+ *    R-rm-2). "Leaf" is **retired as a product word**, not renamed: a Monthly goal with no children is a
+ *    leaf by the structural definition and is precisely the goal that must never hold a task;
+ *  - `rank` — moved to `utils/periodKeys.ts`, beside the period arithmetic it belongs with.
  *
- * Goals arrive already ordered (Q-7: parents before children, then `createdAt`, then `id`). Nothing here
- * re-sorts.
+ * What survives is rendering: a URL's host, and singular/plural. Neither is an invariant.
  */
 
-export { HORIZONS };
-
-export function rank(h: Horizon): number {
-  return HORIZONS.indexOf(h);
-}
-
+/** Find one goal in a list this screen already holds. Never a lookup into a tree we do not have. */
 export function node(goals: readonly GoalView[], id: string | null | undefined): GoalView | undefined {
   return id ? goals.find((g) => g.id === id) : undefined;
-}
-
-export function childrenOf(goals: readonly GoalView[], id: string | null): GoalView[] {
-  return goals.filter((g) => g.parentId === id);
-}
-
-export const lifeGoals = (goals: readonly GoalView[]): GoalView[] => goals.filter((g) => g.parentId === null);
-/** R-backlog-2 — every backlog goal picker lists these and only these. */
-export const nonLifeGoals = (goals: readonly GoalView[]): GoalView[] => goals.filter((g) => g.parentId !== null);
-/** R-plan-3 — the weekly-focus holders: non-Life goals with no children. */
-export const leaves = (goals: readonly GoalView[]): GoalView[] => goals.filter((g) => g.isLeaf && g.parentId !== null);
-
-/** Root → parent. The detail screen prefers `GoalDetailResponse.ancestors`; the tree screen walks here. */
-export function ancestorsOf(goals: readonly GoalView[], g: GoalView): GoalView[] {
-  const out: GoalView[] = [];
-  const seen = new Set<string>([g.id]);
-  let p = node(goals, g.parentId);
-  // D-27 — a goal whose parent is missing from this payload must not spin or throw; stop walking.
-  while (p && !seen.has(p.id)) {
-    seen.add(p.id);
-    out.unshift(p);
-    p = node(goals, p.parentId);
-  }
-  return out;
-}
-
-export function rootOf(goals: readonly GoalView[], g: GoalView): GoalView {
-  const a = ancestorsOf(goals, g);
-  return a[0] ?? g;
-}
-
-/** D-27 — the Life root of a task's goal, defensively: a task whose goal is not in the payload yields null. */
-export function rootIdOfGoalId(goals: readonly GoalView[], goalId: string): string | null {
-  const g = node(goals, goalId);
-  return g ? rootOf(goals, g).id : null;
-}
-
-export function descendantIds(goals: readonly GoalView[], id: string): string[] {
-  const out: string[] = [];
-  const walk = (parentId: string) => {
-    for (const c of childrenOf(goals, parentId)) {
-      out.push(c.id);
-      walk(c.id);
-    }
-  };
-  walk(id);
-  return out;
-}
-
-/** R-goal-27 — the breadcrumb, root first, the goal itself last. */
-export function pathOf(goals: readonly GoalView[], g: GoalView): string[] {
-  return [...ancestorsOf(goals, g), g].map((x) => x.title);
-}
-
-/**
- * R-backlog-7 / D-18 — the ACTIVE leaves at or under `goalId`, which are the candidates to receive a
- * converted backlog item.
- *
- * This is a filter over the server's own `isActive` / `isLeaf` flags, not a re-derivation of them: the
- * sheet needs the candidate list so it can ASK when there is more than one (the mockup silently took the
- * first in array order). The server is still the guard — it refuses `BRANCH_NOT_ACTIVE` with none and
- * answers with `details.candidates` when the request is ambiguous.
- */
-export function activeLeavesUnder(goals: readonly GoalView[], goalId: string): GoalView[] {
-  const ids = new Set([goalId, ...descendantIds(goals, goalId)]);
-  return goals.filter((g) => ids.has(g.id) && g.isLeaf && g.isActive && g.parentId !== null);
-}
-
-export interface FlatRow {
-  g: GoalView;
-  depth: number;
-}
-
-/** The tree, flattened depth-first, for the parent and move pickers. `search` filters after flattening. */
-export function flatTree(goals: readonly GoalView[], search: string): FlatRow[] {
-  const rows: FlatRow[] = [];
-  const walk = (pid: string | null, depth: number) => {
-    for (const g of childrenOf(goals, pid)) {
-      rows.push({ g, depth });
-      walk(g.id, depth + 1);
-    }
-  };
-  walk(null, 0);
-  const q = search.trim().toLowerCase();
-  return q ? rows.filter((r) => r.g.title.toLowerCase().includes(q)) : rows;
 }
 
 /** R-task-24 — the label for a link: hostname minus a leading `www.`, else the raw string truncated. */

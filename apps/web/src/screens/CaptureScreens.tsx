@@ -4,15 +4,15 @@ import {
   useAttachLearning,
   useCreateLearning,
   useDeleteLearning,
-  useGoals,
   useLearnings,
+  useLens,
   usePatchLearning,
 } from '../api/queries';
 import { TopActions } from '../components/TopActions';
 import { Empty, FieldError, Loading, LoadError, commandError } from '../components/states';
 import { useSkin } from '../skin';
 import { capturedLabel } from '../utils/dates';
-import { lifeGoals, node } from '../utils/tree';
+import { node } from '../utils/tree';
 
 /**
  * Learnings — the capture surface. A learning tags a LIFE goal or nothing (R-learning-2); a non-Life tag
@@ -20,10 +20,17 @@ import { lifeGoals, node } from '../utils/tree';
  * guard behind it.
  */
 
-/** R-learning-2 — grouped by Life goal, then `Unsorted`, newest first (the server's order). */
+/**
+ * R-learning-2 — grouped by Life goal, then `Unsorted`, newest first (the server's order).
+ *
+ * ⚠ **A2** — `goals` is now the **Life lens's** items rather than a filtered whole tree: the Life lens is
+ * the one unscoped read in the product (R-lens-2) and is bounded by the number of Life goals, so this is
+ * the same list by a cheaper route. A Learning tags a Life goal or nothing, so it is also the only list
+ * this screen ever needed.
+ */
 function groupByLife<T extends { goalId: string | null }>(goals: GoalView[], list: T[]) {
   const groups: { key: string; title: string; items: T[] }[] = [];
-  for (const lg of lifeGoals(goals)) {
+  for (const lg of goals) {
     const mine = list.filter((x) => x.goalId === lg.id);
     if (mine.length) groups.push({ key: lg.id, title: lg.title, items: mine });
   }
@@ -42,7 +49,7 @@ function LifeGoalChips({ goals, value, onPick }: { goals: GoalView[]; value: str
       <button type="button" style={S.chipBtn(value === null)} onClick={() => onPick(null)}>
         No goal
       </button>
-      {lifeGoals(goals).map((g) => (
+      {goals.map((g) => (
         <button key={g.id} type="button" style={S.chipBtn(value === g.id)} onClick={() => onPick(g.id)}>
           {g.title}
         </button>
@@ -68,13 +75,13 @@ function Group<T extends { id: string }>({ title, items, render }: { title: stri
 export function LearningsScreen() {
   const S = useSkin();
   const learningsQ = useLearnings();
-  const goalsQ = useGoals(0);
+  const goalsQ = useLens('Life');
   const create = useCreateLearning();
   const [text, setText] = useState('');
   const [tag, setTag] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const goals = goalsQ.data?.goals ?? [];
+  const goals = goalsQ.data?.items ?? [];
   const learnings = learningsQ.data?.learnings ?? [];
   const groups = groupByLife(goals, learnings);
 
@@ -193,7 +200,7 @@ function LearningCard({
           >
             No goal
           </button>
-          {lifeGoals(goals).map((g) => (
+          {goals.map((g) => (
             <button
               key={g.id}
               type="button"

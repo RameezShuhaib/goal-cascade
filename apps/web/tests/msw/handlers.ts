@@ -44,8 +44,23 @@ export const handlers: HttpHandler[] = [
   http.post('/api/me/api-token', cmd(() => HttpResponse.json(F.agentTokenCreated(), { status: 201 }))),
   http.delete('/api/me/api-token', () => HttpResponse.json(F.agentTokenRevoked())),
 
-  http.get('/api/goals', () => HttpResponse.json(F.goalsResponse())),
-  http.get('/api/goals/:id', () => HttpResponse.json(F.goalDetailResponse())),
+  /**
+   * ⚠ **A2 (R-lens-16)** — `GET /goals` is the scoped LENS read, so the default handler dispatches on
+   * `?lens=` exactly as the server does: one horizon, one period. A test narrows one lens with
+   * `server.use(...)` and the other four keep answering, which is what the create sheet's parent picker
+   * and the Zoom sheet both need.
+   *
+   * `/goals/zoom` is registered BEFORE `/goals/:id` for the same reason the API registers it first: the
+   * literal must win the route match.
+   */
+  http.get('/api/goals', ({ request }) => {
+    const q = new URL(request.url).searchParams;
+    const lens = (q.get('lens') ?? 'Weekly') as Parameters<typeof F.lensFor>[0];
+    return HttpResponse.json(F.lensFor(lens, q.get('period') ?? undefined));
+  }),
+  http.get('/api/goals/zoom', () => HttpResponse.json(F.zoomResponse())),
+  http.post('/api/goals/repeat-week', cmd(() => HttpResponse.json({ created: [], serverNow: F.NOW }, { status: 201 }))),
+  http.get('/api/goals/:id', ({ params }) => HttpResponse.json(F.detailOf(String(params.id)))),
   http.post('/api/goals', cmd(() => HttpResponse.json(F.goalResponse(), { status: 201 }))),
   http.patch('/api/goals/:id', () => HttpResponse.json(F.goalResponse())),
   // Q-5 — one route, two jobs. `?dryRun=true` answers with the SAME `DeleteGoalResponse` and `deleted:
@@ -55,7 +70,9 @@ export const handlers: HttpHandler[] = [
     const dryRun = new URL(request.url).searchParams.get('dryRun') === 'true';
     return HttpResponse.json({
       deleted: !dryRun,
-      removed: { goals: 1, weeklyFocuses: 0, tasks: 0, taskEvents: 0, backlogItems: 0 },
+      // ⚠ **A2** — `weeklyFocuses` became `weeklyGoals`: the number that matters now is how many WEEKS of
+      // intention a delete takes with it (R-task-47).
+      removed: { goals: 1, weeklyGoals: 0, tasks: 0, taskEvents: 0, backlogItems: 0 },
       untagged: { learnings: 0 },
       serverNow: F.NOW,
     });
@@ -63,12 +80,10 @@ export const handlers: HttpHandler[] = [
   http.post('/api/goals/:id/move', cmd(() => HttpResponse.json(F.goalResponse()))),
   http.post('/api/goals/:id/replan', cmd(() => HttpResponse.json(F.goalResponse()))),
 
-  http.get('/api/plan', () => HttpResponse.json(F.planResponse())),
-  http.put('/api/plan', cmd(() => HttpResponse.json(F.planResponse()))),
-
   http.get('/api/tasks', () => HttpResponse.json(F.tasksResponse())),
   http.get('/api/tasks/:id', () => HttpResponse.json(F.taskResponse())),
-  http.post('/api/tasks', cmd(() => HttpResponse.json(F.taskResponse(), { status: 201 }))),
+  // ⚠ **A2 (R-task-48)** — the create answers with the Weekly goal it made, when it made one.
+  http.post('/api/tasks', cmd(() => HttpResponse.json(F.createTaskResponse(), { status: 201 }))),
   http.patch('/api/tasks/:id', () => HttpResponse.json(F.taskResponse())),
   http.post('/api/tasks/:id/complete', cmd(() => HttpResponse.json(F.taskResponse({ status: 'done', done: true, doneWeekStart: F.THIS_MONDAY, doneAt: F.NOW })))),
   http.post('/api/tasks/:id/uncheck', cmd(() => HttpResponse.json(F.taskResponse()))),
@@ -95,7 +110,13 @@ export const handlers: HttpHandler[] = [
     '/api/backlog/:id/convert-to-task',
     cmd(() =>
       HttpResponse.json(
-        { task: F.taskDetail(), item: F.backlogItem({ status: 'converted', convertedToTaskId: F.ulid(20), convertedAt: F.NOW }), serverNow: F.NOW },
+        {
+          task: F.taskDetail(),
+          item: F.backlogItem({ status: 'converted', convertedToTaskId: F.ulid(20), convertedAt: F.NOW }),
+          // ⚠ **A2 (R-task-48)** — null on the ordinary path; a `GoalView` when the conversion minted one.
+          goal: null,
+          serverNow: F.NOW,
+        },
         { status: 201 },
       ),
     ),

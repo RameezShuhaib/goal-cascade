@@ -5,7 +5,7 @@ import { onIdentityChanged } from './auth/identity';
 import { purgeSession } from './auth/purge';
 import { ThemeProvider } from './context/ThemeContext';
 import { useUI } from './context/UIContext';
-import { useUrlSync, type UrlLanding } from './lib/useUrlSync';
+import { parseLanding, type UrlLanding } from './lib/landing';
 import AuthScreen from './components/auth/AuthScreen';
 import { Lede, PrimaryButton, Splash } from './components/auth/ui';
 import { UIToast } from './components/Toast';
@@ -48,11 +48,12 @@ export function AppRoot() {
  *   pending → splash · 401 → AuthScreen · other error → retry · else → the app shell
  *
  * Routing auth off server state rather than the address bar is what makes deep links and PWA cold starts
- * behave: a link opened while signed out is held by `pwa/deepLink.ts` and applied after the gate opens, and
- * a cold start with a live cookie never flashes the sign-in screen on its way to the app.
+ * behave: a cold start with a live cookie never flashes the sign-in screen on its way to the app.
  *
- * `useUrlSync` only feeds deep links into `ui` and reports the two auth landings (`?verified=1`, `?reset=`).
- * It decides nothing.
+ * ⚠ **A2 (R-nav-24)** — the router sits ABOVE this gate (`main.tsx`), which is what makes a deep link
+ * opened while signed out survive the sign-in round trip for nothing: the gate renders `AuthScreen` in
+ * place of the routes and the location never changes, so the route is still there when the session lands.
+ * The deep-link parking lot (`pwa/deepLink.ts`) is deleted because it has nothing left to hold.
  */
 export default function App() {
   const qc = useQueryClient();
@@ -61,7 +62,20 @@ export default function App() {
   const prefs = usePreferences();
   const patchPrefs = usePatchPreferences();
   const [landing, setLanding] = useState<UrlLanding | null>(null);
-  useUrlSync(setLanding);
+
+  /**
+   * ⚠ **A2** — this is all that is left of `useUrlSync`. There is a router now (R-nav-24), so nothing has
+   * to mirror the screen into the address bar and nothing has to park a deep link across the sign-in round
+   * trip: the location survives the gate on its own.
+   *
+   * The auth landings still have to be read once and stripped, because a reload must not replay a spent
+   * reset token. `replaceState` on the pathname alone leaves the ROUTE intact, so `/task/:id?verified=1`
+   * still lands on the task page.
+   */
+  useEffect(() => {
+    setLanding(parseLanding(location.search));
+    if (location.search) history.replaceState(history.state, '', location.pathname);
+  }, []);
 
   // Once the session is gone, nothing of the last one may stay on this device: not the query cache, not the
   // persisted blob, not the identity record, not the service worker's cached read models. This is the one

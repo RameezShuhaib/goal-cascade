@@ -1,7 +1,7 @@
 import { firstIssueMessage, isTransient, type ApiError } from '../api/errors';
 
 /** Which read models are stale after an error, so the screen catches up with whatever really happened. */
-export type Refresh = 'none' | 'goals' | 'tasks' | 'backlog' | 'plan' | 'me' | 'all';
+export type Refresh = 'none' | 'goals' | 'tasks' | 'backlog' | 'me' | 'all';
 
 export interface ErrorPresentation {
   /** Toast text, or `null` when the screen explains itself (the sheet already says it). */
@@ -41,31 +41,42 @@ export function presentError(err: ApiError): ErrorPresentation {
     case 'GOAL_HAS_CHILDREN':
       // Q-5 — `details` carries the counts, and the delete sheet renders them. Not a toast.
       return e(null, { refresh: 'goals' });
-    case 'GOAL_HAS_OPEN_TASKS':
-      return e('This goal still has open tasks — move or close them first.', { refresh: 'goals' });
     case 'LIFE_GOAL_IMMUTABLE':
       return e("A Life goal can't be moved or re-planned.", { refresh: 'goals' });
-    case 'NOT_A_LEAF':
-      return e('Only a sub-goal with no children of its own can hold work.', { refresh: 'goals' });
+    /**
+     * ⚠ **A2 (R-goal-39, replaces `NOT_A_LEAF`)** — the condition is the HORIZON, never leaf-ness
+     * (R-goal-37), and the copy has to say so: a Monthly goal with no children is a leaf by the
+     * structural definition and is exactly the goal that must never hold a task. The user-facing
+     * sentence is the one the UX plan fixes: **"Tasks live on weekly goals."**
+     */
+    case 'NOT_A_WEEKLY_GOAL':
+      return e('Tasks live on weekly goals.', { refresh: 'goals' });
     case 'NOT_A_LIFE_GOAL':
       return e('Learnings tag a Life goal, or nothing at all.', { refresh: 'goals' });
     case 'LIFE_GOAL_NO_BACKLOG':
       return e('Backlog items live on a Yearly, Quarterly or Monthly goal — not a Life goal.', { refresh: 'goals' });
 
-    // ---- the week (R-plan-2, R-task-14, R-nav-3) ----
-    case 'WEEK_NOT_CURRENT':
-      // A plan save that crossed a Monday boundary. Refused wholesale (Q-3), never partly applied.
-      return e("The week rolled over while you were planning — that's next week's plan now. Reload and try again.", {
-        refresh: 'plan',
+    // ---- periods and the week (R-goal-36, R-task-44) ----
+    /**
+     * ⚠ **A2 (R-goal-36, replaces `WEEK_NOT_CURRENT`)** — planning never rewrites history. It never means
+     * "too far ahead": there is no forward bound at any horizon (R-lens-7).
+     */
+    case 'PERIOD_IN_PAST':
+      return e("That period has already passed — history stays as it was. Plan it from now on instead.", {
+        refresh: 'goals',
       });
     case 'WEEK_OUT_OF_RANGE':
-      return e("That week isn't addressable — the future never is, and a task can't close before it existed.", {
+      return e("You can't finish work in a week that hasn't happened, or before the task existed.", {
         refresh: 'tasks',
       });
 
-    // ---- backlog and its one conversion (R-backlog-6/8/9, D-19) ----
-    case 'BRANCH_NOT_ACTIVE':
-      // R-backlog-8: the sheet offers [Set a weekly focus] / [Cancel]; a toast would be in its way.
+    // ---- backlog and its one conversion (R-backlog-26, D-19) ----
+    /**
+     * ⚠ **A2 (R-backlog-26, replaces `BRANCH_NOT_ACTIVE`)** — no Weekly goal for the target week. The
+     * create sheet offers R-task-48's inline `New weekly goal` rather than sending the owner away, so
+     * this is `quiet` and a toast would be in its way. The dead end is gone with the code.
+     */
+    case 'NO_WEEKLY_GOAL':
       return e(null, { refresh: 'goals' });
     case 'ALREADY_CONVERTED':
       return e('That one is already this week — nothing new was created.', { tone: 'default', refresh: 'backlog' });

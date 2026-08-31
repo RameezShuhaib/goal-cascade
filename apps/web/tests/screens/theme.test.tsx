@@ -7,6 +7,7 @@ import { screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import userEvent from '@testing-library/user-event';
 import { AppShell } from '../../src/AppShell';
 import { ApiProvider } from '../../src/context/ApiContext';
@@ -27,20 +28,22 @@ import * as F from '../msw/fixtures';
  */
 describe('Theme', () => {
   it('the toggle repaints tokens and writes the preference — and sets no document filter', async () => {
-    server.use(http.get('/api/goals', () => HttpResponse.json(F.treeResponse())));
     const user = userEvent.setup();
     const queryClient = createQueryClient({ retry: false });
     render(
       // No `theme` prop: the real provider, following the stored preference, as it ships.
       <QueryClientProvider client={queryClient}>
-        <ApiProvider client={testClient()}>
-          <UIProvider>
-            <ThemeProvider onChange={() => {}}>
-              <AppShell />
-              <UIToast />
-            </ThemeProvider>
-          </UIProvider>
-        </ApiProvider>
+        {/* ⚠ **A2** — `AppShell` is a route table now (R-nav-24), so it needs a router above it. */}
+        <MemoryRouter initialEntries={['/week/2026-08-31']}>
+          <ApiProvider client={testClient()}>
+            <UIProvider>
+              <ThemeProvider onChange={() => {}}>
+                <AppShell />
+                <UIToast />
+              </ThemeProvider>
+            </UIProvider>
+          </ApiProvider>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 
@@ -61,18 +64,20 @@ describe('Theme', () => {
    * ready to flash white on any paint the inner wrapper missed.
    */
   it('the body and the focus ring follow the theme, so native controls are never light inside a dark app', async () => {
-    server.use(http.get('/api/goals', () => HttpResponse.json(F.treeResponse())));
     const user = userEvent.setup();
     const queryClient = createQueryClient({ retry: false });
     render(
       <QueryClientProvider client={queryClient}>
-        <ApiProvider client={testClient()}>
-          <UIProvider>
+        {/* ⚠ **A2** — `AppShell` is a route table now (R-nav-24), so it needs a router above it. */}
+        <MemoryRouter initialEntries={['/week/2026-08-31']}>
+          <ApiProvider client={testClient()}>
+            <UIProvider>
             <ThemeProvider onChange={() => {}}>
               <AppShell />
             </ThemeProvider>
-          </UIProvider>
-        </ApiProvider>
+            </UIProvider>
+          </ApiProvider>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 
@@ -103,19 +108,21 @@ describe('Theme', () => {
   });
 
   it('the choice is persisted to /me/preferences, so it follows the person across devices', async () => {
-    server.use(http.get('/api/goals', () => HttpResponse.json(F.treeResponse())));
     const user = userEvent.setup();
     const queryClient = createQueryClient({ retry: false });
     const seen: string[] = [];
     render(
       <QueryClientProvider client={queryClient}>
-        <ApiProvider client={testClient()}>
-          <UIProvider>
+        {/* ⚠ **A2** — `AppShell` is a route table now (R-nav-24), so it needs a router above it. */}
+        <MemoryRouter initialEntries={['/week/2026-08-31']}>
+          <ApiProvider client={testClient()}>
+            <UIProvider>
             <ThemeProvider onChange={(t) => seen.push(t)}>
               <AppShell />
             </ThemeProvider>
-          </UIProvider>
-        </ApiProvider>
+            </UIProvider>
+          </ApiProvider>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 
@@ -127,12 +134,9 @@ describe('Theme', () => {
 /** The one place the account controls live (R-nav-11's cluster). */
 describe('Account', () => {
   it('sign-out is reachable from every page', async () => {
-    server.use(
-      http.get('/api/goals', () => HttpResponse.json(F.treeResponse())),
-      http.post('/api/auth/sign-out', () => HttpResponse.json({ success: true })),
-    );
+    server.use(http.post('/api/auth/sign-out', () => HttpResponse.json({ success: true })));
     const { renderApp } = await import('../render');
-    const { user } = renderApp(<AppShell />);
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
 
     await user.click(await screen.findByRole('button', { name: 'Account' }));
     expect(await screen.findByText('me@rameezshuhaib.com')).toBeInTheDocument();

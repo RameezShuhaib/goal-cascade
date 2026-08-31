@@ -1,47 +1,72 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Horizon } from '@goal-cascade/shared';
+import { DEFAULT_LENS } from '../routes';
 
 /**
- * Everything the SERVER does not know, and nothing it does.
+ * Everything the SERVER does not know, and nothing it does — **minus everything the URL now knows.**
  *
- * The rule this file exists to enforce: React Query owns every read model; this context owns which screen is
- * showing, which sheet is open, what is filtered, which week is being looked at, the toast, and the session
- * epoch. There is no `goals` array here, no `tasks` array, no `backlog`. If a value can be answered by an
- * endpoint, it does not belong in this file — it belongs in `api/queries.ts`, where caching, refetching,
- * staleness and errors are already solved.
+ * The rule this file exists to enforce is unchanged: React Query owns every read model; this context owns
+ * browser-only state. What changed in A2 is that "which screen is showing" stopped being browser-only
+ * state and became the address bar (R-nav-24). Four fields left with it:
  *
- * (The mockup's `store.tsx` mixed both halves in one 405-line class. Splitting it is the whole point of this
- * layer: see `docs/work/06-web-data/build.md` for the method-by-method map.)
+ *  - `screen` / `goalId` — the router's, now. `lib/useUrlSync.ts` (the one-way mirror that stood in for a
+ *    router) is deleted.
+ *  - **`viewedWeek` / `selectWeek`** — the week is `/week/:monday`, an absolute Monday (D-1). This is
+ *    where the amendment's second silent break lived: `selectWeek` clamped with `Math.min(0, offset)`
+ *    against `WeekOffset`'s old `.max(0)`, so with the schema widened (R-goal-36, R-rm-3) every forward
+ *    navigation would have compiled, rendered and silently pinned to the current week. **It is deleted,
+ *    not relaxed** — there is no client-side week clamp left to go stale (see `lib/weekClock.ts`).
+ *  - `taskGoalFilter` / `backlogGoalFilter` — the goal-filter pills are deleted outright (R-rm-4,
+ *    R-lens-15). Grouping by Life goal is the whole answer.
+ *  - `menuGoalId` — the tree's per-row `⋯` menu went with the tree (R-rm-5).
  *
- * FORM DRAFTS ARE NOT HERE EITHER. The mockup kept `gmTitle`, `dtCond`, `bdLinks` and two dozen siblings in
- * global state, which is why every keystroke re-rendered every screen. A sheet's draft is local state inside
- * that sheet; this context only says WHICH sheet is open and what it is about.
+ * FORM DRAFTS ARE NOT HERE. A sheet's draft is local state inside that sheet; this context only says
+ * WHICH sheet is open and what it is about.
  */
 
-/** R-nav-1/2 — four tabs plus two screens that have no tab of their own (goal detail, backlog). */
-export type Screen = 'tasks' | 'goals' | 'goal' | 'backlog' | 'learnings' | 'plan';
-
 /**
- * The open overlay, as a discriminated union carrying what it is about. One `sheet` field replaces the
- * mockup's parallel `dtId` / `tmOpen` / `cfOpen` / `ibOpen` / `gmOpen` / `mvOpen` booleans, which could
- * (and did) all be true at once.
+ * The open overlay, as a discriminated union carrying what it is about.
+ *
+ * R-lens-14 — **overlays are not routes.** Each is a two-second interaction whose URL nobody wants: the
+ * `+` drawer, every confirm sheet, the create and edit forms, the Zoom sheet. Reloading the page must not
+ * reopen one (S-nav-24-2).
  */
 export type Sheet =
-  | { kind: 'taskDetail'; taskId: string }
-  | { kind: 'taskCreate'; goalId: string; title?: string; fromBacklogId?: string }
+  /**
+   * ⚠ **A2 (R-task-48/49)** — the create sheet takes a Weekly goal **or** the makings of one. `newWeekly`
+   * is R-task-49's inferred second step, stated before it happens: the sheet says what will be created.
+   */
+  | {
+      kind: 'taskCreate';
+      goalId?: string;
+      newWeekly?: { parentId: string; title: string };
+      /** Candidates when more than one Weekly goal could take it — the first is preselected (R-task-49). */
+      candidates?: { id: string; title: string }[];
+      /** The absolute Monday the task will land in, for the copy and for the navigation afterwards. */
+      weekStart?: string;
+      title?: string;
+      fromBacklogId?: string;
+    }
   | { kind: 'backlogDrawer'; goalId?: string }
   /** R-task-15/16 — the confirm sheet for exit 2 and exit 3, both of which take an optional reason. */
-  | { kind: 'confirmTaskExit'; taskId: string; exit: 'backlog' | 'cancel' }
-  /** R-task-21 — the skippable "update the done-condition?" prompt after an uncheck. */
+  | { kind: 'confirmTaskExit'; taskId: string; exit: 'backlog' | 'cancel'; week: number }
+  /** R-task-21 — the skippable "update the done-condition?" prompt after an uncheck. Rendered inline. */
   | { kind: 'uncheck'; taskId: string }
-  /** R-goal-22/23 — re-plan to a contextual next period, with an optional one-line reason. */
+  /** R-goal-40 — re-plan to a contextual next period, with an optional one-line reason. */
   | { kind: 'confirmReplan'; goalId: string }
   /** Q-5 — the "N sub-goals, M tasks, K backlog items" acknowledgement before a cascade delete. */
   | { kind: 'confirmDeleteGoal'; goalId: string }
-  /** R-backlog-8 — "This branch isn't active this week" → [Set a weekly focus] / [Cancel]. */
-  | { kind: 'inactiveBranch'; itemId: string; title: string }
-  | { kind: 'goalForm'; editId: string | null; parentId: string | null }
-  | { kind: 'moveGoal'; goalId: string }
-  | { kind: 'weekPicker' };
+  /**
+   * ⚠ **A2 (UX §6.7)** — the create form. The horizon and the period are the LENS's and are not editable:
+   * the period is a read-only chip with its reason beside it, and if you want another one you navigate
+   * there. `lifeGoalId` narrows the parent picker to one line (the per-group `+ <Horizon> goal`).
+   */
+  | { kind: 'goalForm'; editId: string | null; horizon: Horizon; periodKey: string; lifeGoalId?: string | null; parentId?: string | null }
+  | { kind: 'moveGoal'; goalId: string; lifeGoalsOnly?: boolean }
+  /** R-lens-17 — the Zoom sheet. The lens title is its only trigger. */
+  | { kind: 'zoom' }
+  /** R-backlog-28 — `Pull from the backlog`, from a Weekly or Monthly goal's card. */
+  | { kind: 'pull'; goalId: string; horizon: Horizon; weekStart?: string };
 
 export interface ToastAction {
   label: string;
@@ -50,6 +75,13 @@ export interface ToastAction {
 export interface ToastOptions {
   tone?: 'default' | 'error';
   action?: ToastAction;
+  /**
+   * R-task-49 — a clause the screen reader gets and the screen does not. The toast's visible copy is
+   * fixed (`Added to week of Mon 31 Aug`, §7.3), but when a Weekly goal was created without being asked
+   * for, the announcement has to name it: *"…, under Run 4 times a week in August."* It is rendered
+   * visually-hidden inside the toast's own `role="status"`, so there is still exactly one live region.
+   */
+  detail?: string;
 }
 export interface ToastState extends ToastOptions {
   message: string;
@@ -61,38 +93,33 @@ const TOAST_MS = 2600;
 const TOAST_ERROR_MS = 4200;
 
 export interface UIState {
-  screen: Screen;
-  setScreen: (s: Screen) => void;
-  /** Which goal the detail screen (`screen === 'goal'`) is showing. */
-  goalId: string | null;
-  /** R-nav-2 — opening a goal detail keeps the Goals tab lit; this does both in one call. */
-  openGoal: (id: string) => void;
-
   sheet: Sheet | null;
   openSheet: (s: Sheet) => void;
   closeSheet: () => void;
 
   /**
-   * The week being looked at, as an OFFSET (0 = this week, negative = past). R-nav-3: a positive offset is
-   * not representable in the UI because no control can produce one and the API refuses it.
+   * R-nav-28 — the lens the `Goals` tab returns to, so daily use never opens the Zoom sheet. Session
+   * state only: a cold start opens the **Weekly** lens, and the period always resets to the one
+   * containing today (R-lens-8) — an app that opened on a remembered future period would quietly lie
+   * about now.
    */
-  viewedWeek: number;
-  /** R-nav-6 — changing the week resets the goal filter to `All`. One call, so it cannot be half-done. */
-  selectWeek: (offset: number) => void;
+  lastLens: Horizon;
+  rememberLens: (lens: Horizon) => void;
 
-  /** R-nav-7 — the Tasks screen's Life-root filter pill. `null` = All. */
-  taskGoalFilter: string | null;
-  setTaskGoalFilter: (id: string | null) => void;
-  /** The Backlog page's goal filter. `null` = every goal. */
-  backlogGoalFilter: string | null;
-  setBacklogGoalFilter: (id: string | null) => void;
+  /**
+   * R-lens-18 — the session **anchor date**, held only so the **Life** lens (which has no period) can
+   * hand one to the Zoom sheet. Every other lens derives its anchor from the period it is showing, which
+   * is what makes zoom lossless without anything to keep in step.
+   */
+  anchor: string | null;
+  setAnchor: (date: string) => void;
 
-  /** Collapsed goal-tree rows, by goal id. Purely visual; the server has no opinion. */
+  /**
+   * R-lens-19 — collapsed Life-goal groups, keyed `<lens>|<groupId>`. **Session-scoped and per-lens,
+   * never persisted**: a collapsed group that survives a restart is a hidden goal.
+   */
   collapsed: Record<string, boolean>;
-  toggleCollapsed: (id: string) => void;
-  /** The goal row whose `…` menu is open. */
-  menuGoalId: string | null;
-  setMenuGoalId: (id: string | null) => void;
+  toggleCollapsed: (key: string) => void;
 
   toast: ToastState | null;
   showToast: (message: string, opts?: ToastOptions) => void;
@@ -100,8 +127,7 @@ export interface UIState {
 
   /**
    * Bumped on sign-out. `<App key={sessionEpoch} />` remounts the whole tree so every query observer starts
-   * clean against the cleared cache. Cheap, and far more reliable than resetting state by hand — a missed
-   * field is a signed-out screen still showing the last account's goal titles.
+   * clean against the cleared cache.
    */
   sessionEpoch: number;
   resetSession: () => void;
@@ -110,40 +136,21 @@ export interface UIState {
 const UICtx = createContext<UIState | null>(null);
 
 export function UIProvider({ children }: { children: ReactNode }) {
-  const [screen, setScreen] = useState<Screen>('tasks');
-  const [goalId, setGoalId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const [viewedWeek, setViewedWeek] = useState(0);
-  const [taskGoalFilter, setTaskGoalFilter] = useState<string | null>(null);
-  const [backlogGoalFilter, setBacklogGoalFilter] = useState<string | null>(null);
+  const [lastLens, setLastLens] = useState<Horizon>(DEFAULT_LENS);
+  const [anchor, setAnchorState] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [menuGoalId, setMenuGoalId] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const openGoal = useCallback((id: string) => {
-    setGoalId(id);
-    setScreen('goal');
-    setMenuGoalId(null);
-  }, []);
-
-  const openSheet = useCallback((s: Sheet) => {
-    setSheet(s);
-    setMenuGoalId(null);
-  }, []);
+  const openSheet = useCallback((s: Sheet) => setSheet(s), []);
   const closeSheet = useCallback(() => setSheet(null), []);
+  const rememberLens = useCallback((lens: Horizon) => setLastLens((prev) => (prev === lens ? prev : lens)), []);
+  const setAnchor = useCallback((date: string) => setAnchorState((prev) => (prev === date ? prev : date)), []);
 
-  const selectWeek = useCallback((offset: number) => {
-    // R-nav-3 — future weeks are not selectable anywhere. Clamping here means no caller can produce one,
-    // not even by arithmetic on a chevron.
-    setViewedWeek(Math.min(0, offset));
-    setTaskGoalFilter(null);
-    setSheet((s) => (s?.kind === 'weekPicker' ? null : s));
-  }, []);
-
-  const toggleCollapsed = useCallback((id: string) => {
-    setCollapsed((c) => ({ ...c, [id]: !c[id] }));
+  const toggleCollapsed = useCallback((key: string) => {
+    setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   }, []);
 
   const hideToast = useCallback(() => {
@@ -153,7 +160,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
 
   const showToast = useCallback((message: string, opts: ToastOptions = {}) => {
     const tone = opts.tone ?? 'default';
-    setToast({ message, tone, action: opts.action });
+    setToast({ message, tone, action: opts.action, detail: opts.detail });
     clearTimeout(timer.current);
     // Errors and anything offering an action linger, so there is time to read it and tap Retry.
     timer.current = setTimeout(() => setToast(null), tone === 'error' || opts.action ? TOAST_ERROR_MS : TOAST_MS);
@@ -161,63 +168,32 @@ export function UIProvider({ children }: { children: ReactNode }) {
 
   const resetSession = useCallback(() => {
     clearTimeout(timer.current);
-    setScreen('tasks');
-    setGoalId(null);
     setSheet(null);
-    setViewedWeek(0);
-    setTaskGoalFilter(null);
-    setBacklogGoalFilter(null);
+    setLastLens(DEFAULT_LENS);
+    setAnchorState(null);
     setCollapsed({});
-    setMenuGoalId(null);
     setToast(null);
     setSessionEpoch((e) => e + 1);
   }, []);
 
   const value = useMemo<UIState>(
     () => ({
-      screen,
-      setScreen,
-      goalId,
-      openGoal,
       sheet,
       openSheet,
       closeSheet,
-      viewedWeek,
-      selectWeek,
-      taskGoalFilter,
-      setTaskGoalFilter,
-      backlogGoalFilter,
-      setBacklogGoalFilter,
+      lastLens,
+      rememberLens,
+      anchor,
+      setAnchor,
       collapsed,
       toggleCollapsed,
-      menuGoalId,
-      setMenuGoalId,
       toast,
       showToast,
       hideToast,
       sessionEpoch,
       resetSession,
     }),
-    [
-      screen,
-      goalId,
-      openGoal,
-      sheet,
-      openSheet,
-      closeSheet,
-      viewedWeek,
-      selectWeek,
-      taskGoalFilter,
-      backlogGoalFilter,
-      collapsed,
-      toggleCollapsed,
-      menuGoalId,
-      toast,
-      showToast,
-      hideToast,
-      sessionEpoch,
-      resetSession,
-    ],
+    [sheet, openSheet, closeSheet, lastLens, rememberLens, anchor, setAnchor, collapsed, toggleCollapsed, toast, showToast, hideToast, sessionEpoch, resetSession],
   );
 
   return <UICtx.Provider value={value}>{children}</UICtx.Provider>;

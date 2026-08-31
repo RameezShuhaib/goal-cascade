@@ -11,14 +11,13 @@ import * as F from '../msw/fixtures';
  * Learnings — two-second capture, and the tap actions on what was captured.
  */
 
-function withCapture({
-  learnings = [] as LearningView[],
-  over = {} as Record<string, Partial<ReturnType<typeof F.goal>>>,
-} = {}) {
-  server.use(
-    http.get('/api/goals', () => HttpResponse.json(F.treeResponse(over))),
-    http.get('/api/learnings', () => HttpResponse.json({ learnings, serverNow: F.NOW })),
-  );
+/**
+ * ⚠ **A2** — the chip row's goals come from the **Life lens** now, not from a filtered whole tree: the
+ * Life lens is the one unscoped read in the product (R-lens-2) and a Learning tags a Life goal or nothing
+ * (R-learning-2), so it is the same list by a cheaper route.
+ */
+function withCapture({ learnings = [] as LearningView[] } = {}) {
+  server.use(http.get('/api/learnings', () => HttpResponse.json({ learnings, serverNow: F.NOW })));
 }
 
 const go = async (user: ReturnType<typeof renderApp>['user'], tab: 'Learnings') =>

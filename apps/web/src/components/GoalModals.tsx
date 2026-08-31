@@ -1,186 +1,178 @@
 import { useState } from 'react';
-import { HORIZONS, PULSES, type DeleteGoalResponse, type GoalView, type Horizon, type Pulse } from '@goal-cascade/shared';
+import { useNavigate } from 'react-router';
+import { PULSES, type DeleteGoalResponse, type Horizon, type Pulse } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import {
-  useCreateGoal,
-  useDeleteGoal,
-  useGoal,
-  useGoalDeletePreview,
-  useGoals,
-  useMoveGoal,
-  usePatchGoal,
-  useReplanGoal,
-} from '../api/queries';
+import { useCreateGoal, useDeleteGoal, useGoal, useGoalDeletePreview, useMoveGoal, usePatchGoal, useReplanGoal } from '../api/queries';
 import { toApiError } from '../api/errors';
 import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
-import { FieldError, commandError } from './states';
-import { ancestorsOf, descendantIds, flatTree, node, plural, rank } from '../utils/tree';
-import { defaultPeriod, useOwnerToday } from '../utils/periods';
+import { FieldError, Loading, commandError } from './states';
+import { plural } from '../utils/tree';
+import { PERIOD_UNIT } from '../utils/periodKeys';
+import { useParentOptions } from '../lens/useParentOptions';
+import { lensPath } from '../routes';
 
 /**
  * The four goal sheets: create/edit, move, re-plan, delete.
  *
  * Every guard here is an AFFORDANCE, not the rule. The server re-validates all of it (D-5: "a disabled
- * button is a hint, not an invariant"), and each sheet renders the refusal it can get back — which is the
- * behaviour the mockup had no equivalent for, because every one of these paths was a silent `return`.
+ * button is a hint, not an invariant"), and each sheet renders the refusal it can get back.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Create / edit
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function GoalFormSheet({ editId, parentId }: { editId: string | null; parentId: string | null }) {
+/**
+ * UX §6.7 — **the create sheet, with the horizon and the period already answered.**
+ *
+ * The heading names the horizon, so the horizon picker is gone entirely. **The period is a read-only chip
+ * with its reason beside it** — not the editable text field the form used to have, which is what let you
+ * type `Q9 3026` and, under R-goal-33, would put the goal in no lens at all. If you want a different
+ * period you navigate there; that is the whole point of a lens.
+ *
+ * **Creating a goal into a period you are not looking at is impossible**, which is what makes R-nav-19's
+ * "moves you to the target week" case unreachable from here.
+ *
+ * The parent picker lists only legal parents in the enclosing period (R-goal-5, `useParentOptions`), and
+ * **when there is exactly one it is preselected** and the picker collapses to a single confirming row.
+ */
+export function GoalFormSheet({
+  editId,
+  horizon,
+  periodKey,
+  periodLabel,
+  lifeGoalId,
+  parentId,
+}: {
+  editId: string | null;
+  horizon: Horizon;
+  periodKey: string;
+  periodLabel?: string;
+  lifeGoalId?: string | null;
+  parentId?: string | null;
+}) {
   const S = useSkin();
   const ui = useUI();
-  const goalsQ = useGoals(0);
-  const today = useOwnerToday();
+  const navigate = useNavigate();
+  const editQ = useGoal(editId);
   const create = useCreateGoal();
   const patch = usePatchGoal();
+  const parents = useParentOptions(horizon, periodKey, lifeGoalId);
 
-  const goals = goalsQ.data?.goals ?? [];
-  const editing = node(goals, editId);
-  const parent = node(goals, parentId);
-
-  // R-goal-5 — a child's horizon must be strictly shorter than its parent's, so the chips below this rank
-  // are locked. D-6: a Monthly parent leaves no legal rank at all, which is why the sheet refuses to open
-  // a form rather than clamping to Monthly and letting the owner create an illegal goal.
-  const minRank = parent ? rank(parent.horizon) + 1 : 0;
-  const [horizon, setHorizon] = useState<Horizon>(editing?.horizon ?? HORIZONS[Math.min(minRank, 3)]!);
-  const [title, setTitle] = useState(editing?.title ?? '');
-  const [why, setWhy] = useState(editing?.why ?? '');
-  const [pulse, setPulse] = useState<Pulse>(editing?.pulse ?? 'On track');
-  const [period, setPeriod] = useState(editing?.period ?? defaultPeriod(horizon, today));
-  const [chosenParent, setChosenParent] = useState<string | null>(parentId);
-  const [search, setSearch] = useState('');
+  const editing = editQ.data?.goal;
+  const [draft, setDraft] = useState<{ title: string; why: string; pulse: Pulse } | null>(null);
+  const [chosenParent, setChosenParent] = useState<string | null>(parentId ?? null);
 
   const close = () => ui.closeSheet();
+  const fields = draft ?? { title: editing?.title ?? '', why: editing?.why ?? '', pulse: editing?.pulse ?? 'On track' };
+  const set = (p: Partial<typeof fields>) => setDraft({ ...fields, ...p });
 
-  if (!editing && parent && parent.horizon === 'Monthly') {
+  if (editId && !editing) {
     return (
-      <Sheet label="Monthly goals cannot have sub-goals" onClose={close}>
-        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 14px 0' }}>
-          Monthly is the shortest horizon in the cascade — work under it is a task, not another goal.
+      <Sheet label="Edit goal" onClose={close}>
+        <Loading />
+      </Sheet>
+    );
+  }
+
+  const isLife = horizon === 'Life';
+  const only = parents.options.length === 1 ? parents.options[0]! : null;
+  const parent = chosenParent ?? only?.id ?? null;
+  const needsParent = !editId && !isLife;
+  const label = periodLabel ?? periodKey;
+
+  /**
+   * The hardest creation empty state — no legal parent at all. `Start with a Life goal →` zooms to the
+   * Life lens **and opens `New Life goal`**, so the loop closes in one tap: a handoff that dropped the
+   * user's intent is exactly the nit this design exists to avoid.
+   */
+  if (needsParent && !parents.isPending && parents.options.length === 0) {
+    const above = horizon === 'Yearly' ? 'a Life goal' : `a Life or ${horizon === 'Quarterly' ? 'Yearly' : horizon === 'Monthly' ? 'Quarterly' : 'Monthly'} goal`;
+    return (
+      <Sheet label={`New ${horizon} goal`} onClose={close}>
+        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 16px 0' }}>
+          Nothing to hang this on yet — a {horizon.toLowerCase()} goal needs {above} above it.
         </div>
-        <button type="button" style={{ ...S.btn(true), width: '100%' }} onClick={close}>
-          Got it
+        <button
+          type="button"
+          style={{ ...S.btn(true), width: '100%' }}
+          onClick={() => {
+            navigate(lensPath('Life'));
+            ui.openSheet({ kind: 'goalForm', editId: null, horizon: 'Life', periodKey: '' });
+          }}
+        >
+          Start with a Life goal →
         </button>
       </Sheet>
     );
   }
 
-  // R-goal-14 — editing may change title, why, period and pulse ONLY. Horizon and parent are refused by
-  // the request schema's `.strict()`, so the chips are locked and the parent picker is not rendered.
-  const needsParent = !editing && horizon !== 'Life';
-  const parents = flatTree(goals, search).filter((r) => rank(r.g.horizon) < rank(horizon));
-  const blocked = !title.trim() || (needsParent && !chosenParent) || create.isPending || patch.isPending;
+  const blocked = !fields.title.trim() || (needsParent && !parent) || create.isPending || patch.isPending;
 
   const save = () => {
     if (editing) {
+      // R-goal-14 — editing changes title, why and pulse. Re-parenting is Move; re-scheduling is Re-plan,
+      // and a Weekly goal's period is immutable outright (R-goal-40).
       patch.mutate(
-        { id: editing.id, patch: { title: title.trim(), why: why.trim(), period, pulse, version: editing.version } },
-        { onSuccess: close },
+        { id: editing.id, patch: { title: fields.title.trim(), why: fields.why.trim(), pulse: fields.pulse, version: editing.version } },
+        { onSuccess: () => { close(); ui.showToast('Goal updated'); } },
       );
       return;
     }
     create.mutate(
       {
-        title: title.trim(),
-        why: why.trim(),
+        title: fields.title.trim(),
+        why: fields.why.trim(),
         horizon,
-        // R-goal-3 — a Life goal has no parent and no target period.
-        parentId: horizon === 'Life' ? null : chosenParent,
-        period: horizon === 'Life' ? '' : period,
-        pulse,
+        // R-goal-3 — a Life goal has no parent and no period; there is no `period` field on any request.
+        parentId: isLife ? null : parent,
+        ...(isLife ? {} : { periodKey }),
+        pulse: fields.pulse,
       },
-      { onSuccess: close },
+      { onSuccess: () => { close(); ui.showToast(isLife ? 'Life goal added' : `Added to ${label}`); } },
     );
   };
 
   return (
-    <Sheet label={editing ? 'Edit goal' : parent ? 'New sub-goal' : 'New goal'} onClose={close}>
-      <input aria-label="Goal title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Goal title" style={{ ...S.input, marginBottom: 10 }} />
-      <input aria-label="Why? One line (optional)" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why? One line (optional)" style={{ ...S.input, marginBottom: 14 }} />
+    <Sheet label={editing ? 'Edit goal' : `New ${horizon} goal`} onClose={close}>
+      <input aria-label="Goal title" value={fields.title} onChange={(e) => set({ title: e.target.value })} placeholder="Goal title" style={{ ...S.input, marginBottom: 10 }} />
+      <input aria-label="Why? (optional)" value={fields.why} onChange={(e) => set({ why: e.target.value })} placeholder="Why? (optional)" style={{ ...S.input, marginBottom: 14 }} />
 
-      <div style={{ ...S.fieldLabel, marginBottom: 6 }}>HORIZON</div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {HORIZONS.map((h) => {
-          const locked = !!editing || rank(h) < minRank;
-          const on = horizon === h;
-          return (
-            <button
-              key={h}
-              type="button"
-              disabled={locked && !on}
-              onClick={() => {
-                if (locked) return;
-                setHorizon(h);
-                setPeriod(defaultPeriod(h, today));
-                if (rank(h) === 0) setChosenParent(null);
-              }}
-              style={{
-                minHeight: 40,
-                padding: '0 13px',
-                borderRadius: 20,
-                fontSize: 12.5,
-                fontWeight: 700,
-                fontFamily: 'inherit',
-                ...(on
-                  ? { border: 'none', background: S.T.ink, color: S.onInk, cursor: 'pointer' }
-                  : locked
-                    ? { border: `1px solid ${S.T.lineSoft}`, background: S.T.paper, color: S.T.disabled, cursor: 'not-allowed' }
-                    : { border: `1px solid ${S.T.border}`, background: S.T.card, color: S.body, cursor: 'pointer' }),
-              }}
-            >
-              {h}
-            </button>
-          );
-        })}
-      </div>
+      {!isLife && !editing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <span style={{ ...S.chipBtn(false), display: 'inline-flex', alignItems: 'center', cursor: 'default' }}>{label}</span>
+          <span style={{ flex: 1, fontSize: 12.5, color: S.T.mut }}>Because you&apos;re looking at {label}.</span>
+        </div>
+      )}
 
       {needsParent && (
         <>
-          <div style={{ ...S.fieldLabel, marginBottom: 6 }}>PARENT GOAL</div>
-          <input aria-label="Search goals" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search goals…" style={{ ...S.input, minHeight: 44, fontSize: 14, marginBottom: 8 }} />
+          <div style={{ ...S.fieldLabel, marginBottom: 6 }}>UNDER</div>
           <div style={{ border: `1px solid ${S.T.line}`, borderRadius: 12, maxHeight: 200, overflow: 'auto', marginBottom: 14 }}>
-            {/* R-goal-5 — only goals with a strictly LONGER horizon are offered. */}
-            {parents.map((r) => (
-              <button key={r.g.id} type="button" style={S.pickerRow(chosenParent === r.g.id ? 'sel' : 'ok')} onClick={() => setChosenParent(r.g.id)}>
-                <span style={{ display: 'inline-block', width: r.depth * 16 }} />
-                {r.g.title}
-                <span style={{ fontSize: 10.5, fontWeight: 800, color: S.T.faint, marginLeft: 7 }}>{r.g.horizon.toUpperCase()}</span>
+            {parents.isPending && <div style={{ fontSize: 13, color: S.T.mut, padding: '12px 14px' }}>Loading…</div>}
+            {parents.options.map((g) => (
+              <button key={g.id} type="button" style={S.pickerRow(parent === g.id ? 'sel' : 'ok')} onClick={() => setChosenParent(g.id)}>
+                <span style={{ flex: 1, minWidth: 0 }}>{g.title}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 800, color: S.T.mut, marginLeft: 7 }}>{g.horizon.toUpperCase()}</span>
               </button>
             ))}
-            {parents.length === 0 && <div style={{ fontSize: 13, color: S.T.mut, padding: '12px 14px' }}>No goal on a longer horizon yet.</div>}
           </div>
         </>
       )}
 
-      {horizon !== 'Life' && (
-        <>
-          <div style={{ ...S.fieldLabel, marginBottom: 6 }}>TARGET PERIOD</div>
-          {/* R-goal-13 / D-3 — pre-filled from TODAY, not from a frozen literal. */}
-          <input aria-label="Target period" value={period} onChange={(e) => setPeriod(e.target.value)} style={S.input} />
-        </>
-      )}
-
-      <div style={{ ...S.fieldLabel, margin: '14px 0 6px 0' }}>PULSE</div>
+      <div style={{ ...S.fieldLabel, marginBottom: 6 }}>PULSE</div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {PULSES.map((p) => (
-          <button key={p} type="button" style={S.chipBtn(pulse === p)} onClick={() => setPulse(p)}>
+          <button key={p} type="button" style={S.chipBtn(fields.pulse === p)} onClick={() => set({ pulse: p })}>
             {p}
           </button>
         ))}
       </div>
 
-      {/*
-       * Every refusal the server can answer with, said out loud. In the mockup a blank title and a
-       * non-Life goal with no parent were both `return` — the sheet just did nothing — and a horizon clash
-       * or a leaf that still carries open tasks had no representation at all (Q-10, R-goal-28 / D-8).
-       */}
       <FieldError>{commandError(create.error) ?? commandError(patch.error)}</FieldError>
       <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
-        {editing ? 'Save changes' : 'Create goal'}
+        {editing ? 'Save changes' : 'Save goal'}
       </button>
     </Sheet>
   );
@@ -191,70 +183,59 @@ export function GoalFormSheet({ editId, parentId }: { editId: string | null; par
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * R-goal-16..20 — re-parent. Children move with the goal, and only `parentId` changes.
+ * R-goal-16/17/18 — re-parent. Children move with the goal, and only `parentId` changes.
  *
- * R-goal-19 — invalid targets are listed DISABLED with exactly one of two reasons, and the descendant
- * check wins over the horizon check. D-7: the goal itself is shown disabled with `its own descendant`
- * rather than filtered out, because a row that silently vanishes reads as a bug.
- *
- * The disabled rows are the affordance; the refusal is the mechanism. `WOULD_CREATE_CYCLE` and
- * `HORIZON_CONFLICT` come back as codes and are rendered from `err.code`, never guessed.
+ * ⚠ **A2** — the picker lists **legal targets only**, and R-goal-19's two disabled reasons no longer have
+ * anything to annotate: a parent must be strictly longer-horizon, and every descendant of the moved goal
+ * is strictly shorter, so no descendant and no horizon conflict can appear in the list at all. The
+ * refusals are still the mechanism — `WOULD_CREATE_CYCLE` and `HORIZON_CONFLICT` come back as codes and
+ * are rendered from the code, never guessed (D-5).
  */
-export function MoveGoalSheet({ goalId }: { goalId: string }) {
+export function MoveGoalSheet({ goalId, lifeGoalsOnly }: { goalId: string; lifeGoalsOnly?: boolean }) {
   const S = useSkin();
   const ui = useUI();
-  const goalsQ = useGoals(0);
+  const detailQ = useGoal(goalId);
   const move = useMoveGoal();
   const [target, setTarget] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
 
-  const goals = goalsQ.data?.goals ?? [];
-  const moving = node(goals, goalId);
+  const moving = detailQ.data?.goal;
   const close = () => ui.closeSheet();
-  if (!moving) return null;
+  const parents = useParentOptions(moving?.horizon ?? 'Weekly', moving?.periodKey ?? '');
 
-  const banned = new Set([moving.id, ...descendantIds(goals, moving.id)]);
-  const rows = flatTree(goals, search).map((r) => ({
-    ...r,
-    reason: banned.has(r.g.id) ? 'its own descendant' : rank(r.g.horizon) >= rank(moving.horizon) ? 'horizon conflict' : '',
-  }));
-  const picked = node(goals, target);
-  const preview = picked ? `${moving.title} will move under ${[...ancestorsOf(goals, picked), picked].map((x) => x.title).join(' › ')}` : '';
+  if (!moving) {
+    return (
+      <Sheet label="Move goal" onClose={close}>
+        <Loading />
+      </Sheet>
+    );
+  }
+
+  // R-lens-20 — `Put under a Life goal…` opens this same sheet with the Life goals pre-listed.
+  const rows = parents.options.filter((g) => (lifeGoalsOnly ? g.horizon === 'Life' : g.id !== moving.id));
 
   return (
-    <Sheet label="Move goal" onClose={close}>
+    <Sheet label={lifeGoalsOnly ? 'Put under a Life goal' : 'Move goal'} onClose={close}>
       <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 12px 0' }}>
         Pick a new parent for &quot;{moving.title}&quot;. Its children move with it.
       </div>
-      <input aria-label="Search goals" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search goals…" style={{ ...S.input, minHeight: 44, fontSize: 14, marginBottom: 8 }} />
       <div style={{ border: `1px solid ${S.T.line}`, borderRadius: 12, maxHeight: 230, overflow: 'auto' }}>
-        {rows.map((r) => (
-          <button
-            key={r.g.id}
-            type="button"
-            disabled={!!r.reason}
-            onClick={() => !r.reason && setTarget(r.g.id)}
-            style={S.pickerRow(r.reason ? 'dis' : target === r.g.id ? 'sel' : 'ok')}
-          >
-            <span style={{ display: 'inline-block', width: r.depth * 16 }} />
-            {r.g.title}
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: S.T.faint, marginLeft: 7 }}>{r.g.horizon.toUpperCase()}</span>
-            {r.reason && <span style={{ fontSize: 11, color: S.warn, marginLeft: 7 }}>{r.reason}</span>}
+        {rows.map((g) => (
+          <button key={g.id} type="button" onClick={() => setTarget(g.id)} style={S.pickerRow(target === g.id ? 'sel' : 'ok')}>
+            <span style={{ flex: 1, minWidth: 0 }}>{g.title}</span>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: S.T.mut, marginLeft: 7 }}>{g.horizon.toUpperCase()}</span>
           </button>
         ))}
+        {rows.length === 0 && <div style={{ fontSize: 13, color: S.T.mut, padding: '12px 14px' }}>No goal on a longer horizon yet.</div>}
       </div>
-      {/* R-goal-20 — the preview, before confirming. */}
-      {preview && (
-        <div style={{ background: S.T.accentSoft, color: S.T.accent, borderRadius: 12, padding: '11px 14px', fontSize: 13.5, fontWeight: 600, marginTop: 12 }}>
-          {preview}
-        </div>
-      )}
       <FieldError>{commandError(move.error)}</FieldError>
       <button
         type="button"
         style={S.saveBtn(!target || move.isPending)}
         disabled={!target || move.isPending}
-        onClick={() => target && move.mutate({ id: moving.id, parentId: target, version: moving.version }, { onSuccess: close })}
+        onClick={() =>
+          target &&
+          move.mutate({ id: moving.id, parentId: target, version: moving.version }, { onSuccess: () => { close(); ui.showToast(`Moved under ${rows.find((r) => r.id === target)?.title ?? 'it'}`); } })
+        }
       >
         Move it
       </button>
@@ -267,34 +248,47 @@ export function MoveGoalSheet({ goalId }: { goalId: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * R-goal-22/23 — a contextual next period plus an OPTIONAL one-line reason. This replaced the old push
- * flow, and R-nav-14 removed that flow's mandatory reason for good; nothing here may become required.
+ * R-goal-40 — a contextual next period plus an OPTIONAL one-line reason; nothing is mandatory.
  *
- * D-3 — the options are the SERVER's: `GoalDetailResponse.replanOptions`, derived once from the owner's
- * calendar day and strictly after the period the goal is already in, so re-plan can never offer it. The
- * client does not re-derive them — two implementations of a date rule drift on the first period boundary.
- * A refusal still carries `details.options`, the same list, which replaces what is on screen.
+ * ⚠ **A2** — the options are `PeriodView`s carrying both the canonical `periodKey` (which is what is
+ * written) and the rendered `label` (which is what is shown), and they are the SERVER's derivation. A
+ * client that re-derived the list from `serverNow` would be a second implementation of one date rule, and
+ * two implementations drift on the first boundary (D-3).
+ *
+ * Neither a **Life** goal (no period at all) nor a **Weekly** goal (a Weekly goal *is* a week; moving it
+ * would restate what a past week contained — D-2) is re-plannable, so both answer with an empty list.
  */
 export function ReplanGoalSheet({ goalId }: { goalId: string }) {
   const S = useSkin();
   const ui = useUI();
-  const goalsQ = useGoals(0);
-  const detailQ = useGoal(goalId, 0);
+  const detailQ = useGoal(goalId);
   const replan = useReplanGoal();
   const [index, setIndex] = useState(0);
   const [reason, setReason] = useState('');
-  const [serverOptions, setServerOptions] = useState<string[] | null>(null);
 
-  const goals = goalsQ.data?.goals ?? [];
-  const goal = node(goals, goalId);
+  const goal = detailQ.data?.goal;
   const close = () => ui.closeSheet();
-  if (!goal) return null;
-
-  // R-goal-21 — not reachable from the menu, and refused server-side with `LIFE_GOAL_IMMUTABLE` anyway.
-  if (goal.parentId === null) {
+  if (!goal) {
     return (
-      <Sheet label="A Life goal has no target period" onClose={close}>
-        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 14px 0' }}>Life goals are not re-planned; the branches under them are.</div>
+      <Sheet label="Re-plan goal" onClose={close}>
+        <Loading />
+      </Sheet>
+    );
+  }
+
+  const options = detailQ.data?.replanOptions ?? [];
+  const chosen = options[Math.min(index, options.length - 1)];
+
+  if (options.length === 0) {
+    const why =
+      goal.horizon === 'Life'
+        ? 'Life goals are not re-planned; the goals under them are.'
+        : goal.horizon === 'Weekly'
+          ? 'A weekly goal is a week. Write a new one in the week you mean — moving this would restate what a past week held.'
+          : 'No later period to move to.';
+    return (
+      <Sheet label="Re-plan goal" onClose={close}>
+        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 14px 0' }}>{why}</div>
         <button type="button" style={{ ...S.btn(true), width: '100%' }} onClick={close}>
           Got it
         </button>
@@ -302,24 +296,18 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
     );
   }
 
-  const options = serverOptions ?? detailQ.data?.replanOptions ?? [];
-  const chosen = options[Math.min(index, options.length - 1)];
-
   return (
     <Sheet label="Re-plan goal" onClose={close}>
       <div style={{ fontSize: 14, color: S.body, margin: '0 0 14px 0' }}>
-        “{goal.title}” · {goal.period || '—'} → {chosen ?? '—'}
+        “{goal.title}” · {goal.period || '—'} → {chosen?.label ?? '—'}
       </div>
-      <div style={{ ...S.fieldLabel, marginBottom: 6 }}>NEW TARGET PERIOD</div>
+      <div style={{ ...S.fieldLabel, marginBottom: 6 }}>NEW TARGET {PERIOD_UNIT[goal.horizon].toUpperCase()}</div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-        {options.map((label, i) => (
-          <button key={label} type="button" style={S.btn(index === i)} onClick={() => setIndex(i)}>
-            {label}
+        {options.map((p, i) => (
+          <button key={p.periodKey} type="button" style={S.btn(index === i)} onClick={() => setIndex(i)}>
+            {p.label}
           </button>
         ))}
-        {options.length === 0 && (
-          <div style={{ fontSize: 13, color: S.T.mut }}>{detailQ.isPending ? 'Loading periods…' : 'No later period to move to.'}</div>
-        )}
       </div>
       <input aria-label="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why? (optional)" style={S.input} />
       <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 5 }}>No mandatory fields. Fast and guilt-free.</div>
@@ -331,20 +319,8 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
         onClick={() =>
           chosen &&
           replan.mutate(
-            { id: goal.id, period: chosen, ...(reason.trim() ? { reason: reason.trim() } : {}), version: goal.version },
-            {
-              onSuccess: () => {
-                close();
-                ui.showToast(`Re-planned to ${chosen}`);
-              },
-              onError: (e) => {
-                const opts = toApiError(e).details?.options;
-                if (Array.isArray(opts) && opts.every((o) => typeof o === 'string')) {
-                  setServerOptions(opts as string[]);
-                  setIndex(0);
-                }
-              },
-            },
+            { id: goal.id, periodKey: chosen.periodKey, ...(reason.trim() ? { reason: reason.trim() } : {}), version: goal.version },
+            { onSuccess: () => { close(); ui.showToast(`Re-planned to ${chosen.label}`); } },
           )
         }
       >
@@ -362,9 +338,10 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
 type DeleteCounts = { subGoals: number; tasks: number; backlogItems: number };
 
 /**
- * The dry run answers with a whole `DeleteGoalResponse`, and `removed.goals` counts the goal ITSELF —
- * so the sub-goal count is one less. The other two numbers Q-5 names are already there under their own
- * names; `weeklyFocuses`, `taskEvents` and `untagged` are real but are not what the sentence promises.
+ * The dry run answers with a whole `DeleteGoalResponse`, and `removed.goals` counts the goal ITSELF — so
+ * the sub-goal count is one less. ⚠ **A2** — `removed.weeklyGoals` is a *subset* of `removed.goals` and is
+ * reported separately because it is the number that can be large (R-task-47); it is deliberately not added
+ * in, or a Monthly goal's weeks would be counted twice.
  */
 const countsOf = (r: DeleteGoalResponse): DeleteCounts => ({
   subGoals: Math.max(0, r.removed.goals - 1),
@@ -372,10 +349,8 @@ const countsOf = (r: DeleteGoalResponse): DeleteCounts => ({
   backlogItems: r.removed.backlogItems,
 });
 
-/** True when a delete would destroy anything at all — the whole test for "does this need confirming?". */
 const destroysSomething = (c: DeleteCounts): boolean => c.subGoals + c.tasks + c.backlogItems > 0;
 
-/** The three nouns Q-5 names, in the order it names them. */
 const REMOVED_NOUNS: ReadonlyArray<readonly [keyof DeleteCounts, string]> = [
   ['subGoals', 'sub-goal'],
   ['tasks', 'task'],
@@ -383,16 +358,8 @@ const REMOVED_NOUNS: ReadonlyArray<readonly [keyof DeleteCounts, string]> = [
 ];
 
 /**
- * `2 tasks and 1 backlog item` — the losses, and only the losses.
- *
- * Q-5 asks for the counts to be named; it does not ask for zeroes to be named, and the browser walkthrough
- * caught "This removes 0 sub-goals, 2 tasks and 1 backlog item" reading as clumsy in a strip that otherwise
- * only names what is actually lost. A category at zero is dropped; `plural` still decides each surviving
- * noun's ending, so `1 backlog item` stays singular. The list joins with commas and a final "and", so one
- * category reads `2 tasks`, two read `2 tasks and 1 backlog item`, three keep the original sentence.
- *
- * Never called with every count at zero: that is `destroysSomething() === false`, which has its own copy
- * ("This goal holds nothing else") precisely because there is no list to write here.
+ * `2 tasks and 1 backlog item` — the losses, and only the losses. A category at zero is dropped; `plural`
+ * still decides each surviving noun's ending, so `1 backlog item` stays singular.
  */
 const removalList = (c: DeleteCounts): string => {
   const parts = REMOVED_NOUNS.filter(([k]) => c[k] > 0).map(([k, noun]) => plural(c[k], noun));
@@ -403,37 +370,28 @@ const removalList = (c: DeleteCounts): string => {
 /**
  * Q-5 — delete, and the acknowledgement it needs.
  *
- * **The bug this shape exists to close.** The API's `GOAL_HAS_CHILDREN` guard fires only when a goal has
- * descendant GOALS, so the old flow asked for an acknowledgement in exactly the case where the refusal
- * happened to arrive. A Monthly leaf is childless by that test — and a Monthly leaf is where all the work
- * lives. Forty open tasks, their whole activity history and the goal's backlog went on the first tap, with
- * nothing said. Q-5 does not say "confirm a subtree delete"; it says deletion is confirmed with the counts
- * named. So the counts are asked for FIRST, for every goal, and the button is not offered until they land.
- *
- * `DELETE /goals/:id?dryRun=true` is what makes that possible: the same route, the same authorisation, no
- * write. Nothing is derived from a client-side subtree walk — the tree in the cache does not know how many
- * tasks hang off a leaf, and a confirmation that guesses is worse than one that waits.
- *
- * The `GOAL_HAS_CHILDREN` refusal is still handled, unchanged, as the fallback: if the preview fails for
- * any reason the sheet says only what it can stand behind, and the first tap is refused with the counts
- * exactly as before. That path is why `GOAL_HAS_CHILDREN` stays `quiet` in `useCommand`.
- *
- * There is no soft delete and no trash. Learnings tagged into the subtree are un-tagged to Unsorted
- * rather than deleted with it (Q-5).
+ * `GOAL_HAS_CHILDREN` fires only on descendant GOALS, so the counts are asked for FIRST, for every goal
+ * (`?dryRun=true`), and the button is not offered until they land. That matters more after A2, not less:
+ * deleting a Monthly goal now takes its Weekly children and all of their tasks (R-task-47).
  */
 export function DeleteGoalSheet({ goalId }: { goalId: string }) {
   const S = useSkin();
   const ui = useUI();
-  const goalsQ = useGoals(0);
+  const navigate = useNavigate();
+  const detailQ = useGoal(goalId);
   const previewQ = useGoalDeletePreview(goalId);
   const remove = useDeleteGoal();
-  /** Counts recovered from a `GOAL_HAS_CHILDREN` refusal — the fallback when the dry run is unavailable. */
   const [refused, setRefused] = useState<DeleteCounts | null>(null);
 
-  const goals = goalsQ.data?.goals ?? [];
-  const goal = node(goals, goalId);
+  const goal = detailQ.data?.goal;
   const close = () => ui.closeSheet();
-  if (!goal) return null;
+  if (!goal) {
+    return (
+      <Sheet label="Delete goal" onClose={close}>
+        <Loading />
+      </Sheet>
+    );
+  }
 
   const counts = refused ?? (previewQ.data ? countsOf(previewQ.data) : null);
   const destroys = counts ? destroysSomething(counts) : false;
@@ -442,16 +400,13 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
 
   const finish = () => {
     close();
-    // The detail screen was showing something that no longer exists (D-27).
-    if (ui.screen === 'goal' && ui.goalId === goal.id) ui.setScreen('goals');
+    // The page was showing something that no longer exists (D-27).
+    navigate(lensPath(ui.lastLens));
     ui.showToast('Goal deleted');
   };
 
   const attempt = () =>
     remove.mutate(
-      // `cascade` is the explicit acknowledgement, and it is sent whenever anything would go with the goal
-      // — not only when a sub-goal would. The server needs it only for sub-goals; sending it for a leaf
-      // full of tasks costs nothing and keeps "what the button said" and "what was authorised" the same.
       { id: goal.id, ...(destroys ? { cascade: true } : {}) },
       {
         onSuccess: finish,
@@ -466,11 +421,6 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
 
   return (
     <Sheet label={`Delete “${goal.title}”?`} onClose={close}>
-      {/*
-       * `role="status"` because the sentence is replaced under the reader once the counts arrive, and the
-       * replacement is the whole point. Polite, not an alert: this is a warning, not an alarm, and the app
-       * does not raise its voice.
-       */}
       <div role="status" style={{ fontSize: 13.5, color: counts && destroys ? S.body : S.T.mut, margin: '0 0 14px 0' }}>
         {checking
           ? 'Checking what this would remove…'
@@ -482,12 +432,7 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
       </div>
       <FieldError>{counts ? null : commandError(remove.error)}</FieldError>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <button
-          type="button"
-          style={{ ...S.btn(true, true), width: '100%', minHeight: 46 }}
-          disabled={remove.isPending || checking}
-          onClick={attempt}
-        >
+        <button type="button" style={{ ...S.btn(true, true), width: '100%', minHeight: 46 }} disabled={remove.isPending || checking} onClick={attempt}>
           {destroys ? 'Delete everything' : 'Delete'}
         </button>
         <button type="button" style={{ ...S.btn(false), width: '100%', minHeight: 46 }} onClick={close}>
@@ -497,6 +442,3 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
     </Sheet>
   );
 }
-
-/** Exported for the goal picker rows elsewhere. */
-export type { GoalView };

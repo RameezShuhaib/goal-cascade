@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { act, waitFor } from '@testing-library/react';
 import { delay, http, HttpResponse } from 'msw';
-import { useCreateGoal, useGoals, usePatchGoal, useTasks } from '../../src/api/queries';
+import { useCreateGoal, useLens, usePatchGoal, useTasks } from '../../src/api/queries';
 import { renderAppHook } from '../render';
 import { apiError, keysOf, requests, server } from '../msw/handlers';
 import * as F from '../msw/fixtures';
@@ -9,7 +9,7 @@ import * as F from '../msw/fixtures';
 describe('read hooks', () => {
   it('are gated on the session, so a signed-out app does not hammer the API with 401s', async () => {
     server.use(http.get('/api/me', () => apiError('UNAUTHENTICATED')));
-    const { result } = renderAppHook(() => useGoals(0));
+    const { result } = renderAppHook(() => useLens('Weekly'));
     await waitFor(() => expect(requests('GET', '/api/me').length).toBeGreaterThan(0));
     // Give the query every chance to fire; the `enabled` guard is what stops it.
     await new Promise((r) => setTimeout(r, 20));
@@ -21,8 +21,8 @@ describe('read hooks', () => {
     const { result, queryClient } = renderAppHook(() => useTasks(-1));
     await waitFor(() => expect(result.current.data).toBeTruthy());
     expect(new URL(requests('GET', '/api/tasks')[0]!.url).searchParams.get('week')).toBe('-1');
-    expect(queryClient.getQueryData(['tasks', -1, null])).toBeTruthy();
-    expect(queryClient.getQueryData(['tasks', 0, null])).toBeUndefined();
+    expect(queryClient.getQueryData(['tasks', -1])).toBeTruthy();
+    expect(queryClient.getQueryData(['tasks', 0])).toBeUndefined();
   });
 });
 
@@ -114,8 +114,8 @@ describe('useCommand and the Idempotency-Key', () => {
   });
 
   it('patches the cache from the response, then invalidates — patch-then-invalidate', async () => {
-    const { result, queryClient } = renderAppHook(() => ({ goals: useGoals(0), rename: usePatchGoal() }));
-    await waitFor(() => expect(result.current.goals.data).toBeTruthy());
+    const { result, queryClient } = renderAppHook(() => ({ life: useLens('Life'), rename: usePatchGoal() }));
+    await waitFor(() => expect(result.current.life.data).toBeTruthy());
 
     server.use(
       http.patch('/api/goals/:id', () => HttpResponse.json(F.goalResponse({ title: 'Be strong at 70' }))),
@@ -123,18 +123,20 @@ describe('useCommand and the Idempotency-Key', () => {
       // the pattern buys: the row renames the moment the command answers, not when the list comes back.
       http.get('/api/goals', async () => {
         await delay(150);
-        return HttpResponse.json(F.goalsResponse());
+        return HttpResponse.json(F.lensFor('Life'));
       }),
     );
     await act(async () => {
-      result.current.rename.mutate({ id: F.ulid(1), patch: { title: 'Be strong at 70' } });
+      result.current.rename.mutate({ id: F.L, patch: { title: 'Be strong at 70' } });
     });
     await waitFor(() => expect(result.current.rename.isSuccess).toBe(true));
 
-    // Patched immediately from the command's own response — the UI moves without waiting for a refetch...
-    const cached = queryClient.getQueryData(['goals', 0]) as { goals: { title: string }[] };
-    expect(cached.goals[0]!.title).toBe('Be strong at 70');
-    // ...and the refetch that reconciles the derived fields the response cannot carry was queued.
+    // Patched immediately from the command's own response — the row renames the moment the command
+    // answers, not when the list comes back. A lens holds its goals in TWO arrays (`items` and R-lens-12's
+    // `carried`), and the patch has to reach both.
+    const cached = queryClient.getQueryData(['goals', 'Life', null]) as { items: { title: string }[] };
+    expect(cached.items[0]!.title).toBe('Be strong at 70');
+    // ...and the refetch that reconciles what the response cannot carry was queued.
     await waitFor(() => expect(requests('GET', '/api/goals').length).toBeGreaterThan(1));
   });
 });

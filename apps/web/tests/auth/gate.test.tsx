@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { delay, http, HttpResponse } from 'msw';
 import { AppRoot } from '../../src/App';
-import { useGoals } from '../../src/api/queries';
+import { useLens } from '../../src/api/queries';
 import { renderApp } from '../render';
 import { apiError, server } from '../msw/handlers';
 import * as F from '../msw/fixtures';
@@ -69,7 +69,7 @@ describe('the session gate', () => {
     // The mockup shell reads nothing yet, so stand in for a migrated screen with the real read hook. The
     // path under test is entirely in `createQueryClient`: a 401 on ANY query invalidates `['me']`.
     function WithAScreenQuery() {
-      useGoals();
+      useLens('Weekly');
       return <AppRoot />;
     }
     renderApp(<WithAScreenQuery />, { withToast: false });

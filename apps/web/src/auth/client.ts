@@ -14,7 +14,8 @@ export const authClient = createAuthClient({
 });
 
 /**
- * Where Better Auth sends the browser after a verification link. `useUrlSync` consumes these.
+ * Where Better Auth sends the browser after a verification link. `lib/landing.ts` parses these and
+ * `App.tsx` strips them from the address bar once they have been read.
  *
  * The reset landing is NOT a Better Auth redirect: `sendResetPassword` in the Worker builds
  * `/?reset=1&token=<token>` itself, so the link in the outbox IS this URL.

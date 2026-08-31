@@ -21,16 +21,37 @@ describe('HttpApiClient', () => {
     // Every query schema is `.strict()`; `?week=undefined` is a 422, not a default.
     await client().tasks({});
     expect(new URL(lastRequest('GET', '/api/tasks')!.url).search).toBe('');
-    await client().tasks({ week: -2, goalId: F.ulid(2) });
-    const url = new URL(lastRequest('GET', '/api/tasks')!.url);
-    expect(url.searchParams.get('week')).toBe('-2');
-    expect(url.searchParams.get('goalId')).toBe(F.ulid(2));
+    await client().tasks({ week: -2 });
+    expect(new URL(lastRequest('GET', '/api/tasks')!.url).searchParams.get('week')).toBe('-2');
+  });
+
+  /**
+   * ⚠ **A2 (R-lens-16)** — `GET /goals` is the scoped lens read. `?goalId=` is gone from `TasksQuery`
+   * (R-rm-4) and there is no filter of any kind on a lens read (R-lens-15), so the only parameters here
+   * are the horizon and the period — and a POSITIVE week offset is now ordinary (R-goal-36, R-rm-3).
+   */
+  it('sends the lens and the period, and nothing that used to be a filter', async () => {
+    await client().lens({ lens: 'Quarterly', period: '2026-Q3' });
+    const url = new URL(lastRequest('GET', '/api/goals')!.url);
+    expect(url.searchParams.get('lens')).toBe('Quarterly');
+    expect(url.searchParams.get('period')).toBe('2026-Q3');
+    expect(url.searchParams.has('goalId')).toBe(false);
+    expect(url.searchParams.has('week')).toBe(false);
+
+    // The Life lens has no period dimension, so no period is sent at all (R-lens-2).
+    await client().lens({ lens: 'Life' });
+    expect(new URL(lastRequest('GET', '/api/goals')!.url).searchParams.has('period')).toBe(false);
+  });
+
+  it('a future week offset goes out unchanged — there is no forward clamp left in this client', async () => {
+    await client().tasks({ week: 6 });
+    expect(new URL(lastRequest('GET', '/api/tasks')!.url).searchParams.get('week')).toBe('6');
   });
 
   it('sends the Idempotency-Key it is given, and only on commands', async () => {
     await client().createGoal({ title: 'A goal', why: '', horizon: 'Life', parentId: null, pulse: 'On track' }, 'key-abc');
     expect(lastRequest('POST', '/api/goals')!.headers.get('Idempotency-Key')).toBe('key-abc');
-    await client().goals(0);
+    await client().lens({ lens: 'Weekly' });
     expect(lastRequest('GET', '/api/goals')!.headers.get('Idempotency-Key')).toBeNull();
   });
 
@@ -46,7 +67,7 @@ describe('HttpApiClient', () => {
 
   it('maps an unknown code to the nearest meaning its status carries', async () => {
     server.use(http.get('/api/goals', () => HttpResponse.json({ error: { code: 'SOMETHING_NEW', message: 'from a newer server' } }, { status: 409 })));
-    const err = (await client().goals().catch((e: unknown) => e)) as ApiError;
+    const err = (await client().lens({ lens: 'Weekly' }).catch((e: unknown) => e)) as ApiError;
     expect(err.code).toBe('CONCURRENT_UPDATE');
     expect(err.status).toBe(409);
   });
@@ -81,14 +102,16 @@ describe('HttpApiClient', () => {
 
   it('does not retry a read (no key means the server holds nothing to join)', async () => {
     server.use(http.get('/api/goals', () => apiError('IDEMPOTENCY_IN_PROGRESS')));
-    await client().goals().catch(() => null);
+    await client().lens({ lens: 'Weekly' }).catch(() => null);
     expect(requests('GET', '/api/goals')).toHaveLength(1);
   });
 });
 
 describe('shouldRetry', () => {
   it('never retries a 4xx — a typed refusal will not heal', () => {
-    for (const code of ['NOT_A_LEAF', 'VALIDATION_FAILED', 'NOT_FOUND', 'UNAUTHENTICATED'] as const) {
+    // ⚠ **A2** — `NOT_A_LEAF` is deleted (R-goal-39). `NOT_A_WEEKLY_GOAL` replaces it, and it is just as
+    // unretryable: retrying cannot make a Monthly goal a Weekly one.
+    for (const code of ['NOT_A_WEEKLY_GOAL', 'VALIDATION_FAILED', 'NOT_FOUND', 'UNAUTHENTICATED'] as const) {
       const status = code === 'NOT_FOUND' ? 404 : code === 'UNAUTHENTICATED' ? 401 : code === 'VALIDATION_FAILED' ? 422 : 409;
       expect(shouldRetry(0, new ApiError(status, code, code))).toBe(false);
     }
@@ -111,6 +134,6 @@ describe('isTransient', () => {
     expect(isTransient(new ApiError(409, 'IDEMPOTENCY_IN_PROGRESS', 'x'))).toBe(true);
     expect(isTransient(new ApiError(500, 'INTERNAL', 'x'))).toBe(true);
     // A stored 4xx would just be replayed under the same key.
-    expect(isTransient(new ApiError(409, 'NOT_A_LEAF', 'x'))).toBe(false);
+    expect(isTransient(new ApiError(409, 'NOT_A_WEEKLY_GOAL', 'x'))).toBe(false);
   });
 });

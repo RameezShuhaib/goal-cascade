@@ -1,277 +1,230 @@
 import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import type { BacklogItemView } from '@goal-cascade/shared';
 import { AppShell } from '../../src/AppShell';
 import { renderApp } from '../render';
 import { apiError, bodyOf, lastRequest, requests, server } from '../msw/handlers';
 import * as F from '../msw/fixtures';
 
 /**
- * The backlog, and its one conversion.
+ * The backlog: the page, the `+` drawer, and the ONE way an item becomes work.
  *
- * R-backlog-6 is the rule the mockup broke in three separate ways (D-19): it created the task, filtered
- * the item out of a local array, and never told the API about the removal — so a second attempt made a
- * duplicate task from an item the server still thought existed. Here it is one atomic command, and every
- * refusal it can answer with has a screen.
+ * ⚠ **A2 (R-backlog-26)** — a conversion targets the **Weekly goal at or under the item's goal for the
+ * target week**, not an "active leaf". The three cases are the server's to decide (one → used silently,
+ * two or more → the owner chooses, **none** → the inline create), and the last of them is what retires the
+ * `This branch isn't active this week` dead end entirely.
  */
 
-const onQ = F.backlogItem({ id: F.ulid(41), goalId: F.Q, title: 'Find a squat rack free at 7am' });
+const withBacklog = (items = [F.backlogItem()]) => server.use(http.get('/api/backlog', () => HttpResponse.json({ items, nextCursor: null, serverNow: F.NOW })));
 
-function withBacklog(items: BacklogItemView[] = [onQ], over: Record<string, Partial<ReturnType<typeof F.goal>>> = {}) {
-  server.use(
-    http.get('/api/goals', () => HttpResponse.json(F.treeResponse(over))),
-    http.get('/api/backlog', () => HttpResponse.json({ items, serverNow: F.NOW })),
-  );
-}
+describe('The Backlog page (R-backlog-13)', () => {
+  it('lists items under their owning goal, with the from-week note the exit left behind', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M, fromWeekStart: F.LAST_MONDAY })]);
+    renderApp(<AppShell />, { route: '/backlog' });
 
-async function openBacklog(user: ReturnType<typeof renderApp>['user']) {
-  await user.click(await screen.findByRole('button', { name: 'Add' }));
-  await user.click(await screen.findByRole('button', { name: 'View Backlog →' }));
-  return screen.findByText('Backlog');
-}
-
-describe('Backlog — the page', () => {
-  it('S-backlog-13: grouped by branch path, with the from-week note the exit left behind', async () => {
-    withBacklog([F.backlogItem({ id: F.ulid(41), goalId: F.Q, title: 'Find a squat rack free at 7am', fromWeekStart: F.LAST_MONDAY })]);
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    expect(await screen.findByText('Be strong at 60 › Rebuild the gym habit')).toBeInTheDocument();
+    expect(await screen.findByText('Find a squat rack that is free at 7am')).toBeInTheDocument();
+    // The grouping is resolved from the scoped lens reads the client already holds (R-lens-16).
+    expect(await screen.findByText('Be strong at 60 › Lift three times a week')).toBeInTheDocument();
+    // D-12 — the week the task was LIVE in, an absolute Monday, not "this week".
     expect(screen.getByText('from week of Mon 24 Aug')).toBeInTheDocument();
   });
 
-  it('R-backlog-13: the empty state, which the mockup could never reach', async () => {
+  it('D-27: an item whose goal is not in any page the client holds is still reachable, not dropped', async () => {
+    withBacklog([F.backlogItem({ goalId: F.ulid(98) })]);
+    renderApp(<AppShell />, { route: '/backlog' });
+    expect(await screen.findByText('Elsewhere')).toBeInTheDocument();
+    expect(screen.getByText('Find a squat rack that is free at 7am')).toBeInTheDocument();
+  });
+
+  it('R-backlog-13: the empty state', async () => {
     withBacklog([]);
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
+    renderApp(<AppShell />, { route: '/backlog' });
     expect(await screen.findByText('Nothing in the backlog.')).toBeInTheDocument();
   });
 
-  it('S-backlog-2-1: no goal picker in any backlog flow offers a Life goal', async () => {
-    withBacklog();
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
+  it('S-backlog-10-1: a move names the new goal in the toast, and never offers a Life or Weekly one', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M })]);
+    const { user } = renderApp(<AppShell />, { route: '/backlog' });
+    await user.click(await screen.findByText('Find a squat rack that is free at 7am'));
     await user.click(screen.getByRole('button', { name: 'Move to another goal' }));
+
+    // R-backlog-2 — never a Life goal, and now never a Weekly one either: the point of a backlog item is
+    // that it has no week, and a Weekly goal would give it one.
+    expect(await screen.findByRole('button', { name: 'Write the changelog' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Be strong at 60' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Ship the thing' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Launch v1' })).toBeInTheDocument();
-  });
+    expect(screen.queryByRole('button', { name: 'Three easy runs and one long run' })).not.toBeInTheDocument();
 
-  it('S-backlog-10-1: a move names the new goal in the toast', async () => {
-    withBacklog();
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
-    await user.click(screen.getByRole('button', { name: 'Move to another goal' }));
-    await user.click(screen.getByRole('button', { name: 'Launch v1' }));
-
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/backlog/'))).toMatchObject({ goalId: F.Y2 }));
-    expect(await screen.findByRole('status')).toHaveTextContent('Moved to Launch v1');
-  });
-
-  it('R-backlog-2: a Life-goal target is refused, and the refusal is said out loud', async () => {
-    withBacklog();
-    server.use(http.post('/api/backlog/:id/move', () => apiError('LIFE_GOAL_NO_BACKLOG')));
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
-    await user.click(screen.getByRole('button', { name: 'Move to another goal' }));
-    await user.click(screen.getByRole('button', { name: 'Launch v1' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('not a Life goal');
+    await user.click(screen.getByRole('button', { name: 'Write the changelog' }));
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/move'))).toMatchObject({ goalId: F.M2 }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Moved to Write the changelog');
   });
 });
 
-describe('Backlog — conversion, the only way backlog becomes work', () => {
-  it('S-backlog-7-1 / S-backlog-6-1: one active leaf beneath means one conversion, target resolved', async () => {
-    withBacklog();
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
+describe('Backlog → work: the one conversion (R-backlog-26, D-19)', () => {
+  it('S-backlog-26-1: `Add to this week` opens the create sheet bound to the item, and converts once', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M })]);
+    const { user } = renderApp(<AppShell />, { route: '/backlog' });
+    await user.click(await screen.findByText('Find a squat rack that is free at 7am'));
     await user.click(screen.getByRole('button', { name: 'Add to this week' }));
 
-    // R-backlog-6 — the standard create modal, pre-filled with the item's title.
     const sheet = await screen.findByRole('dialog', { name: 'New task' });
-    expect(within(sheet).getByLabelText('Task title')).toHaveValue('Find a squat rack free at 7am');
+    expect(within(sheet).getByLabelText('What needs doing?')).toHaveValue('Find a squat rack that is free at 7am');
     await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
 
     await waitFor(async () => {
-      const req = lastRequest('POST', '/convert-to-task');
-      expect(req?.url).toContain(F.ulid(41));
-      expect(await bodyOf(req)).toMatchObject({ goalId: F.M, title: 'Find a squat rack free at 7am' });
+      const body = await bodyOf(lastRequest('POST', '/convert-to-task'));
+      // R-backlog-26 — the conversion names a target week and may not be in the past (R-goal-36).
+      expect(body).toMatchObject({ week: 0, title: 'Find a squat rack that is free at 7am' });
     });
-    // It is ONE operation: no separate task create, and no separate delete of the item.
+    // D-19 — CONVERTED, never duplicated: the item is not deleted and no second task is made.
     expect(requests('POST', '/api/tasks')).toHaveLength(0);
-    expect(requests('DELETE', '/backlog/')).toHaveLength(0);
+    expect(requests('DELETE', '/api/backlog')).toHaveLength(0);
   });
 
-  it('S-backlog-6-3: abandoning the modal leaves the item alone and creates nothing', async () => {
-    withBacklog();
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
-    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
-    await user.click(await screen.findByTestId('sheet-overlay'));
-
-    expect(requests('POST', '/convert-to-task')).toHaveLength(0);
-    expect(await screen.findByText('Find a squat rack free at 7am')).toBeInTheDocument();
-  });
-
-  it('S-backlog-6-2: a second conversion is refused, and no second task appears', async () => {
-    withBacklog();
-    server.use(http.post('/api/backlog/:id/convert-to-task', () => apiError('ALREADY_CONVERTED')));
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
-    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
-    await user.click(await screen.findByRole('button', { name: 'Save task' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('already this week — nothing new was created');
-    expect(requests('POST', '/api/tasks')).toHaveLength(0);
-  });
-
-  it('S-backlog-8-1 / S-backlog-8-2: a dormant branch gets the sheet, not a modal — and the item is untouched', async () => {
-    // No leaf at or under Q holds a focus this week.
-    withBacklog([onQ], { [F.M]: { isActive: false, focus: '', dormant: true, subtreeActive: false } });
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
-    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
-
-    expect(await screen.findByText("This branch isn't active this week")).toBeInTheDocument();
-    expect(screen.getByText('"Find a squat rack free at 7am" can only become a task under an active weekly focus.')).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'New task' })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Set a weekly focus' }));
-    expect(await screen.findByText('Weekly planning')).toBeInTheDocument();
-    expect(requests('POST', '/convert-to-task')).toHaveLength(0);
-    expect(requests('POST', '/api/tasks')).toHaveLength(0);
-  });
-
-  it('S-backlog-8-3: the server’s own refusal drives the same sheet — the client guard is not the only one', async () => {
-    withBacklog();
-    server.use(http.post('/api/backlog/:id/convert-to-task', () => apiError('BRANCH_NOT_ACTIVE')));
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
-    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
-    await user.click(await screen.findByRole('button', { name: 'Save task' }));
-
-    expect(await screen.findByText("This branch isn't active this week")).toBeInTheDocument();
-  });
-
-  it('S-backlog-7-2: two active leaves beneath — the user is asked, and nothing is picked silently', async () => {
-    withBacklog([onQ], { [F.D]: { isActive: true, dormant: false, subtreeActive: true, focus: 'Lights out by 23:30.' } });
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
-    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
-
-    const sheet = await screen.findByRole('dialog', { name: 'New task' });
-    // D-18 — no default selection: `activeLeafFor`'s "first in array order" is exactly what is gone.
-    expect(within(sheet).getByLabelText('Weekly focus')).toHaveValue('');
-    expect(within(sheet).getByRole('button', { name: 'Save task' })).toBeDisabled();
-
-    await user.selectOptions(within(sheet).getByLabelText('Weekly focus'), F.D);
-    await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/convert-to-task'))).toMatchObject({ goalId: F.D }));
-  });
-
-  it('S-backlog-7-2: an ambiguous refusal from the server re-renders the picker from ITS candidate list', async () => {
-    // The server answers `409 AMBIGUOUS_CONVERSION_TARGET` with `details.candidates` — its own code, not a
-    // validation failure (the input was fine; the product has no single answer), so the sheet branches on
-    // the code and lists the server's candidates.
-    withBacklog();
-    let attempt = 0;
+  it('S-backlog-26-3 / D-18: an ambiguous refusal re-renders the picker from the SERVER’s candidate list', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M })]);
     server.use(
-      http.post('/api/backlog/:id/convert-to-task', () => {
-        attempt += 1;
-        return attempt === 1
-          ? apiError('AMBIGUOUS_CONVERSION_TARGET', 'more than one active focus can receive this item — choose one', {
-              candidates: [
-                { id: F.M, title: 'Lift three times a week' },
-                { id: F.D, title: 'Sleep before midnight' },
-              ],
-            })
-          : HttpResponse.json({ task: F.taskDetail(), item: F.backlogItem({ status: 'converted' }), serverNow: F.NOW }, { status: 201 });
-      }),
+      http.post('/api/backlog/:id/convert-to-task', () =>
+        apiError('AMBIGUOUS_CONVERSION_TARGET', 'pick one', {
+          candidates: [
+            { id: F.W, title: 'Three easy runs and one long run' },
+            { id: F.ulid(56), title: 'Two gym sessions' },
+          ],
+        }),
+      ),
     );
-    const { user } = renderApp(<AppShell />);
-    await openBacklog(user);
-
-    await user.click(screen.getByText('Find a squat rack free at 7am'));
+    const { user } = renderApp(<AppShell />, { route: '/backlog' });
+    await user.click(await screen.findByText('Find a squat rack that is free at 7am'));
     await user.click(screen.getByRole('button', { name: 'Add to this week' }));
-    await user.click(await screen.findByRole('button', { name: 'Save task' }));
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
+    await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('More than one focus could take this');
-    const select = screen.getByLabelText('Weekly focus');
-    expect(select).toHaveValue('');
-    // R-task-4 — each option reads `<Life root> — <focus sentence>`, so the two are told apart by what
-    // each week is actually for, not by a goal id.
-    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Choose a focus…',
-      'Be strong at 60 — Three sessions, no excuses.',
-      'Be strong at 60 — Sleep before midnight',
-    ]);
+    // The server refuses to pick, because that id decides which week the task belongs to for the rest of
+    // its life and array order is not a decision.
+    expect(await within(sheet).findByText('More than one weekly goal could take this. Which one?')).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Two gym sessions' })).toBeInTheDocument();
+  });
 
-    await user.selectOptions(select, F.D);
-    await user.click(screen.getByRole('button', { name: 'Save task' }));
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/convert-to-task'))).toMatchObject({ goalId: F.D }));
+  it('S-backlog-26-2 (retired S-backlog-8-1/8-2/8-3): NO_WEEKLY_GOAL is not a dead end any more', async () => {
+    /**
+     * ⚠ **RETIRED — the `This branch isn't active this week` sheet and its three scenarios.**
+     *
+     * **Verdict: R-backlog-26 / R-task-49.** `BRANCH_NOT_ACTIVE` is deleted from the error table and
+     * `NO_WEEKLY_GOAL` replaces it, and the client's answer is no longer a sheet that sends the owner to a
+     * planning screen that no longer exists — it is R-task-48's inline create, in the same sheet, in one
+     * transaction. `InactiveBranchSheet` is deleted (R-rm-5). The assertion is INVERTED so the dead end
+     * cannot come back.
+     */
+    withBacklog([F.backlogItem({ goalId: F.M })]);
+    server.use(http.post('/api/backlog/:id/convert-to-task', () => apiError('NO_WEEKLY_GOAL')));
+    const { user } = renderApp(<AppShell />, { route: '/backlog' });
+    await user.click(await screen.findByText('Find a squat rack that is free at 7am'));
+    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
+    await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
+
+    await waitFor(() => expect(requests('POST', '/convert-to-task').length).toBeGreaterThan(0));
+    expect(screen.queryByText(/isn't active this week/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Set a weekly focus' })).not.toBeInTheDocument();
+    // The item is untouched and the sheet is still open, ready to save again with the goal it will create.
+    expect(screen.getByRole('dialog', { name: 'New task' })).toBeInTheDocument();
+  });
+
+  it('S-backlog-26-2: a second conversion is refused, and no second task appears', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M })]);
+    server.use(http.post('/api/backlog/:id/convert-to-task', () => apiError('ALREADY_CONVERTED')));
+    const { user } = renderApp(<AppShell />, { route: '/backlog' });
+    await user.click(await screen.findByText('Find a squat rack that is free at 7am'));
+    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
+    await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
+
+    expect(await within(sheet).findByText('That one is already this week — nothing new was created.')).toBeInTheDocument();
   });
 });
 
-describe('Backlog — the + drawer', () => {
-  it('S-backlog-15-1: "Add to this week instead" creates a task and NO backlog item', async () => {
-    withBacklog();
-    const { user } = renderApp(<AppShell />);
+describe('The `+` drawer (R-backlog-27, D-21)', () => {
+  it('S-backlog-27-1: with a weekly goal under the chosen goal, exactly one entity exists — a task', async () => {
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await user.click(await screen.findByRole('button', { name: 'Add' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
 
-    await user.click(await screen.findByRole('button', { name: 'Rebuild the gym habit' }));
-    await user.type(screen.getByLabelText('What needs doing, someday?'), 'Book an induction');
-    await user.click(screen.getByRole('button', { name: 'Add to this week instead' }));
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(await within(sheet).findByRole('button', { name: 'Lift three times a week' }));
+    await user.type(within(sheet).getByLabelText('What needs doing, someday?'), 'Book an induction');
+    await user.click(within(sheet).getByRole('button', { name: 'Add to this week instead' }));
+    await user.click(within(sheet).getByRole('button', { name: 'Save' }));
 
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/api/tasks'))).toMatchObject({ goalId: F.M, source: 'drawer' }));
-    // D-21 — exactly one entity. The label says "instead" because that is what happens.
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/api/tasks'))).toMatchObject({ goalId: F.W, source: 'drawer' }));
+    // D-21 — one entity, ever. The mockup's label promised "also", which was a data bug waiting to happen.
     expect(requests('POST', '/api/backlog')).toHaveLength(0);
     expect(await screen.findByRole('status')).toHaveTextContent('Added to this week');
   });
 
-  it('S-backlog-15-2: with no active leaf it parks in the Backlog instead, and says why', async () => {
-    withBacklog([onQ], { [F.M]: { isActive: false, focus: '', dormant: true, subtreeActive: false } });
-    const { user } = renderApp(<AppShell />);
+  it('S-backlog-27-1: with none, exactly one BACKLOG item is created instead, and the toast says why', async () => {
+    server.use(
+      http.get('/api/goals', ({ request }) => {
+        const lens = new URL(request.url).searchParams.get('lens') ?? 'Weekly';
+        if (lens === 'Weekly') return HttpResponse.json(F.lens({ lens: 'Weekly', period: F.period({ periodKey: F.THIS_MONDAY }), items: [] }));
+        return HttpResponse.json(F.lensFor(lens as 'Monthly'));
+      }),
+    );
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await user.click(await screen.findByRole('button', { name: 'Add' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
 
-    await user.click(await screen.findByRole('button', { name: 'Rebuild the gym habit' }));
-    await user.type(screen.getByLabelText('What needs doing, someday?'), 'Book an induction');
-    await user.click(screen.getByRole('button', { name: 'Add to this week instead' }));
-    expect(screen.getByText("This branch isn't active this week — it will be parked in the Backlog.")).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(await within(sheet).findByRole('button', { name: 'Lift three times a week' }));
+    await user.type(within(sheet).getByLabelText('What needs doing, someday?'), 'Book an induction');
+    await user.click(within(sheet).getByRole('button', { name: 'Add to this week instead' }));
+    await user.click(within(sheet).getByRole('button', { name: 'Save' }));
 
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/api/backlog'))).toMatchObject({ goalId: F.Q, title: 'Book an induction' }));
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/api/backlog'))).toMatchObject({ goalId: F.M, title: 'Book an induction' }));
     expect(requests('POST', '/api/tasks')).toHaveLength(0);
-    expect(await screen.findByRole('status')).toHaveTextContent('parked in Backlog');
+    expect(await screen.findByRole('status')).toHaveTextContent('No weekly goal this week — parked in Backlog');
   });
 
-  it('D-10 / R-auth-6: an empty tree gets an empty state, never a hardcoded fixture goal', async () => {
-    server.use(
-      http.get('/api/goals', () => HttpResponse.json({ week: F.week(), goals: [], serverNow: F.NOW })),
-      http.get('/api/backlog', () => HttpResponse.json({ items: [], serverNow: F.NOW })),
-    );
-    const { user } = renderApp(<AppShell />);
+  it('S-backlog-2-1 / S-backlog-26-4: no goal picker in any backlog flow offers a Life or a Weekly goal', async () => {
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await user.click(await screen.findByRole('button', { name: 'Add' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
 
-    expect(await screen.findByText(/Nothing to file this under yet/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(await within(sheet).findByRole('button', { name: 'Lift three times a week' })).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: 'Be strong at 60' })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: 'Three easy runs and one long run' })).not.toBeInTheDocument();
+  });
+
+  it('R-auth-6 / D-10: a brand-new account has nothing to file under, and no fallback goal is invented', async () => {
+    server.use(http.get('/api/goals', ({ request }) => HttpResponse.json(F.lens({ lens: (new URL(request.url).searchParams.get('lens') ?? 'Weekly') as 'Life', items: [] }))));
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    await user.click(await screen.findByRole('button', { name: 'Add' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
+    expect(within(sheet).getByText('Nothing to file this under yet — a backlog item needs a Yearly, Quarterly or Monthly goal.')).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+});
+
+describe('R-backlog-28: `Pull from the backlog`', () => {
+  it('is offered on a weekly-goal card, and pulls from the goal’s ancestors', async () => {
+    server.use(
+      http.get('/api/goals/:id', ({ params }) =>
+        HttpResponse.json(F.detailOf(String(params.id), { pullList: [F.backlogItem({ id: F.ulid(43), goalId: F.M, title: 'Find a squat rack free at 7am' })] })),
+      ),
+    );
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    await user.click(await screen.findByRole('button', { name: 'Pull from backlog' }));
+
+    const sheet = await screen.findByRole('dialog', { name: 'Pull from the backlog' });
+    await user.click(await within(sheet).findByRole('button', { name: /Find a squat rack free at 7am/ }));
+
+    // R-backlog-8, moved out of the dead plan screen unchanged: it converts, never duplicates.
+    const create = await screen.findByRole('dialog', { name: 'New task' });
+    expect(within(create).getByLabelText('What needs doing?')).toHaveValue('Find a squat rack free at 7am');
+  });
+
+  it('§7.2: with nothing eligible it says so, in the words that name what would land there', async () => {
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    await user.click(await screen.findByRole('button', { name: 'Pull from backlog' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Pull from the backlog' });
+    expect(await within(sheet).findByText('Nothing in the backlog for this line yet.')).toBeInTheDocument();
+    expect(within(sheet).getByText('Items you defer from a week land here.')).toBeInTheDocument();
   });
 });

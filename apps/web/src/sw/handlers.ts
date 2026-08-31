@@ -24,8 +24,12 @@ export const READ_MODEL_CACHE = 'goal-cascade-read-models';
  * Keep this in step with the endpoint constants in `@goal-cascade/shared` — a read model that is missing here
  * is merely uncached (safe), but a *write* path that leaks in would be served stale (not safe). Hence the
  * allowlist-of-prefixes shape rather than "anything under /api that is a GET".
+ *
+ * ⚠ **A2 (R-rm-3)** — `/api/plan` is **deleted**, not left in "just in case": both plan endpoints are gone
+ * and the route census must show no `/plan` path anywhere. `/api/goals` still covers the lens read and
+ * `/goals/zoom`, which are ordinary GETs under the same prefix.
  */
-export const READ_MODEL_PREFIXES: readonly string[] = ['/api/goals', '/api/tasks', '/api/plan', '/api/backlog', '/api/learnings'];
+export const READ_MODEL_PREFIXES: readonly string[] = ['/api/goals', '/api/tasks', '/api/backlog', '/api/learnings'];
 
 /**
  * `/api/me` is deliberately absent, and this is the single most important line in the file.

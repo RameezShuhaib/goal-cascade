@@ -1,24 +1,35 @@
+import { useLocation, useNavigate } from 'react-router';
 import { useUI } from '../context/UIContext';
 import { useSkin } from '../skin';
+import { LEARNINGS_PATH, LENS_SEGMENT, lensPath } from '../routes';
 
 /**
- * R-nav-1 — four fixed tabs: `Tasks · Goals · + · Learnings`. The `+` is a circular button that
- * opens the Add-to-Backlog drawer, not a page.
+ * R-nav-23 — **three** fixed tabs: `Goals · + · Learnings`. The `+` is a circular button that opens the
+ * Add-to-Backlog drawer, not a page.
  *
- * R-nav-2 — Goals stays lit on a goal detail screen, and the Backlog page has no tab at all: it is reached
- * from the drawer's `View Backlog →` or a Life goal's `Open Backlog →`.
+ * `Tasks` is gone: tasks live in the Weekly lens (R-lens-12), which is behind `Goals`. `Ideas` is gone
+ * with the entity (R-rm-1). The lens switcher is **not** a tab and must never become one (R-lens-13) —
+ * five lenses in a five-item bar leaves no room for capture or Learnings, and the tab bar is a top-level
+ * destination switcher, not a zoom.
+ *
+ * `Goals` stays lit on a goal page and on a task page (R-nav-2, extended), and returns you to the lens you
+ * were last in at the period containing today (R-nav-28) — so daily use never opens the Zoom sheet.
+ * Backlog still has no tab: it is reached from the drawer's `View Backlog →` or a goal's page.
  */
 export function TabBar() {
   const ui = useUI();
   const S = useSkin();
-  const on = ui.screen;
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+
+  const first = pathname.split('/')[1] ?? '';
+  const onLearnings = pathname.startsWith(LEARNINGS_PATH);
+  const onGoals = !onLearnings && (first === 'goal' || first === 'task' || Object.values(LENS_SEGMENT).includes(first) || first === '');
+
   return (
     <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20, background: S.T.card, borderTop: `1px solid ${S.T.line}` }}>
       <div style={{ maxWidth: 640, margin: '0 auto', display: 'flex' }}>
-        <button type="button" style={S.navBtn(on === 'tasks')} onClick={() => ui.setScreen('tasks')}>
-          Tasks
-        </button>
-        <button type="button" style={S.navBtn(on === 'goals' || on === 'goal')} onClick={() => ui.setScreen('goals')}>
+        <button type="button" style={S.navBtn(onGoals)} onClick={() => navigate(lensPath(ui.lastLens))}>
           Goals
         </button>
         <button
@@ -44,7 +55,7 @@ export function TabBar() {
             +
           </span>
         </button>
-        <button type="button" style={S.navBtn(on === 'learnings')} onClick={() => ui.setScreen('learnings')}>
+        <button type="button" style={S.navBtn(onLearnings)} onClick={() => navigate(LEARNINGS_PATH)}>
           Learnings
         </button>
       </div>

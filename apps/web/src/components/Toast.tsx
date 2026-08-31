@@ -45,6 +45,8 @@ export function UIToast() {
         }}
       >
         <span>{toast.message}</span>
+        {/* Announced, not shown — see `ToastOptions.detail` (R-task-49). */}
+        {toast.detail && <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>{toast.detail}</span>}
         {toast.action && (
           <button
             type="button"

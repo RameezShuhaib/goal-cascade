@@ -7,24 +7,27 @@ import {
   BootstrapResponse,
   ConvertBacklogItemResponse,
   CreateApiTokenResponse,
+  CreateTaskResponse,
   DeleteGoalResponse,
   DeleteResponse,
   ENDPOINTS,
   GoalDetailResponse,
   GoalResponse,
+  GoalView,
   GoalsResponse,
   HEADERS,
   HealthResponse,
+  Iso,
   LearningResponse,
   LearningsResponse,
   MeResponse,
   MoveTaskToBacklogResponse,
-  PlanResponse,
   PreferencesResponse,
   RevokeApiTokenResponse,
   TaskDetailResponse,
   TaskResponse,
   TasksResponse,
+  ZoomResponse,
   type AddTaskLinkRequest,
   type AttachLearningRequest,
   type CancelTaskRequest,
@@ -34,6 +37,7 @@ import {
   type CreateGoalRequest,
   type CreateLearningRequest,
   type CreateTaskRequest,
+  type Horizon,
   type MoveBacklogItemRequest,
   type MoveGoalRequest,
   type MoveTaskToBacklogRequest,
@@ -43,11 +47,19 @@ import {
   type PatchPreferencesRequest,
   type PatchTaskRequest,
   type ReplanGoalRequest,
-  type SavePlanRequest,
+  type RepeatWeekRequest,
   type UncheckTaskRequest,
 } from '@goal-cascade/shared';
 import { recordServerNow } from '../lib/serverClock';
 import { ApiError, isKnownErrorCode } from './errors';
+
+/**
+ * `POST /goals/repeat-week` (R-goal-46). The API answers `{ created, serverNow }` and ships no response
+ * schema of its own, so this one is **composed** from the shared `GoalView` rather than restating it —
+ * a field renamed in `packages/shared` is a type error here, not a silent drift.
+ */
+const RepeatWeekResponse = z.object({ created: z.array(GoalView), serverNow: Iso });
+export type RepeatWeekResponse = z.infer<typeof RepeatWeekResponse>;
 
 /**
  * `POST /me/api-token`, parsed one notch looser than `CreateApiTokenResponse` — and ONLY here.
@@ -191,11 +203,28 @@ export class HttpApiClient {
 
   // ---- goals --------------------------------------------------------------
 
-  goals(week?: number) {
-    return this.request('GET', ENDPOINTS.goals, GoalsResponse, { query: { week } });
+  /**
+   * ⚠ **A2 (R-lens-16)** — `GET /goals` is the **scoped lens read**, not the whole tree flat. One horizon,
+   * one period, paginated. `period` is omitted for the Life lens (which has none) and may be omitted
+   * anywhere: the server then answers with the CURRENT period rather than erroring (R-lens-14), which is
+   * how the client avoids ever deriving one (R-goal-34).
+   */
+  lens(q: { lens: Horizon; period?: string; cursor?: string; limit?: number }) {
+    return this.request('GET', ENDPOINTS.goals, GoalsResponse, {
+      query: { lens: q.lens, period: q.period, cursor: q.cursor, limit: q.limit },
+    });
   }
-  goal(id: string, week?: number) {
-    return this.request('GET', ENDPOINTS.goal(id), GoalDetailResponse, { query: { week } });
+  /** R-lens-22 — the Zoom sheet's five rows in ONE grouped read. Never five lens reads. */
+  zoom(anchor?: string) {
+    return this.request('GET', ENDPOINTS.goalsZoom, ZoomResponse, { query: { anchor } });
+  }
+  /** R-goal-46 — `Repeat last week`, for one Life line, into one week. Ordinary goals, no recurrence. */
+  repeatWeek(body: RepeatWeekRequest, key: string) {
+    return this.request('POST', ENDPOINTS.goalsRepeatWeek, RepeatWeekResponse, { body, idempotencyKey: key });
+  }
+  /** ⚠ **A2** — a goal's detail page is not week-scoped; only the Weekly lens is. No `?week=`. */
+  goal(id: string) {
+    return this.request('GET', ENDPOINTS.goal(id), GoalDetailResponse, {});
   }
   createGoal(body: CreateGoalRequest, key: string) {
     return this.request('POST', ENDPOINTS.goals, GoalResponse, { body, idempotencyKey: key });
@@ -236,26 +265,23 @@ export class HttpApiClient {
     return this.request('POST', ENDPOINTS.goalReplan(id), GoalResponse, { body, idempotencyKey: key });
   }
 
-  // ---- the weekly plan ----------------------------------------------------
-
-  plan(week?: number) {
-    return this.request('GET', ENDPOINTS.plan, PlanResponse, { query: { week } });
-  }
-  /** R-plan-7 — the WHOLE week, saved atomically. `PUT`, because it is a replace and not an append. */
-  savePlan(body: SavePlanRequest, key: string) {
-    return this.request('PUT', ENDPOINTS.plan, PlanResponse, { body, idempotencyKey: key });
-  }
-
   // ---- tasks --------------------------------------------------------------
+  //
+  // ⚠ **A2 (R-rm-5)** — the Tasks SCREEN is gone; this read is not. It survives as one of the Weekly
+  // lens's inputs, minus the plan (R-rm-2) and minus the goal filter (R-rm-4).
 
-  tasks(q: { week?: number; goalId?: string } = {}) {
-    return this.request('GET', ENDPOINTS.tasks, TasksResponse, { query: { week: q.week, goalId: q.goalId } });
+  tasks(q: { week?: number; limit?: number } = {}) {
+    return this.request('GET', ENDPOINTS.tasks, TasksResponse, { query: { week: q.week, limit: q.limit } });
   }
   task(id: string, week?: number) {
     return this.request('GET', ENDPOINTS.task(id), TaskDetailResponse, { query: { week } });
   }
+  /**
+   * ⚠ **A2 (R-task-48)** — the response carries the Weekly goal that was created for this task, when one
+   * was, so the client can say so: nothing may be created invisibly (R-task-49).
+   */
   createTask(body: CreateTaskRequest, key: string) {
-    return this.request('POST', ENDPOINTS.tasks, TaskResponse, { body, idempotencyKey: key });
+    return this.request('POST', ENDPOINTS.tasks, CreateTaskResponse, { body, idempotencyKey: key });
   }
   patchTask(id: string, body: PatchTaskRequest) {
     return this.request('PATCH', ENDPOINTS.task(id), TaskResponse, { body });
@@ -283,8 +309,8 @@ export class HttpApiClient {
 
   // ---- backlog ------------------------------------------------------------
 
-  backlog(q: { goalId?: string } = {}) {
-    return this.request('GET', ENDPOINTS.backlog, BacklogResponse, { query: { goalId: q.goalId } });
+  backlog(q: { goalId?: string; limit?: number } = {}) {
+    return this.request('GET', ENDPOINTS.backlog, BacklogResponse, { query: { goalId: q.goalId, limit: q.limit } });
   }
   createBacklogItem(body: CreateBacklogItemRequest, key: string) {
     return this.request('POST', ENDPOINTS.backlog, BacklogItemResponse, { body, idempotencyKey: key });

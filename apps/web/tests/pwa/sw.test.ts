@@ -31,9 +31,18 @@ const strategyReturning = (response: Response): ReadModelStrategy => ({ handle: 
 
 describe('isReadModelRequest', () => {
   it('matches GET collection and item reads under the allowed prefixes', () => {
-    for (const path of ['/api/goals', '/api/goals/g1', '/api/tasks', '/api/tasks/t1', '/api/plan', '/api/backlog', '/api/learnings']) {
+    for (const path of ['/api/goals', '/api/goals/g1', '/api/goals/zoom', '/api/tasks', '/api/tasks/t1', '/api/backlog', '/api/learnings']) {
       expect(isReadModelRequest(url(path), 'GET'), path).toBe(true);
     }
+    /**
+     * ⚠ **RETIRED — `/api/plan` was in this list.**
+     *
+     * **Verdict: R-rm-3.** `GET /api/plan` and `PUT /api/plan` are deleted, `ENDPOINTS.plan` with them, and
+     * the route census must show **no `/plan` path anywhere**. The assertion is INVERTED rather than
+     * removed: an offline cache that still had a prefix for a route that does not exist is one refactor
+     * away from being a route that does.
+     */
+    expect(isReadModelRequest(url('/api/plan'), 'GET'), '/api/plan is deleted (R-rm-3)').toBe(false);
     // A query string is part of the request, not the path — the week switcher must still be cacheable.
     expect(isReadModelRequest(url('/api/tasks?week=-2'), 'GET')).toBe(true);
   });

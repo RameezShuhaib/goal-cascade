@@ -9,7 +9,7 @@ import { AuthFrame, ErrorText, Lede, PrimaryButton, TextButton, TextField, Title
  * not by a Better Auth redirect — so the link sitting in the outbox IS this page, and there is no
  * intermediate `/api/auth/reset-password/:token` hop that could consume the token before it gets here.
  *
- * `useUrlSync` strips `?reset=1&token=…` from the address bar as soon as it has been read, so a reload
+ * `App.tsx` strips `?reset=1&token=…` from the address bar as soon as it has been read, so a reload
  * does not re-enter this flow with a token that has already been spent.
  *
  * A successful reset revokes every existing session (`revokeSessionsOnPasswordReset`), which is the point:

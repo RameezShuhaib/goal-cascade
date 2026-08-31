@@ -8,9 +8,13 @@ import { Sheet } from './Sheet';
 import VerifyEmailScreen from './auth/VerifyEmailScreen';
 
 /**
- * R-nav-11 — the consistent top-right cluster on every page: the theme toggle, the account button, and at
- * most one primary action (`+ New goal`, `+ Add`, `Edit plan`; none on Learnings, Plan and Goal
- * detail).
+ * R-nav-25 — the consistent top-right cluster on every page: the theme toggle, the account button, and at
+ * most one primary action.
+ *
+ * ⚠ **A2** — the mapping changed with the screens: a lens's action names its own horizon (`+ Life goal` …
+ * `+ Weekly goal`) and is **absent** on a past period (R-goal-36); goal detail carries `+ Weekly goal` on a
+ * Monthly goal and `+ Task` on a Weekly one; and the **task page** carries the cluster, which goal detail
+ * used to omit. `Edit plan` is gone with the plan screen (R-rm-3).
  *
  * The toggle is real now (R-nav-12 / D-25): `useThemeChoice` writes the choice to `/me/preferences`, so it
  * follows the person across devices instead of vanishing on reload, and repaints token sets rather than
@@ -52,6 +56,34 @@ export function TopActions({ children }: { children?: ReactNode }) {
   );
 }
 
+/**
+ * R-lens-25 — the keyboard accelerators, documented where the rule says they must be.
+ *
+ * They are a **convenience and never a route**: every one of them has a visible control one `Tab` away
+ * (the chevrons for the period, the lens title for the altitude), so the accessibility floor never depends
+ * on a shortcut. This list exists because an undocumented accelerator is one nobody uses, and because if
+ * they are ever dropped nothing regresses.
+ */
+function Shortcuts() {
+  const S = useSkin();
+  const rows: [string, string][] = [
+    ['← / →', 'Earlier / later period'],
+    ['Shift + ↑ / ↓', 'Zoom out / in a lens'],
+    ['Escape', 'Close a sheet, or leave the task page'],
+  ];
+  return (
+    <div style={{ border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px' }}>
+      <div style={{ ...S.sectionLabel, marginBottom: 6 }}>Keyboard</div>
+      {rows.map(([keys, what]) => (
+        <div key={keys} style={{ display: 'flex', gap: 10, fontSize: 12.5, color: S.T.mut, padding: '2px 0' }}>
+          <span style={{ minWidth: 96, fontWeight: 700, color: S.T.ink }}>{keys}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>{what}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AccountSheet({ onClose, onVerify }: { onClose: () => void; onVerify: () => void }) {
   const S = useSkin();
   const { signOut, signingOut } = useAuthActions();
@@ -72,6 +104,7 @@ function AccountSheet({ onClose, onVerify }: { onClose: () => void; onVerify: ()
          * control below the exit is a control people find by accident on their way to leaving.
          */}
         <AgentAccess />
+        <Shortcuts />
         <button type="button" style={{ ...S.btn(false, true), width: '100%' }} disabled={signingOut} onClick={() => void signOut()}>
           {signingOut ? 'Signing out…' : 'Sign out'}
         </button>

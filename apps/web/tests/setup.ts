@@ -2,7 +2,6 @@ import '@testing-library/jest-dom/vitest';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { resetRequests, server } from './msw/handlers';
-import { resetDeepLinks } from '../src/pwa/deepLink';
 import { resetServerClock } from '../src/lib/serverClock';
 
 // jsdom has no `matchMedia`; the theme toggle and `detectPlatform` only need it to answer "no".
@@ -55,8 +54,6 @@ afterEach(() => {
   server.resetHandlers();
   resetRequests();
   resetServerClock();
-  // `pwa/deepLink.ts` holds a pending link in a module-level variable as well as in sessionStorage.
-  resetDeepLinks();
   try {
     localStorage.clear();
     sessionStorage.clear();

@@ -15,14 +15,20 @@ export const keys = {
   me: ['me'] as const,
   preferences: ['me', 'preferences'] as const,
   bootstrap: (week: number) => ['bootstrap', week] as const,
+  /**
+   * ⚠ **A2 (R-lens-16)** — a lens read is keyed by its HORIZON and its PERIOD, not by a week offset,
+   * because that is what the read is scoped to. `null` is "whatever the server says is current": a
+   * distinct address on purpose, since the screen rewrites the URL to the canonical key the moment the
+   * answer lands and the two must not collide in the cache.
+   */
   goalsAll: ['goals'] as const,
-  goals: (week: number) => ['goals', week] as const,
-  goal: (id: string, week: number) => ['goal', id, week] as const,
+  lens: (lens: string, period: string | null) => ['goals', lens, period] as const,
+  zoomAll: ['zoom'] as const,
+  zoom: (anchor: string | null) => ['zoom', anchor] as const,
+  goal: (id: string) => ['goal', id] as const,
   goalAll: (id: string) => ['goal', id] as const,
-  planAll: ['plan'] as const,
-  plan: (week: number) => ['plan', week] as const,
   tasksAll: ['tasks'] as const,
-  tasks: (week: number, goalId?: string) => ['tasks', week, goalId ?? null] as const,
+  tasks: (week: number) => ['tasks', week] as const,
   task: (id: string) => ['task', id] as const,
   backlogAll: ['backlog'] as const,
   backlog: (goalId?: string) => ['backlog', goalId ?? null] as const,
@@ -45,7 +51,7 @@ export const keys = {
 export const OWNER_KEYS: readonly (readonly unknown[])[] = [
   keys.goalsAll,
   ['goal'],
-  keys.planAll,
+  keys.zoomAll,
   keys.tasksAll,
   ['task'],
   keys.backlogAll,
@@ -117,7 +123,8 @@ export function identityPersister(store: Storage): Persister {
  * Retry only on things that might heal on their own: a dropped network and a 5xx. NEVER a 4xx.
  *
  * A 4xx from this API is a decision, not a hiccup (Q-10: every refusal is a typed code). Retrying a
- * `409 NOT_A_LEAF` cannot make the goal a leaf; it just delays the message by two round trips.
+ * `409 NOT_A_WEEKLY_GOAL` cannot make a Monthly goal a Weekly one; it just delays the message by two
+ * round trips.
  */
 export function shouldRetry(failureCount: number, error: unknown): boolean {
   if (failureCount >= 2) return false;
