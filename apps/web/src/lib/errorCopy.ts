@@ -48,7 +48,7 @@ export function presentError(err: ApiError): ErrorPresentation {
     case 'NOT_A_LEAF':
       return e('Only a sub-goal with no children of its own can hold work.', { refresh: 'goals' });
     case 'NOT_A_LIFE_GOAL':
-      return e('Ideas and learnings tag a Life goal, or nothing at all.', { refresh: 'goals' });
+      return e('Learnings tag a Life goal, or nothing at all.', { refresh: 'goals' });
     case 'LIFE_GOAL_NO_BACKLOG':
       return e('Backlog items live on a Yearly, Quarterly or Monthly goal — not a Life goal.', { refresh: 'goals' });
 

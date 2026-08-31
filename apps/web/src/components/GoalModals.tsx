@@ -418,8 +418,8 @@ const removalList = (c: DeleteCounts): string => {
  * any reason the sheet says only what it can stand behind, and the first tap is refused with the counts
  * exactly as before. That path is why `GOAL_HAS_CHILDREN` stays `quiet` in `useCommand`.
  *
- * There is no soft delete and no trash. Ideas and Learnings tagged into the subtree are un-tagged to
- * Unsorted rather than deleted with it (S-idea-7-1).
+ * There is no soft delete and no trash. Learnings tagged into the subtree are un-tagged to Unsorted
+ * rather than deleted with it (Q-5).
  */
 export function DeleteGoalSheet({ goalId }: { goalId: string }) {
   const S = useSkin();
@@ -475,7 +475,7 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
         {checking
           ? 'Checking what this would remove…'
           : counts && destroys
-            ? `This removes ${removalList(counts)}. Ideas and learnings tagged here move to Unsorted. There is no undo.`
+            ? `This removes ${removalList(counts)}. Learnings tagged here move to Unsorted. There is no undo.`
             : counts
               ? 'This goal holds nothing else. There is no trash and no undo.'
               : 'There is no trash and no undo.'}

@@ -31,7 +31,7 @@ const strategyReturning = (response: Response): ReadModelStrategy => ({ handle: 
 
 describe('isReadModelRequest', () => {
   it('matches GET collection and item reads under the allowed prefixes', () => {
-    for (const path of ['/api/goals', '/api/goals/g1', '/api/tasks', '/api/tasks/t1', '/api/plan', '/api/backlog', '/api/ideas', '/api/learnings']) {
+    for (const path of ['/api/goals', '/api/goals/g1', '/api/tasks', '/api/tasks/t1', '/api/plan', '/api/backlog', '/api/learnings']) {
       expect(isReadModelRequest(url(path), 'GET'), path).toBe(true);
     }
     // A query string is part of the request, not the path — the week switcher must still be cacheable.

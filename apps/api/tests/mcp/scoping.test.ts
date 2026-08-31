@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { DB } from '../../src/application/services/guarded-batch';
 import type { Db } from '../../src/infrastructure/persistence/db';
-import { backlogItems, goals, ideas, learnings, tasks, user, weeklyFocus } from '../../src/infrastructure/persistence/schema';
+import { backlogItems, goals, learnings, tasks, user, weeklyFocus } from '../../src/infrastructure/persistence/schema';
 import { createTestApp, ids, signedInOwner } from '../helpers/app';
 import { callTool, mintToken, ok } from './helpers';
 
@@ -33,7 +33,6 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     monthlyGoal: ids.ulid(),
     task: ids.ulid(),
     item: ids.ulid(),
-    idea: ids.ulid(),
     learning: ids.ulid(),
   };
 
@@ -62,7 +61,6 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     await db.insert(weeklyFocus).values({ id: ids.ulid(), userId: B.userId, goalId: B.monthlyGoal, weekStart: WEEK, sentence: "B's private focus", createdAt: NOW, updatedAt: NOW });
     await db.insert(tasks).values({ id: B.task, userId: B.userId, goalId: B.monthlyGoal, title: "B's secret task", cond: '', description: '', status: 'open', originWeekStart: WEEK, doneWeekStart: null, doneAt: null, exitReason: null, exitedAt: null, movedToBacklogItemId: null, createdAt: NOW, updatedAt: NOW, version: 1 });
     await db.insert(backlogItems).values({ id: B.item, userId: B.userId, goalId: B.monthlyGoal, title: "B's parked item", description: '', capturedAt: NOW, fromWeekStart: null, status: 'open', convertedToTaskId: null, convertedAt: null, createdAt: NOW, updatedAt: NOW, version: 1 });
-    await db.insert(ideas).values({ id: B.idea, userId: B.userId, goalId: B.lifeGoal, text: "B's private idea", capturedAt: NOW, createdAt: NOW });
     await db.insert(learnings).values({ id: B.learning, userId: B.userId, goalId: B.lifeGoal, text: "B's private learning", applied: false, capturedAt: NOW, createdAt: NOW, updatedAt: NOW });
   });
 
@@ -107,11 +105,6 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     ['move_backlog_item', { item_id: B.item, goal_id: B.monthlyGoal }],
     ['delete_backlog_item', { item_id: B.item }],
     ['convert_backlog_item_to_task', { item_id: B.item }],
-    // ideas
-    ['capture_idea', { text: 'tagged to B', goal_id: B.lifeGoal }],
-    ['attach_idea_to_goal', { idea_id: B.idea, goal_id: B.monthlyGoal }],
-    ['convert_idea_to_task', { idea_id: B.idea, goal_id: B.monthlyGoal }],
-    ['delete_idea', { idea_id: B.idea }],
     // learnings
     ['capture_learning', { text: 'tagged to B', goal_id: B.lifeGoal }],
     ['update_learning', { learning_id: B.learning, text: 'rewritten by A' }],
@@ -139,14 +132,13 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
   });
 
   it("B's data never appears in any list, tree, resource or search A can reach", async () => {
-    const secrets = ["B's life goal", "B's month", "B's secret task", "B's parked item", "B's private idea", "B's private learning", "B's private focus", B.userId];
+    const secrets = ["B's life goal", "B's month", "B's secret task", "B's parked item", "B's private learning", "B's private focus", B.userId];
 
     const payloads = [
       await ok(t, tokenA, 'get_overview'),
       await ok(t, tokenA, 'list_goals'),
       await ok(t, tokenA, 'list_tasks'),
       await ok(t, tokenA, 'list_backlog'),
-      await ok(t, tokenA, 'list_ideas'),
       await ok(t, tokenA, 'list_learnings'),
       await ok(t, tokenA, 'get_weekly_plan'),
       await ok(t, tokenA, 'get_account'),
@@ -165,11 +157,10 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
 
   it("B's rows are untouched afterwards — nothing above half-applied a write", async () => {
     const db = t.container().resolve<Db>(DB);
-    const [g, tk, it_, id_, ln, wf] = await Promise.all([
+    const [g, tk, it_, ln, wf] = await Promise.all([
       db.select().from(goals),
       db.select().from(tasks),
       db.select().from(backlogItems),
-      db.select().from(ideas),
       db.select().from(learnings),
       db.select().from(weeklyFocus),
     ]);
@@ -181,7 +172,6 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     expect(mine(tk)[0]!.title).toBe("B's secret task");
     expect(mine(it_)).toHaveLength(1);
     expect(mine(it_)[0]!.status, "B's backlog item was converted by A").toBe('open');
-    expect(mine(id_)).toHaveLength(1);
     expect(mine(ln)).toHaveLength(1);
     expect(mine(ln)[0]!.text).toBe("B's private learning");
     expect(mine(wf), "B's weekly focus was rewritten by A").toHaveLength(1);

@@ -54,7 +54,7 @@ export const ERROR_STATUS = {
    * Raised when a plan entry or a task points at a Life goal or at a goal that has children (S-plan-8-1).
    */
   NOT_A_LEAF: 409,
-  /** R-idea-2 / R-learning-2 — an Idea or Learning tag must be a Life goal or null (S-idea-2-1). */
+  /** R-learning-2 — a Learning tag must be a Life goal or null. */
   NOT_A_LIFE_GOAL: 409,
   /**
    * R-backlog-8 — "Add to this week" on an item whose branch has no active weekly focus. The UI answers

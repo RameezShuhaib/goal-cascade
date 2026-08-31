@@ -24,7 +24,7 @@ The rules of the final design, by entity. This is the contract the UI already im
 
 ## Task
 
-- Lives under an active leaf's weekly focus. Created from: planning/+ Task, a Backlog pull, an Idea ("Task this week"), or the + drawer with "Also add to the current week".
+- Lives under an active leaf's weekly focus. Created from: planning/+ Task, a Backlog pull, or the + drawer with "Also add to the current week".
 - Fields: `title` (required), `cond` done-condition (**optional**), optional `desc` description and external `links`.
 - **Week model**: `originWeek` (creation week offset), `doneWeek` (completion week or null). Weeks start **Monday**. The current week and the next 4 are planable, so a task can be created in a week that has not started yet; it is invisible until that week arrives, and it never carries a late chip before then. A task can only be **completed** in a week that has already begun.
   - An **open** task is visible in every week ≥ its origin — it auto-carries into the current week with no prompt or wizard.
@@ -38,22 +38,16 @@ The rules of the final design, by entity. This is the contract the UI already im
   3. **Cancel** — task dropped.
   - Move and Cancel use a lightweight confirm with an **optional** reason. Fast and guilt-free; nothing mandatory.
 - **Unchecking** a completed task (any week) logs "Unchecked" and offers a skippable inline "Update the done-condition?" edit; the task then carries into the current week with its original origin.
-- **Activity**: a read-only, auto-logged timeline per task, newest first — Created (with source: planning / Backlog pull / Idea), Carried to week of …, Renamed (old → new, truncated), Done-condition edited (old → new, truncated), Description updated, Link added, Completed, Unchecked, Moved to Backlog / Canceled (with reason if given). Never requires user input.
+- **Activity**: a read-only, auto-logged timeline per task, newest first — Created (with source: planning / Backlog pull / + drawer), Carried to week of …, Renamed (old → new, truncated), Done-condition edited (old → new, truncated), Description updated, Link added, Completed, Unchecked, Moved to Backlog / Canceled (with reason if given). Never requires user input.
 
 ## Backlog item
 
 - Deferred future work attached to any **yearly/quarterly/monthly** goal (never Life, never a week).
 - Fields: `title` + captured date; optional description and links. **No** checkbox, done-condition, due date, or status. Rendered clearly differently from tasks.
-- Created from: the global **+** drawer (goal defaults to last used), a goal detail "+ Add", a task moved out of a week, or an Idea attached to a goal.
+- Created from: the global **+** drawer (goal defaults to last used), a goal detail "+ Add", or a task moved out of a week.
 - **The only way backlog becomes work**: "Add to this week" → opens the standard task-create modal pre-filled; on save the item is **converted** (removed), never duplicated. If the item's branch has no active weekly focus: "This branch isn't active this week" → [Set a weekly focus] / [Cancel].
 - Other actions: Move to another goal (any non-life goal), Delete.
 - Grouped by life goal › sub-goal (branch path). Within a goal the order is yours: newest first until you rearrange it, then whatever order you put it in. Reordering works by dragging and by keyboard alike. A life goal's detail screen shows a **read-only aggregate** of its descendants' items, each labeled with its goal.
-
-## Idea (parking lot)
-
-- Two-second capture of a distracting thought; optional **life-goal** tag, default "No goal" (Unsorted).
-- List is read-only apart from tap actions: **Task this week** (task-create pre-filled), **Attach to a goal** (→ that goal's backlog, with confirmation toast), **Delete**.
-- Grouped by life goal / Unsorted, newest first.
 
 ## Learning
 
@@ -63,7 +57,7 @@ The rules of the final design, by entity. This is the contract the UI already im
 
 ## Navigation & system
 
-- Tabs: Tasks · Goals · **+** (opens the Add-to-Backlog drawer; "View Backlog →" inside reaches the full page) · Ideas · Learnings.
+- Tabs: Tasks · Goals · **+** (opens the Add-to-Backlog drawer; "View Backlog →" inside reaches the full page) · Learnings.
 - Tasks header: week switcher (chevrons + week picker; current week default; past weeks labeled "still editable", future weeks labeled "planned"), goal filter pills with open-task counts, Edit plan top-right (current week or any of the next 4). Today's counts never include future work.
 - Every page: consistent top-right cluster — theme toggle (light/dark) + one primary action.
 - Removed entirely: weekly review wizard, push flow with mandatory reasons, audit-trail views, week reports, carry-count flags.

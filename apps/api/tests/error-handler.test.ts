@@ -33,7 +33,7 @@ describe('the error envelope — one shape for every failure', () => {
   });
 
   it('R-auth-4 — no session → 401 UNAUTHENTICATED, for READS as well as writes', async () => {
-    for (const path of ['/api/me', '/api/goals', '/api/tasks', '/api/bootstrap', '/api/backlog', '/api/ideas', '/api/learnings']) {
+    for (const path of ['/api/me', '/api/goals', '/api/tasks', '/api/bootstrap', '/api/backlog', '/api/learnings']) {
       const res = await t.fetch(path);
       expect(res.status, path).toBe(401);
       expect(await codeOf(res), path).toBe('UNAUTHENTICATED');

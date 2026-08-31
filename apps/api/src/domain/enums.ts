@@ -9,7 +9,7 @@ export const PULSES = ['On track', 'At risk', 'Rethink'] as const;
 export const THEMES = ['light', 'dark', 'system'] as const;
 /** R-task-32 / D-15 — exited tasks keep their row so the activity log survives the exit. */
 export const TASK_STATUSES = ['open', 'done', 'canceled', 'movedToBacklog'] as const;
-export const TASK_SOURCES = ['planning', 'backlog', 'idea', 'drawer'] as const;
+export const TASK_SOURCES = ['planning', 'backlog', 'drawer'] as const;
 /** R-task-30 — the complete set; the timeline can contain these and nothing else. */
 export const TASK_EVENT_KINDS = [
   'created',

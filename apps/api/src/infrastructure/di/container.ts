@@ -10,7 +10,6 @@ import {
   IEmailSender,
   IGoalRepo,
   IIdGenerator,
-  IIdeaRepo,
   IIdempotencyRepo,
   ILearningRepo,
   IPreferencesRepo,
@@ -27,7 +26,6 @@ import {
   GoalService,
   GoalTreeGuard,
   GuardedBatch,
-  IdeaService,
   LearningService,
   MeService,
   PlanService,
@@ -45,7 +43,6 @@ import {
   D1BacklogRepo,
   D1EmailOutboxRepo,
   D1GoalRepo,
-  D1IdeaRepo,
   D1IdempotencyRepo,
   D1LearningRepo,
   D1PreferencesRepo,
@@ -88,7 +85,6 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
   c.registerSingleton(ITaskEventRepo, D1TaskEventRepo);
   c.registerSingleton(IBacklogRepo, D1BacklogRepo);
   c.registerSingleton(IBacklogLinkRepo, D1BacklogLinkRepo);
-  c.registerSingleton(IIdeaRepo, D1IdeaRepo);
   c.registerSingleton(ILearningRepo, D1LearningRepo);
   c.registerSingleton(IIdempotencyRepo, D1IdempotencyRepo);
   c.registerSingleton(IEmailOutboxRepo, D1EmailOutboxRepo);
@@ -108,7 +104,6 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
   c.registerSingleton(PlanService);
   c.registerSingleton(TaskService);
   c.registerSingleton(BacklogService);
-  c.registerSingleton(IdeaService);
   c.registerSingleton(LearningService);
   c.registerSingleton(BootstrapService);
   c.registerSingleton(ApiTokenService);

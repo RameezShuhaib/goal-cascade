@@ -44,11 +44,11 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'Overview of the whole account',
       description:
-        'Start here. Returns the owner\'s entire goal tree as an indented outline with ids and paths, the current week, which branches are active this week and their focus sentences, plus counts of open tasks, backlog items, ideas and learnings. One call is enough to answer "what is this person working on".',
+        'Start here. Returns the owner\'s entire goal tree as an indented outline with ids and paths, the current week, which branches are active this week and their focus sentences, plus counts of open tasks, backlog items and learnings. One call is enough to answer "what is this person working on".',
       inputSchema: z
         .object({
           include: z
-            .array(z.enum(['tree', 'week', 'tasks', 'backlog', 'ideas', 'learnings']))
+            .array(z.enum(['tree', 'week', 'tasks', 'backlog', 'learnings']))
             .optional()
             .describe('Trim the payload when you already have context. Omit for everything.'),
           week_offset: WeekOffsetArg,
@@ -69,14 +69,12 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
           active_leaves: activeLeaves.map((g) => ({ id: g.id, path: paths.get(g.id), focus: g.focus })),
           ...(want('tasks') ? { tasks: b.tasks } : {}),
           ...(want('backlog') ? { backlog: b.backlog } : {}),
-          ...(want('ideas') ? { ideas: b.ideas } : {}),
           ...(want('learnings') ? { learnings: b.learnings } : {}),
           counts: {
             goals: b.goals.length,
             open_tasks: b.tasks.filter((t) => t.status === 'open').length,
             carrying_tasks: b.tasks.filter((t) => t.status === 'open' && t.carryWeeks >= 1).length,
             backlog: b.backlog.length,
-            ideas: b.ideas.length,
             learnings: b.learnings.length,
           },
           server_now: b.serverNow,
@@ -99,7 +97,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
             .enum(['any', 'leaves', 'active_leaves', 'can_hold_backlog', 'life'])
             .default('any')
             .describe(
-              'active_leaves = valid task targets; can_hold_backlog = non-Life goals; life = valid Idea/Learning tags.',
+              'active_leaves = valid task targets; can_hold_backlog = non-Life goals; life = valid Learning tags.',
             ),
           limit: z.int().min(1).max(20).default(5),
           week_offset: WeekOffsetArg,
@@ -211,7 +209,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'What deleting this goal would destroy',
       description:
-        'Read-only. Returns exactly what deleting this goal would destroy: the sub-goals, weekly focuses, tasks (with their activity timelines) and backlog items in its whole subtree, plus the ideas and learnings that would fall back to "Unsorted". Nothing is written. It answers for LEAF goals too, which is the case that matters most — a leaf carrying forty open tasks deletes with no warning from the API itself. Show these numbers to the user and get their agreement before calling delete_goal.',
+        'Read-only. Returns exactly what deleting this goal would destroy: the sub-goals, weekly focuses, tasks (with their activity timelines) and backlog items in its whole subtree, plus the learnings that would fall back to "Unsorted". Nothing is written. It answers for LEAF goals too, which is the case that matters most — a leaf carrying forty open tasks deletes with no warning from the API itself. Show these numbers to the user and get their agreement before calling delete_goal.',
       inputSchema: z.object({ goal_id: Ulid }).strict(),
     },
     async ({ goal_id }) =>
@@ -233,7 +231,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
             task_events: preview.removed.taskEvents,
             backlog_items: preview.removed.backlogItems,
           },
-          would_untag: { ideas: preview.untagged.ideas, learnings: preview.untagged.learnings },
+          would_untag: { learnings: preview.untagged.learnings },
           subtree: all.goals
             .filter((g) => subtree.includes(g.id))
             .map((g) => ({ id: g.id, title: g.title, path: paths.get(g.id), horizon: g.horizon, backlog_items: g.backlogCount })),
@@ -360,7 +358,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'Delete a goal and its whole subtree',
       description:
-        'DESTRUCTIVE AND PERMANENT. Deletes this goal AND its entire subtree: every sub-goal, weekly focus, task (with its activity timeline) and backlog item below it. Ideas and learnings tagged to anything deleted fall back to "Unsorted". There is no undo and no trash. Call preview_goal_deletion first, repeat its counts to the user, and get their explicit agreement before calling this. cascade must be true when the goal has descendants; without it the call is refused with the counts, which IS the confirmation step.',
+        'DESTRUCTIVE AND PERMANENT. Deletes this goal AND its entire subtree: every sub-goal, weekly focus, task (with its activity timeline) and backlog item below it. Learnings tagged to anything deleted fall back to "Unsorted". There is no undo and no trash. Call preview_goal_deletion first, repeat its counts to the user, and get their explicit agreement before calling this. cascade must be true when the goal has descendants; without it the call is refused with the counts, which IS the confirmation step.',
       inputSchema: z
         .object({
           goal_id: Ulid,

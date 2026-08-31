@@ -262,9 +262,8 @@ export function ConfirmTaskExitSheet({ taskId, exit }: { taskId: string; exit: '
 /**
  * R-backlog-8 — the sheet, not a toast.
  *
- * It is the answer to "Add to this week" on an item whose branch has no weekly focus, and to "Task this
- * week" on an idea when no leaf is active at all (S-idea-4-3). Both offer the same two ways out, and
- * neither touches the item: `BRANCH_NOT_ACTIVE` is `quiet` in `useCommand` precisely so this explains it.
+ * It is the answer to "Add to this week" on an item whose branch has no weekly focus. It offers two ways
+ * out and touches nothing: `BRANCH_NOT_ACTIVE` is `quiet` in `useCommand` precisely so this explains it.
  */
 export function InactiveBranchSheet({ title }: { title: string }) {
   const S = useSkin();

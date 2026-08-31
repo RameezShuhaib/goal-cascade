@@ -7,7 +7,6 @@ import type {
   GoalDetailResponse,
   GoalView,
   GoalsResponse,
-  IdeasResponse,
   LearningView,
   LearningsResponse,
   PlanResponse,
@@ -143,12 +142,6 @@ export function useBacklog(goalId?: string) {
   });
 }
 
-export function useIdeas() {
-  const client = useApi();
-  const enabled = useSignedIn();
-  return useQuery({ queryKey: keys.ideas, queryFn: () => client.ideas(), enabled, ...READ_MODEL });
-}
-
 export function useLearnings() {
   const client = useApi();
   const enabled = useSignedIn();
@@ -220,7 +213,6 @@ function applyRefresh(qc: QueryClient, r: Refresh) {
       inv(['task']);
       inv(keys.backlogAll);
       inv(keys.planAll);
-      inv(keys.ideas);
       inv(keys.learnings);
       inv(['bootstrap']);
       break;
@@ -399,10 +391,6 @@ function dropBacklogItem(qc: QueryClient, id: string) {
   );
 }
 
-function dropIdea(qc: QueryClient, id: string) {
-  qc.setQueryData<IdeasResponse>(keys.ideas, (prev) => (prev ? { ...prev, ideas: prev.ideas.filter((i) => i.id !== id) } : prev));
-}
-
 function patchLearning(qc: QueryClient, learning: LearningView) {
   qc.setQueryData<LearningsResponse>(keys.learnings, (prev) =>
     prev ? { ...prev, learnings: prev.learnings.map((l) => (l.id === learning.id ? learning : l)) } : prev,
@@ -533,8 +521,8 @@ export function useReplanGoal() {
 export function useDeleteGoal() {
   return useCommand<{ id: string; cascade?: boolean }, Awaited<ReturnType<ApiClient['deleteGoal']>>>({
     run: (c, v) => c.deleteGoal(v.id, { ...(v.cascade ? { cascade: true } : {}) }),
-    // A cascade removes tasks, focuses and backlog items and un-tags ideas and learnings: everything moved.
-    invalidate: [keys.goalsAll, ['goal'], keys.tasksAll, keys.backlogAll, keys.planAll, keys.ideas, keys.learnings, ['bootstrap']],
+    // A cascade removes tasks, focuses and backlog items and un-tags learnings: everything moved.
+    invalidate: [keys.goalsAll, ['goal'], keys.tasksAll, keys.backlogAll, keys.planAll, keys.learnings, ['bootstrap']],
     inline: true,
     quiet: ['GOAL_HAS_CHILDREN'],
   });
@@ -717,55 +705,6 @@ export function useConvertBacklogItem() {
     invalidate: [keys.backlogAll, keys.tasksAll, keys.goalsAll, ['goal'], ['bootstrap']],
     inline: true,
     quiet: ['BRANCH_NOT_ACTIVE', 'ALREADY_CONVERTED'],
-  });
-}
-
-// ---- ideas -----------------------------------------------------------------
-
-export function useCreateIdea() {
-  return useCommand<Parameters<ApiClient['createIdea']>[0], Awaited<ReturnType<ApiClient['createIdea']>>>({
-    run: (c, v, k) => c.createIdea(v, k),
-    invalidate: [keys.ideas, ['bootstrap']],
-    inline: true,
-  });
-}
-
-export function useDeleteIdea() {
-  return useCommand<{ id: string }, Awaited<ReturnType<ApiClient['deleteIdea']>>>({
-    run: (c, v) => c.deleteIdea(v.id),
-    onSuccess: (_d, v, qc) => dropIdea(qc, v.id),
-    invalidate: [keys.ideas, ['bootstrap']],
-  });
-}
-
-/** R-idea-5 — the idea becomes a backlog item on the chosen non-Life goal and is consumed, in one transaction. */
-export function useAttachIdea() {
-  return useCommand<{ id: string; goalId: string }, Awaited<ReturnType<ApiClient['attachIdea']>>>({
-    run: (c, v, k) => c.attachIdea(v.id, { goalId: v.goalId }, k),
-    onSuccess: (d, _v, qc) => {
-      dropIdea(qc, d.ideaId);
-      patchBacklogItem(qc, d.item);
-    },
-    invalidate: [keys.ideas, keys.backlogAll, keys.goalsAll, ['goal'], ['bootstrap']],
-    inline: true,
-  });
-}
-
-/**
- * R-idea-4 / D-22 — "Task this week". The idea is consumed ONLY on successful creation: the mockup deleted
- * it before the modal was saved and lost it on cancel, in the one feature whose whole promise is "capture it
- * and get back to work".
- */
-export function useConvertIdea() {
-  return useCommand<{ id: string; goalId: string; title?: string; cond?: string }, Awaited<ReturnType<ApiClient['convertIdea']>>>({
-    run: (c, v, k) => c.convertIdea(v.id, { goalId: v.goalId, ...(v.title ? { title: v.title } : {}), cond: v.cond ?? '' }, k),
-    onSuccess: (d, _v, qc) => {
-      dropIdea(qc, d.ideaId);
-      patchTask(qc, d.task);
-    },
-    invalidate: [keys.ideas, keys.tasksAll, keys.goalsAll, ['bootstrap']],
-    inline: true,
-    quiet: ['BRANCH_NOT_ACTIVE', 'NOT_A_LEAF'],
   });
 }
 

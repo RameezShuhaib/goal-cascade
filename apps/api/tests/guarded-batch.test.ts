@@ -1,11 +1,11 @@
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { IGoalRepo, IIdeaRepo } from '../src/application/ports';
+import { IGoalRepo, ILearningRepo } from '../src/application/ports';
 import { GuardedBatch } from '../src/application/services';
-import type { Goal, Idea } from '../src/domain/entities';
+import type { Goal, Learning } from '../src/domain/entities';
 import { ConcurrencyError } from '../src/domain/errors';
 import { createDb } from '../src/infrastructure/persistence/db';
-import { goals, ideas } from '../src/infrastructure/persistence/schema';
+import { goals, learnings } from '../src/infrastructure/persistence/schema';
 import { createTestApp, env, ids, signedInOwner } from './helpers/app';
 
 /**
@@ -35,13 +35,16 @@ const makeGoal = (userId: string): Goal => ({
   version: 1,
 });
 
-const makeIdea = (userId: string): Idea => ({
+const makeLearning = (userId: string): Learning => ({
   id: ids.ulid(),
   userId,
   goalId: null,
-  text: 'a passing thought',
+  text: 'mornings are the only hours that hold',
+  applied: false,
   capturedAt: t.clock.nowIso(),
   createdAt: t.clock.nowIso(),
+  updatedAt: t.clock.nowIso(),
+  version: 1,
 });
 
 describe('GuardedBatch', () => {
@@ -49,15 +52,15 @@ describe('GuardedBatch', () => {
     const { userId } = await signedInOwner(t);
     const c = t.container();
     const goal = makeGoal(userId);
-    const idea = makeIdea(userId);
+    const learning = makeLearning(userId);
 
     await c.resolve(GuardedBatch).run([
       { label: 'goal.insert', stmt: c.resolve<IGoalRepo>(IGoalRepo).insertStmt(goal) },
-      { label: 'idea.insert', stmt: c.resolve<IIdeaRepo>(IIdeaRepo).insertStmt(idea) },
+      { label: 'learning.insert', stmt: c.resolve<ILearningRepo>(ILearningRepo).insertStmt(learning) },
     ]);
 
     expect(await db.select().from(goals).where(eq(goals.id, goal.id)).get()).toBeDefined();
-    expect(await db.select().from(ideas).where(eq(ideas.id, idea.id)).get()).toBeDefined();
+    expect(await db.select().from(learnings).where(eq(learnings.id, learning.id)).get()).toBeDefined();
   });
 
   it('a guarded update whose version is stale raises CONCURRENT_UPDATE', async () => {
@@ -85,7 +88,7 @@ describe('GuardedBatch', () => {
     await c.resolve(GuardedBatch).run([{ label: 'goal.insert', stmt: c.resolve<IGoalRepo>(IGoalRepo).insertStmt(goal) }]);
 
     // The real shape of a command: append a log row AND update the entity, guarded on its version.
-    const orphanIdea = makeIdea(userId);
+    const orphanLearning = makeLearning(userId);
     const stale = c.resolve<IGoalRepo>(IGoalRepo).updateGuardedStmt(userId, goal.id, 42, {
       title: 'renamed',
       updatedAt: t.clock.nowIso(),
@@ -94,13 +97,13 @@ describe('GuardedBatch', () => {
 
     await expect(
       c.resolve(GuardedBatch).run([
-        { label: 'idea.insert', stmt: c.resolve<IIdeaRepo>(IIdeaRepo).insertStmt(orphanIdea) },
+        { label: 'learning.insert', stmt: c.resolve<ILearningRepo>(ILearningRepo).insertStmt(orphanLearning) },
         { label: 'goal.update', stmt: stale },
       ]),
     ).rejects.toBeInstanceOf(ConcurrencyError);
 
     // Without the precondition statement, this row would exist — an event with no cause.
-    expect(await db.select().from(ideas).where(eq(ideas.id, orphanIdea.id)).get()).toBeUndefined();
+    expect(await db.select().from(learnings).where(eq(learnings.id, orphanLearning.id)).get()).toBeUndefined();
     expect((await db.select().from(goals).where(eq(goals.id, goal.id)).get())?.title).toBe('Financial freedom');
   });
 
@@ -110,9 +113,9 @@ describe('GuardedBatch', () => {
     const goal = makeGoal(userId);
     await c.resolve(GuardedBatch).run([{ label: 'goal.insert', stmt: c.resolve<IGoalRepo>(IGoalRepo).insertStmt(goal) }]);
 
-    const idea = makeIdea(userId);
+    const learning = makeLearning(userId);
     await c.resolve(GuardedBatch).run([
-      { label: 'idea.insert', stmt: c.resolve<IIdeaRepo>(IIdeaRepo).insertStmt(idea) },
+      { label: 'learning.insert', stmt: c.resolve<ILearningRepo>(ILearningRepo).insertStmt(learning) },
       {
         label: 'goal.update',
         stmt: c
@@ -123,7 +126,7 @@ describe('GuardedBatch', () => {
 
     const row = await db.select().from(goals).where(eq(goals.id, goal.id)).get();
     expect(row).toMatchObject({ title: 'renamed', version: 2 });
-    expect(await db.select().from(ideas).where(eq(ideas.id, idea.id)).get()).toBeDefined();
+    expect(await db.select().from(learnings).where(eq(learnings.id, learning.id)).get()).toBeDefined();
   });
 
   it('R-auth-2 — a guarded update scoped to another owner changes nothing and is refused', async () => {
@@ -150,7 +153,7 @@ describe('GuardedBatch', () => {
     // Nothing to untag — the lazy/best-effort case (e.g. the carry-event insert on a re-read).
     await expect(
       c.resolve(GuardedBatch).run([
-        { label: 'idea.untag', stmt: c.resolve<IIdeaRepo>(IIdeaRepo).untagByGoalsStmt(userId, []), expectedChanges: 0 },
+        { label: 'learning.untag', stmt: c.resolve<ILearningRepo>(ILearningRepo).untagByGoalsStmt(userId, []), expectedChanges: 0 },
       ]),
     ).resolves.toBeDefined();
   });

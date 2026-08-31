@@ -2,7 +2,7 @@ import { useUI } from '../context/UIContext';
 import { useSkin } from '../skin';
 
 /**
- * R-nav-1 — five fixed tabs: `Tasks · Goals · + · Ideas · Learnings`. The `+` is a circular button that
+ * R-nav-1 — four fixed tabs: `Tasks · Goals · + · Learnings`. The `+` is a circular button that
  * opens the Add-to-Backlog drawer, not a page.
  *
  * R-nav-2 — Goals stays lit on a goal detail screen, and the Backlog page has no tab at all: it is reached
@@ -43,9 +43,6 @@ export function TabBar() {
           >
             +
           </span>
-        </button>
-        <button type="button" style={S.navBtn(on === 'ideas')} onClick={() => ui.setScreen('ideas')}>
-          Ideas
         </button>
         <button type="button" style={S.navBtn(on === 'learnings')} onClick={() => ui.setScreen('learnings')}>
           Learnings

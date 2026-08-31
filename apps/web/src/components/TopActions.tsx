@@ -9,7 +9,7 @@ import VerifyEmailScreen from './auth/VerifyEmailScreen';
 
 /**
  * R-nav-11 — the consistent top-right cluster on every page: the theme toggle, the account button, and at
- * most one primary action (`+ New goal`, `+ Add`, `Edit plan`; none on Ideas, Learnings, Plan and Goal
+ * most one primary action (`+ New goal`, `+ Add`, `Edit plan`; none on Learnings, Plan and Goal
  * detail).
  *
  * The toggle is real now (R-nav-12 / D-25): `useThemeChoice` writes the choice to `/me/preferences`, so it
@@ -20,7 +20,7 @@ import VerifyEmailScreen from './auth/VerifyEmailScreen';
  * at most one primary action", and this adds a second icon — but an app you cannot sign out of is not
  * shippable, and `VerifyEmailScreen` was written, tested and left unrouted for want of a settings surface.
  * Both live behind one 40px icon that matches the toggle, so the cluster still reads as two quiet circles
- * and a pill. The alternative was inventing a Settings tab, which R-nav-1 fixes at five.
+ * and a pill. The alternative was inventing a Settings tab, which R-nav-1 does not have.
  */
 export function TopActions({ children }: { children?: ReactNode }) {
   const S = useSkin();

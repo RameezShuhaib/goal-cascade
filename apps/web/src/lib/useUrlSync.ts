@@ -27,7 +27,6 @@ export interface UrlLanding {
 const TAB_SCREEN: Record<string, Screen> = {
   tasks: 'tasks',
   goals: 'goals',
-  ideas: 'ideas',
   learnings: 'learnings',
   backlog: 'backlog',
   plan: 'plan',

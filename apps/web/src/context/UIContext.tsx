@@ -17,8 +17,8 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
  * that sheet; this context only says WHICH sheet is open and what it is about.
  */
 
-/** R-nav-1/2 — five tabs plus two screens that have no tab of their own (goal detail, backlog). */
-export type Screen = 'tasks' | 'goals' | 'goal' | 'backlog' | 'ideas' | 'learnings' | 'plan';
+/** R-nav-1/2 — four tabs plus two screens that have no tab of their own (goal detail, backlog). */
+export type Screen = 'tasks' | 'goals' | 'goal' | 'backlog' | 'learnings' | 'plan';
 
 /**
  * The open overlay, as a discriminated union carrying what it is about. One `sheet` field replaces the
@@ -27,7 +27,7 @@ export type Screen = 'tasks' | 'goals' | 'goal' | 'backlog' | 'ideas' | 'learnin
  */
 export type Sheet =
   | { kind: 'taskDetail'; taskId: string }
-  | { kind: 'taskCreate'; goalId: string; title?: string; fromBacklogId?: string; fromIdeaId?: string }
+  | { kind: 'taskCreate'; goalId: string; title?: string; fromBacklogId?: string }
   | { kind: 'backlogDrawer'; goalId?: string }
   /** R-task-15/16 — the confirm sheet for exit 2 and exit 3, both of which take an optional reason. */
   | { kind: 'confirmTaskExit'; taskId: string; exit: 'backlog' | 'cancel' }

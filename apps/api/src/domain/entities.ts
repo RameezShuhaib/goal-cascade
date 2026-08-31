@@ -166,16 +166,6 @@ export type BacklogLink = {
   createdAt: string;
 };
 
-/** R-idea-2 — parking lot. `goalId` is an optional LIFE-goal tag; null = Unsorted. */
-export type Idea = {
-  id: string;
-  userId: string;
-  goalId: string | null;
-  text: string;
-  capturedAt: string;
-  createdAt: string;
-};
-
 /** R-learning-4 — a short insight. `applied` drives the "changed the plan" badge. */
 export type Learning = {
   id: string;

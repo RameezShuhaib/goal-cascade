@@ -15,6 +15,13 @@
       "when": 1788160852758,
       "tag": "0001_busy_mentor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788206796302,
+      "tag": "0002_drop_ideas",
+      "breakpoints": true
     }
   ]
 }

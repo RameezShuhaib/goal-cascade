@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { DependencyContainer } from 'tsyringe';
 import { describe, expect, it } from 'vitest';
-import { IIdeaRepo, ITaskEventRepo, IWeeklyFocusRepo } from '../../src/application/ports';
+import { ILearningRepo, ITaskEventRepo, IWeeklyFocusRepo } from '../../src/application/ports';
 import { GuardedBatch } from '../../src/application/services';
 import type { TaskEvent, WeeklyFocus } from '../../src/domain/entities';
 import { ConcurrencyError } from '../../src/domain/errors';
@@ -112,7 +112,7 @@ describe('REVIEW / attack 2 — `expectedChanges` means what the port says again
     const c = t.container();
     await expect(
       c.resolve(GuardedBatch).run([
-        { label: 'idea.untag', stmt: c.resolve<IIdeaRepo>(IIdeaRepo).untagByGoalsStmt(userId, []), expectedChanges: 0 },
+        { label: 'learning.untag', stmt: c.resolve<ILearningRepo>(ILearningRepo).untagByGoalsStmt(userId, []), expectedChanges: 0 },
       ]),
     ).resolves.toBeDefined();
   });

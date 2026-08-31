@@ -8,12 +8,10 @@ import {
   detailsOf,
   focusesUnder,
   goalsIn,
-  ideasOf,
   learningsOf,
   makeLine,
   savePlan,
   seedBacklogItem,
-  seedIdea,
   seedLearning,
   seedTask,
   tasksUnder,
@@ -21,7 +19,7 @@ import {
 
 /**
  * Q-5 — goal deletion. Nothing in the mockup defined it, so this is the whole rule in one file:
- * the subtree goes transactionally, Idea/Learning tags null out to Unsorted instead of cascading, and
+ * the subtree goes transactionally, Learning tags null out to Unsorted instead of cascading, and
  * `?cascade=true` is the explicit acknowledgement the client's confirmation sheet is built on.
  */
 const t = createTestApp({ now: '2026-08-31T10:00:00.000Z' });
@@ -69,22 +67,20 @@ describe('Q-5 — deleting a goal that has children', () => {
     expect(await backlogOf(t, userId)).toHaveLength(0);
   });
 
-  it('S-idea-7-1 — Idea and Learning tags pointing INTO the deleted subtree fall back to Unsorted, not away', async () => {
+  it('Q-5 — Learning tags pointing INTO the deleted subtree fall back to Unsorted, not away', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const doomed = await createGoal(t, cookie, { title: 'Doomed line', horizon: 'Life' });
     const survivor = await createGoal(t, cookie, { title: 'Surviving line', horizon: 'Life' });
-    await seedIdea(t, userId, doomed.id, 'tagged to the doomed line');
-    await seedIdea(t, userId, survivor.id, 'tagged elsewhere');
     await seedLearning(t, userId, doomed.id, 'learned here');
+    await seedLearning(t, userId, survivor.id, 'learned elsewhere');
 
     const body = (await (await del(cookie, doomed.id, true)).json()) as DeleteGoalResponse;
-    expect(body.untagged).toEqual({ ideas: 1, learnings: 1 });
+    expect(body.untagged).toEqual({ learnings: 1 });
 
-    const ideas = await ideasOf(t, userId);
-    expect(ideas).toHaveLength(2); // neither idea was deleted
-    expect(ideas.find((i) => i.text === 'tagged to the doomed line')!.goalId).toBeNull();
-    expect(ideas.find((i) => i.text === 'tagged elsewhere')!.goalId).toBe(survivor.id);
-    expect((await learningsOf(t, userId))[0]!.goalId).toBeNull();
+    const learnings = await learningsOf(t, userId);
+    expect(learnings).toHaveLength(2); // neither learning was deleted
+    expect(learnings.find((l) => l.text === 'learned here')!.goalId).toBeNull();
+    expect(learnings.find((l) => l.text === 'learned elsewhere')!.goalId).toBe(survivor.id);
   });
 
   it('a childless goal needs no acknowledgement, and only its own subtree goes', async () => {

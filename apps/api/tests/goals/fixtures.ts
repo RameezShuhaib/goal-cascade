@@ -1,7 +1,7 @@
 import type { GoalView, GoalsResponse, PlanResponse } from '@goal-cascade/shared';
-import { IBacklogRepo, IIdeaRepo, ILearningRepo, ITaskRepo, IWeeklyFocusRepo } from '../../src/application/ports';
+import { IBacklogRepo, ILearningRepo, ITaskRepo, IWeeklyFocusRepo } from '../../src/application/ports';
 import { GuardedBatch } from '../../src/application/services';
-import type { BacklogItem, Idea, Learning, Task, WeeklyFocus } from '../../src/domain/entities';
+import type { BacklogItem, Learning, Task, WeeklyFocus } from '../../src/domain/entities';
 import type { Horizon, Pulse } from '../../src/domain/enums';
 import { ids, type TestApp } from '../helpers/app';
 
@@ -99,8 +99,8 @@ export async function seedTask(t: TestApp, userId: string, goalId: string, origi
 }
 
 /**
- * Backlog items, ideas and learnings for the Q-5 cascade tests. `BacklogService` / `IdeaService` /
- * `LearningService` are other agents' stubs today, so these rows are written straight through the repos.
+ * Backlog items and learnings for the Q-5 cascade tests. `BacklogService` / `LearningService` are other
+ * agents' stubs today, so these rows are written straight through the repos.
  */
 export async function seedBacklogItem(t: TestApp, userId: string, goalId: string, title = 'someday') {
   const now = t.clock.nowIso();
@@ -126,14 +126,6 @@ export async function seedBacklogItem(t: TestApp, userId: string, goalId: string
   return item;
 }
 
-export async function seedIdea(t: TestApp, userId: string, goalId: string | null, text = 'a thought') {
-  const now = t.clock.nowIso();
-  const idea: Idea = { id: ids.ulid(), userId, goalId, text, capturedAt: now, createdAt: now };
-  const c = t.container();
-  await c.resolve(GuardedBatch).run([{ label: 'idea.insert', stmt: c.resolve<IIdeaRepo>(IIdeaRepo).insertStmt(idea) }]);
-  return idea;
-}
-
 export async function seedLearning(t: TestApp, userId: string, goalId: string | null, text = 'an insight') {
   const now = t.clock.nowIso();
   const learning: Learning = {
@@ -152,10 +144,6 @@ export async function seedLearning(t: TestApp, userId: string, goalId: string | 
     .resolve(GuardedBatch)
     .run([{ label: 'learning.insert', stmt: c.resolve<ILearningRepo>(ILearningRepo).insertStmt(learning) }]);
   return learning;
-}
-
-export function ideasOf(t: TestApp, userId: string): Promise<Idea[]> {
-  return t.container().resolve<IIdeaRepo>(IIdeaRepo).listAll(userId);
 }
 
 export function learningsOf(t: TestApp, userId: string): Promise<Learning[]> {

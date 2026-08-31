@@ -12,7 +12,7 @@ import { mcpCors } from './middleware/mcp-cors';
 import { checkOrigin } from './middleware/origin';
 import { resolveTimezone } from './middleware/timezone';
 import { backlogRoutes } from './routes/backlog.routes';
-import { bootstrapRoutes, ideasRoutes, learningsRoutes } from './routes/capture.routes';
+import { bootstrapRoutes, learningsRoutes } from './routes/capture.routes';
 import { goalsRoutes } from './routes/goals.routes';
 import { internalRoutes } from './routes/internal.routes';
 import { mcpRoutes } from './routes/mcp.routes';
@@ -107,7 +107,7 @@ export function createApp(options: AppOptions = {}) {
   // ── R-auth-4: everything else under /api needs a session. Including every read. ──
   app.use(`${API_BASE}/*`, checkOrigin, requireSession, resolveTimezone);
 
-  for (const r of [meRoutes, bootstrapRoutes, goalsRoutes, planRoutes, tasksRoutes, backlogRoutes, ideasRoutes, learningsRoutes]) {
+  for (const r of [meRoutes, bootstrapRoutes, goalsRoutes, planRoutes, tasksRoutes, backlogRoutes, learningsRoutes]) {
     app.route(API_BASE, r);
   }
 

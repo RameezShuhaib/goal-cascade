@@ -40,11 +40,10 @@ parked item on its own goal, keeping description and links), or CANCEL. There is
 not offer or simulate defer, snooze, reschedule, or move-to-another-week. Unchecking a completed task
 re-opens it under its ORIGINAL creation week, so it comes back with the age it really has.
 
-BACKLOG, IDEAS, LEARNINGS. Backlog items are deferred work on a Yearly/Quarterly/Monthly goal — never
-a Life goal, never a week — with no checkbox, no due date and no status. Converting one is the only
-way backlog becomes work, and it consumes the item. Ideas are two-second captures with an optional
-LIFE-goal tag; they can become a task, a backlog item, or nothing. Learnings are insights, tagged to a
-Life goal, and are never converted into work.
+BACKLOG AND LEARNINGS. Backlog items are deferred work on a Yearly/Quarterly/Monthly goal — never a
+Life goal, never a week — with no checkbox, no due date and no status. Converting one is the only way
+backlog becomes work, and it consumes the item. Learnings are insights, tagged to a Life goal, and are
+never converted into work.
 
 HOW TO WORK. Start with get_overview. Resolve names to ids with find_goal and ask when it reports
 ambiguity — acting on the wrong goal is the worst thing you can do here. Reasons on exits and re-plans

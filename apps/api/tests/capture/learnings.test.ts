@@ -114,7 +114,7 @@ describe('learnings', () => {
     expect((await learnings()).find((l) => l.id === learning.id)!.text).toBe('Versioned');
   });
 
-  it('S-idea-7-1 (learnings half) — a tag whose goal is deleted becomes Unsorted, not a deleted learning', async () => {
+  it('Q-5 — a tag whose goal is deleted becomes Unsorted, not a deleted learning', async () => {
     const doomed = await seedGoal(f, { parentId: null, horizon: 'Life', title: 'A line that ends' });
     const learning = await capture('Survives its tag', doomed.id);
 

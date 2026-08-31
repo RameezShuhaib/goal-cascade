@@ -86,11 +86,6 @@ const ROUTES: Row[] = [
   { method: 'POST', path: ENDPOINTS.backlogItemMove(ULID), json: { goalId: ULID }, command: true },
   { method: 'POST', path: ENDPOINTS.backlogItemConvert(ULID), json: {}, command: true },
 
-  { method: 'GET', path: ENDPOINTS.ideas },
-  { method: 'POST', path: ENDPOINTS.ideas, json: { text: 'a thought' }, command: true },
-  { method: 'DELETE', path: ENDPOINTS.idea(ULID) },
-  { method: 'POST', path: ENDPOINTS.ideaAttach(ULID), json: { goalId: ULID }, command: true },
-  { method: 'POST', path: ENDPOINTS.ideaConvert(ULID), json: { goalId: ULID }, command: true },
 
   { method: 'GET', path: ENDPOINTS.learnings },
   { method: 'POST', path: ENDPOINTS.learnings, json: { text: 'an insight' }, command: true },

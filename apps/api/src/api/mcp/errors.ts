@@ -43,7 +43,7 @@ const RECOVERY: Partial<Record<ErrorCode, string>> = {
   NOT_A_LEAF:
     'That goal is a Life goal or it has children, and only a non-Life LEAF can hold a weekly focus or own a task. Pick a leaf below it — find_goal with only="leaves" (or only="active_leaves" if the task needs a live branch).',
   NOT_A_LIFE_GOAL:
-    'An Idea or Learning tag must be a LIFE goal or null. Use that goal\'s Life root (the first segment of its path), or pass null for "Unsorted".',
+    'A Learning tag must be a LIFE goal or null. Use that goal\'s Life root (the first segment of its path), or pass null for "Unsorted".',
   LIFE_GOAL_NO_BACKLOG:
     'Backlog items live on a Yearly, Quarterly or Monthly goal — never a Life goal. Pick a descendant of that Life goal; find_goal with only="can_hold_backlog" lists the valid targets.',
   LIFE_GOAL_IMMUTABLE:

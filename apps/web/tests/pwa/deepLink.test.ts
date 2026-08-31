@@ -7,7 +7,7 @@ describe('parseDeepLink', () => {
   it('reads the tab and goal shapes from a query, with or without the leading ?', () => {
     expect(parseDeepLink('?tab=goals')).toEqual({ kind: 'tab', tab: 'goals' });
     expect(parseDeepLink('tab=backlog')).toEqual({ kind: 'tab', tab: 'backlog' });
-    expect(parseDeepLink('/?tab=ideas')).toEqual({ kind: 'tab', tab: 'ideas' });
+    expect(parseDeepLink('/?tab=plan')).toEqual({ kind: 'tab', tab: 'plan' });
     expect(parseDeepLink('https://cascade.example/?tab=learnings')).toEqual({ kind: 'tab', tab: 'learnings' });
     expect(parseDeepLink('?tab=goals&goal=g12')).toEqual({ kind: 'goal', goalId: 'g12' });
   });
@@ -17,7 +17,7 @@ describe('parseDeepLink', () => {
     expect(parseDeepLink('')).toBeNull();
     expect(parseDeepLink('/goals')).toBeNull();
     expect(parseDeepLink('https://cascade.example/goals')).toBeNull();
-    expect(parseDeepLink('?tab=settings')).toBeNull(); // not one of the five tabs + backlog/plan
+    expect(parseDeepLink('?tab=settings')).toBeNull(); // not one of the tabs + backlog/plan
     expect(parseDeepLink('?other=1')).toBeNull();
   });
 

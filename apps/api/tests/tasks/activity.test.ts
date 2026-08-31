@@ -83,7 +83,7 @@ describe('R-task-29 / D-14 / Q-17 — the carry log is produced lazily and canno
 });
 
 describe('R-task-2/30 — Created carries its source', () => {
-  it('S-task-31-1 — each of the four creation sources logs its own line', async () => {
+  it('S-task-31-1 — each of the three creation sources logs its own line', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const { leaf } = await makeLine(t, userId);
     await activate(t, userId, leaf.id, MON.aug31);
@@ -91,7 +91,6 @@ describe('R-task-2/30 — Created carries its source', () => {
     for (const [source, text] of [
       ['planning', 'Created — weekly planning'],
       ['backlog', 'Created — pulled from Backlog'],
-      ['idea', 'Created — from an Idea'],
       ['drawer', 'Created — added to this week'],
     ] as const) {
       const task = await seedTask(t, cookie, { goalId: leaf.id, title: `via ${source}`, source });

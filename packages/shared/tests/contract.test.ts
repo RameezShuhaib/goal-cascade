@@ -42,7 +42,7 @@ describe('error codes', () => {
     expect(ERROR_STATUS.GOAL_HAS_OPEN_TASKS).toBe(409); // R-goal-28 / D-8
     expect(ERROR_STATUS.LIFE_GOAL_IMMUTABLE).toBe(409); // R-goal-21
     expect(ERROR_STATUS.NOT_A_LEAF).toBe(409); // R-plan-8
-    expect(ERROR_STATUS.NOT_A_LIFE_GOAL).toBe(409); // R-idea-2
+    expect(ERROR_STATUS.NOT_A_LIFE_GOAL).toBe(409); // R-learning-2
     expect(ERROR_STATUS.BRANCH_NOT_ACTIVE).toBe(409); // R-backlog-8
     expect(ERROR_STATUS.LIFE_GOAL_NO_BACKLOG).toBe(409); // R-backlog-2
     expect(ERROR_STATUS.ALREADY_CONVERTED).toBe(409); // R-backlog-6 / D-19

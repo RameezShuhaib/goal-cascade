@@ -92,8 +92,8 @@ export const Period = z.string().trim().max(32);
 
 export const Theme = z.enum(['light', 'dark', 'system']);
 
-/** R-task-2 — the four creation sources. Recorded once, on the `created` event, and never changed. */
-export const TASK_SOURCES = ['planning', 'backlog', 'idea', 'drawer'] as const;
+/** R-task-2 — the three creation sources. Recorded once, on the `created` event, and never changed. */
+export const TASK_SOURCES = ['planning', 'backlog', 'drawer'] as const;
 export const TaskSource = z.enum(TASK_SOURCES);
 
 /**
@@ -137,7 +137,7 @@ export const OneLiner = z.string().trim().max(200);
 /** WeeklyFocus.sentence and an exit/re-plan reason. */
 export const Sentence = z.string().trim().max(280);
 export const Reason = z.string().trim().max(280);
-/** Idea.text and Learning.text. */
+/** Learning.text. */
 export const CaptureText = z.string().trim().min(1).max(500);
 export const LongText = z.string().trim().max(4000);
 /** Q-11 — 2048 chars and it must parse as http/https; other schemes are refused, not stored. */
@@ -315,15 +315,6 @@ export const BacklogItemView = z.object({
   version: z.int().positive(),
 });
 
-/** R-idea-1/2 — parking lot. `goalId` is an optional LIFE-goal tag; null renders as "Unsorted". */
-export const IdeaView = z.object({
-  id: Ulid,
-  goalId: Ulid.nullable(),
-  text: z.string(),
-  capturedAt: Iso,
-  createdAt: Iso,
-});
-
 /** R-learning-1/4 — a short insight. `applied` drives the "changed the plan" badge (D-23). */
 export const LearningView = z.object({
   id: Ulid,
@@ -360,5 +351,4 @@ export type TaskEventView = z.infer<typeof TaskEventView>;
 export type TaskView = z.infer<typeof TaskView>;
 export type TaskDetailView = z.infer<typeof TaskDetailView>;
 export type BacklogItemView = z.infer<typeof BacklogItemView>;
-export type IdeaView = z.infer<typeof IdeaView>;
 export type LearningView = z.infer<typeof LearningView>;
