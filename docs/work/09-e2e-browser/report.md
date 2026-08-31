@@ -345,3 +345,124 @@ The run leaves this behind (nothing was deleted; no extra accounts created):
 - Learnings: `Morning runs happen; evening runs get skipped.`
 - Ideas: none (the one captured was attached to a goal)
 - Theme: dark. Session still signed in.
+
+## Re-verification after a11y fixes
+
+Re-run on 2026-08-31 against the redeployed Worker, targeted at the three fixes only (the
+13-flow walkthrough above was not repeated). Service worker unregistered and all caches
+deleted before loading, so this is definitely the new build.
+
+**Build confirmed new.** `assets/index-B0CU-Ol9.js` contains `#707069` (1 occurrence) and
+zero occurrences of `#8a8a82`. `apps/web/src/ui.ts:37` now reads `mut: '#707069'`.
+
+### Fix 1 — sheets dismissible and keyboard-navigable: PASS
+
+Five sheets exercised: goal create modal, task detail sheet, `+` Add-to-Backlog drawer,
+Move to Backlog confirm, Cancel task confirm.
+
+| Sheet | Esc closes | Visible ✕ closes | Backdrop closes | Focus moves in | Trapped on Tab | Focus returns to opener |
+|---|---|---|---|---|---|---|
+| Goal create (`+ New goal`) | yes | yes | yes | yes (`h2 New goal`) | yes, wraps | yes (`+ New goal`) |
+| Task detail | yes (see below) | yes | yes | yes (`h2 Task detail`) | yes, wraps | yes (`Tuesday easy 6k` row) |
+| `+` Backlog drawer | yes | yes | yes | yes (`h2 Add to Backlog`) | yes, wraps | yes (`Add` FAB) |
+| Move to Backlog confirm | yes | — | yes | yes (`h2 Move to Backlog`) | yes, wraps | yes (task row) |
+| Cancel task confirm | yes | — | yes | yes (`h2 Cancel task`) | yes, wraps | yes (task row) |
+
+Focus-order captured live with a `focusin` listener; every entry was inside the dialog and
+the order wrapped back to the first control. Examples:
+
+- Goal create: `Close → Goal title → Why? → Life → Yearly → Quarterly → Monthly → On track → At risk → Rethink → Close …`
+- Backlog drawer: `View Backlog → → Close → 4 goal chips → What needs doing, someday? → Description → Link URL → Add → Add to this week instead → View Backlog → …`
+- Move confirm: `Close → Reason (optional) → Move it → Close …`
+
+**Task detail, two-step discard: works.** With `6k done at easy pace` typed into
+done-condition, the first Escape kept the sheet open and rendered the inline strip
+`Discard your unsaved edits?` with `Discard` / `Keep editing`, moving focus to
+`Keep editing`. The second Escape discarded and closed, returning focus to the
+`Tuesday easy 6k` row; the edit was not persisted. It never becomes a new trap: the strip
+is rendered inside the same `[role=dialog]` (still exactly 1 dialog, 0 `alertdialog`),
+`Keep editing` dismisses the strip and preserves the typed value, `Discard` closes and
+restores focus, and Tab from the post-strip state re-enters the sheet's trap.
+Backdrop-click with unsaved edits behaves identically to Escape (strip shown, focus on
+`Keep editing`) — consistent, not a silent discard.
+
+**Title-only / optional-reason sheets do not ask.** Verified twice:
+- Goal create with `Throwaway draft title` typed → Escape closed immediately, no strip.
+- Move to Backlog confirm with `not this week` typed in the optional reason → Escape closed
+  immediately, no strip, task not moved.
+
+### Fix 2 — light-mode contrast: PASS
+
+Light mode, paper `#f6f6f3`. Every muted-text element on the page now computes to
+`#707069`; a full sweep of leaf text nodes found zero elements still using `#8a8a82`.
+
+| Element | Computed colour | Size | Ratio vs paper `#f6f6f3` | vs card `#fff` |
+|---|---|---|---|---|
+| Section header / eyebrow `TASKS` | `#707069` | 12px | 4.61:1 | 4.99:1 |
+| Breadcrumb `BE GENUINELY FIT AT 50 › …` | `#707069` | 12.5px | 4.61:1 | 4.99:1 |
+| Bottom tab labels (`Goals`, `Ideas`, `Learnings`) | `#707069` | — | 4.61:1 | 4.99:1 |
+| Goal chip label `Be genuinely fit at 50 · 1` | `#4a4a44` | 12.5px | 8.24:1 | 8.92:1 |
+
+All pass WCAG AA for normal text. Judged visually at 1518px too: the tab bar labels and the
+uppercase breadcrumb read comfortably now rather than washing out.
+
+The only sub-4.5:1 leaf text left in light mode is the *disabled* next-week chevron `›`
+(`#c0c0b8` on paper, 1.69:1). Disabled controls are exempt from WCAG 1.4.3 and this is
+pre-existing, not a product of the fix.
+
+### Fix 3 — theme-aware `color-scheme`: PASS
+
+- Dark active: `html` and `body` both compute `color-scheme: dark`, background
+  `rgb(28, 28, 25)` (`#1c1c19`), `--focus-ring: oklch(0.68 0.11 125)`.
+- Light active: both compute `color-scheme: light`, background `rgb(246, 246, 243)`
+  (`#f6f6f3`), `--focus-ring: oklch(0.55 0.11 125)`. The token flips with the in-app
+  toggle, not just with the OS setting.
+- Focus ring: tabbing to the done-condition input in the task detail sheet (dark mode)
+  gives `outline: oklch(0.68 0.11 125) solid 2px`, `outline-offset: 2px`,
+  `:focus-visible` matching. Confirmed visually with a zoom — a green ring, no trace of
+  the browser-default blue. This was walkthrough finding C and it is fixed.
+- Reload in dark: no white flash. `index.html` carries an inline
+  `@media (prefers-color-scheme: dark) { html { background: #1c1c19; color-scheme: dark } }`
+  so first paint is already dark, and immediately after reload `html` is
+  `rgb(28, 28, 25)` with `color-scheme: dark`.
+
+  Caveat, not testable here: the source comment states plainly that the first-paint
+  literals can only follow `prefers-color-scheme`, because the CSP forbids the inline
+  script that would read the stored choice. This machine's OS prefers dark, so the tested
+  path is the easy one. A user whose OS is light but who has chosen dark in-app would
+  still get a brief light first paint before `main.tsx` repaints. Known and documented,
+  not a regression.
+
+### Console
+
+Clean. `read_console_messages` (unfiltered, limit 100) returned nothing across a full page
+load plus sheet open/close cycles with console tracking already active. No errors, no
+warnings, no React key/act noise.
+
+### Regressions and nits found
+
+1. **Nit — focus is dropped to `<body>` when the discard strip is dismissed.** Activating
+   `Keep editing` (by click or by Enter) unmounts the strip and leaves
+   `document.activeElement === <body>`, outside the dialog, rather than returning focus to
+   the field that was being edited. Reproduced consistently. It is not an escape from the
+   trap — the next Tab re-enters the sheet at `Close` and cycles normally — but a keyboard
+   user loses their place and a screen reader loses dialog context. Same class of thing the
+   fix was meant to remove, one level down.
+
+2. **Unreproduced one-off — sheet closed and edit was discarded on Enter over `Keep editing`.**
+   Seen once: task detail open, `x` typed into done-condition, Escape (strip shown), Enter →
+   the whole sheet closed and the edit was gone (confirmed by reopening: done-condition
+   empty). Could not be reproduced on two further attempts with the same sequence, nor by
+   pressing Enter in a text field while the strip was up (harmless: sheet stayed open, value
+   preserved). Possibly a race between the strip mounting and the keypress arriving. Worth a
+   look at the `Keep editing` handler for anything that could fall through to the close path,
+   but not confirmed as a live bug.
+
+3. **Cosmetic — the sheet's `<h2>` draws a full-width green focus box when opened from the
+   keyboard.** Because focus is placed on the heading and `:focus-visible` still matches
+   after a keyboard-initiated open, the `Add to Backlog` / `New goal` title gets a 2px green
+   outline spanning the heading's box. Correct for announcement, slightly noisy visually;
+   a `tabindex="-1"` heading with `outline: none` on the programmatic focus would keep the
+   SR benefit without the box.
+
+No other regression found. Fixes 1, 2 and 3 all pass.

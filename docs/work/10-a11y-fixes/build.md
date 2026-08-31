@@ -163,3 +163,119 @@ and `tests/screens/backlog.test.tsx`.
 visible heading always read *New task*. Now that the dialog is named by `aria-labelledby` pointing at that
 heading (which is what finding A asks for), its accessible name **is** `New task`. The old name was the bug
 those queries were asserting against; the tests assert the same thing about the same dialog.
+
+---
+
+## Regression fixes
+
+The browser agent re-ran the three fixes against the redeployed Worker and passed all three, then listed
+three things they had left behind (`docs/work/09-e2e-browser/report.md`, "Regressions and nits found").
+These are those, and nothing else was touched: `Sheet.tsx` was not restructured, no dependency was added,
+no assertion was removed, skipped or loosened.
+
+**`npm run typecheck --workspaces`: clean. `npm test --workspaces`: 345 api / 21 shared / 197 web, all
+passing** (190 web before; +7 new, no edits to existing ones). **`npm run build -w @goal-cascade/web`:
+succeeds**, `dist/sw.js` emitted with its 13-entry precache manifest.
+
+### 1. The Enter bug: what it actually was
+
+The report's item 2 was the serious one — seen once, not reproducible: Enter over `Keep editing` closed the
+task detail sheet and took the typed done-condition with it. `Keep editing` doing the exact opposite of what
+it says is data loss, so it was read for rather than clicked for.
+
+**The obvious suspect was audited and cleared.** A `<button>` with no `type` is `type="submit"`, so inside a
+`<form>` both Enter and a click run the form's submit handler instead of the button's own `onClick` — and
+whether that happens depends on an ancestor several files away, which is exactly the shape of a bug that
+reproduces once. Every `<button>` in `src/components/**` and `src/screens/**` was audited: **109 of them,
+and 0 were missing an explicit `type`.** The app has exactly two `<form>` elements, both in the auth screens,
+and both submit deliberately (`PrimaryButton` defaults to `type="submit"`; every use of it outside a form —
+`App.tsx`, `VerifyEmailScreen` — passes `type="button"` explicitly). The task detail sheet is not inside a
+form at all. **So the reported Enter path does not exist, and this was not a form submit.** Nothing needed
+fixing here; the guard below exists so it stays that way.
+
+Reproduced in the harness instead: with the strip up and focus on `Keep editing`, `{Enter}` fires the
+button's own `onClick`, the strip closes, the sheet stays open and the value survives. It does not close.
+There is no code path from `Keep editing` to `onClose` — the only callers are `Discard`, the `✕`, the
+backdrop, and Escape.
+
+**What can actually close the sheet and discard, without the user choosing it, is Escape auto-repeat.** The
+strip is raised by Escape and answered by Escape ("ask once, then out" — a trap is worse than a lost draft).
+Held down, Escape repeats at roughly 30/s after a ~500ms delay, so a key held a moment too long raises the
+strip and answers it inside one press: the question appears and is gone before it can be read, and
+paragraphs go with it. That fits the evidence — one sighting, no reproduction from deliberate presses, and
+an agent that had pressed Escape and then Enter would attribute the close to the Enter it saw last.
+
+The fix is two lines in the Escape branch: **an auto-repeat may raise the strip; it may never be the press
+that discards.**
+
+```ts
+if (e.repeat && confirming) return;
+```
+
+Deliberate presses are unchanged — the existing "ask once, then out" test (`{Escape}` `{Escape}`) still
+passes untouched, because two discrete presses carry `repeat: false`.
+
+**Honest summary: the reported Enter-closes-and-discards bug is not real — the mechanism it was attributed
+to does not exist in this code, and it does not reproduce. A real data-loss path was found next to it, in
+the same strip, and is closed.**
+
+### 2. Focus is handed back when the strip is dismissed
+
+Report item 1, reproduced consistently: dismissing the strip unmounted the button that held focus, and the
+browser's answer to that is `<body>` — outside an `aria-modal` dialog, mid-sentence. The trap was not broken
+(the next Tab re-entered at `Close`), but a keyboard user had lost their place in a sheet they had just
+chosen to stay in, which is the opposite of what `Keep editing` promises.
+
+`requestClose` now records `document.activeElement` **before** the strip mounts and steals focus — that is
+the field being typed into — and the `confirming` effect gained an else branch: on dismiss it puts focus
+back there, guarded by `isConnected` and `sheet.contains(...)` because the render that dismissed the strip
+may have taken the field with it. The fallback is the sheet's first field (`firstField`, the first
+`input`/`textarea`/`select` in the trap's own DOM order, else its first stop) — never `<body>`. A backdrop
+click with unsaved edits records `<body>` as the interrupted element, fails the `contains` check and lands
+on the first field, which is the right answer for a dismissal that never had a caret.
+
+### 3. The heading's focus ring
+
+Report item 3, cosmetic. The `<h2>` is `tabindex="-1"` and takes focus on open so the dialog's title is
+announced — right for a screen reader, and at `flex: 1` it drew a full-width green box across the sheet
+whenever the sheet was opened from the keyboard, because `:focus-visible` still matched.
+
+Two narrow changes, no ring removed from anything interactive:
+
+- `index.html`: `[tabindex]` in the shared ring becomes `[tabindex]:not([tabindex="-1"])`, inside the
+  existing `:where()` so the rule keeps its zero specificity. An element with `tabindex="-1"` is not a tab
+  stop and is only ever focused by script. `a`, `button`, `input`, `select` and `textarea` still match on
+  their own element names whatever their tabindex, so every genuinely interactive control keeps its ring.
+- `ui.ts`: `sheetTitle` swaps its now-pointless `outlineOffset: 3` for `outline: 'none'`, so the heading
+  cannot pick a ring back up from a future rule.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `apps/web/src/components/Sheet.tsx` | `interruptedRef` + `firstField`; focus restored on dismiss; the `e.repeat` guard (and `confirming` added to the keydown effect's deps so the guard sees it) |
+| `apps/web/src/ui.ts` | `sheetTitle`: `outlineOffset: 3` → `outline: 'none'` |
+| `apps/web/index.html` | the shared ring skips `[tabindex="-1"]` |
+| `tests/screens/buttonTypes.test.tsx` | **new** — 2 tests, the class-of-bug guard |
+| `tests/screens/sheetDismissal.test.tsx` | +5 tests for the three items above; nothing existing changed |
+
+Each of the five new sheet tests was checked against the unfixed code: the Enter test passes either way
+(there was no bug), and the other four fail without their fix. Both button-type guards were checked the same
+way — the source scan fails when a `type` is deleted, and the DOM scan fails when `PrimaryButton` loses its
+default (a prop that resolves to `undefined` emits no attribute at all, and the submit default is back).
+
+### The guard against the class of bug
+
+`tests/screens/buttonTypes.test.tsx`, two tests, because neither catches what the other does:
+
+1. **Source scan.** Every `<button …>` opening tag in `src/components/**` and `src/screens/**` — found by
+   scanning to the end of the tag rather than by a regex, since attribute values run across lines and hold
+   `{}`, quotes and nested JSX — must carry an explicit `type=`. It reads every file, including screens no
+   test renders, and asserts the tag count it found so a silently broken parse cannot pass by finding
+   nothing.
+2. **DOM scan.** Renders the real `Choose a new password` `<form>` and asserts no button inside it reaches
+   the DOM without a `type` attribute, plus that the submit is `Save password` and `Back to sign in` is
+   `type="button"`. This is the half that catches `type={undefined}` — the source scan sees the prop and is
+   satisfied, while React emits no attribute and the default returns.
+
+`apps/api/**` and `packages/shared/**` were not touched.

@@ -329,7 +329,13 @@ function build(T: Tokens) {
 
     /** The sheet header: the heading (the dialog's `aria-labelledby` target) and the quiet ✕. */
     sheetHeader: { display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 } as CSS,
-    sheetTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 16, fontWeight: 800, color: T.ink, outlineOffset: 3 } as CSS,
+    /**
+     * `outline: none` and it is not a mistake. The `<h2>` is `tabindex="-1"` and takes focus on open so the
+     * dialog's title is announced — a ring on a heading nobody can tab to is noise, and at `flex: 1` it
+     * drew a full-width green box across the sheet (docs/work/09-e2e-browser, re-verification nit 3). Said
+     * here as well as in `index.html` so the heading cannot pick a ring back up from a future rule.
+     */
+    sheetTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 16, fontWeight: 800, color: T.ink, outline: 'none' } as CSS,
     /**
      * The dismiss control. A ✕ in the header, not a button bar: the app's chrome is quiet, and a sheet
      * that shouts about leaving is a sheet that reads as a commitment.

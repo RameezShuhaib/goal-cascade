@@ -98,12 +98,19 @@
        * `applyDocumentTheme`. Without it the browser draws its default (blue on a light page, white on a
        * dark one), which is the one piece of chrome in this app nobody chose. `:focus-visible`, so a mouse
        * click on a button does not draw one; `:where()`, so a component's own inline styles still win.
+       *
+       * `[tabindex]` is narrowed to exclude `-1`. An element with `tabindex="-1"` is not a tab stop: it is
+       * only ever focused by script, which in this app means the sheet's `<h2>` — focused on open so a
+       * screen reader announces the dialog's title. That is right for announcement and wrong for a ring:
+       * the walkthrough saw a full-width green box drawn round `New goal` (re-verification nit 3). Nothing
+       * genuinely interactive loses anything — `a`, `button`, `input`, `select` and `textarea` still match
+       * on their own, whatever their tabindex.
        */
       :root { --focus-ring: oklch(0.55 0.11 125); }
       @media (prefers-color-scheme: dark) {
         :root { --focus-ring: oklch(0.68 0.11 125); }
       }
-      :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+      :where(a, button, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible {
         outline: 2px solid var(--focus-ring);
         outline-offset: 2px;
       }

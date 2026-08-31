@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import type { TaskView } from '@goal-cascade/shared';
 import { AppShell } from '../../src/AppShell';
@@ -191,5 +194,116 @@ describe('Sheets — Escape asks before discarding real work, and never traps yo
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.queryByText('Discard your unsaved edits?')).not.toBeInTheDocument();
     expect(requests('POST', '/cancel')).toHaveLength(0);
+  });
+});
+
+/**
+ * The re-verification pass (docs/work/09-e2e-browser, "Regressions and nits found") came back with three
+ * things the first fix left behind. These are them.
+ *
+ * Item 2 is the one that mattered: a browser agent saw, once, Enter over `Keep editing` close the sheet and
+ * take the edit with it, and could not reproduce it. `Keep editing` doing the exact opposite of what it says
+ * is a data-loss bug, so it was chased down rather than waved off — see `docs/work/10-a11y-fixes/build.md`,
+ * "Regression fixes", for what it turned out to be and what it turned out not to be.
+ */
+function openDirtyDetail() {
+  withWeek([F.task()]);
+  const { user } = renderApp(<AppShell />);
+  return { user };
+}
+
+describe('Sheets — the discard strip cannot lose your work, and gives your place back', () => {
+  it('Enter on Keep editing keeps the sheet open, keeps the edit, and saves nothing', async () => {
+    const { user } = openDirtyDetail();
+    await user.click(await screen.findByText('Book the Tuesday slot'));
+    const sheet = await screen.findByRole('dialog', { name: 'Task detail' });
+    const cond = within(sheet).getByLabelText('Done-condition');
+    await user.type(cond, ' at easy pace');
+    const typed = (cond as HTMLInputElement).value;
+
+    await user.keyboard('{Escape}');
+    // Escape moved focus onto the strip's own answer, so Enter here is a keyboard user answering it.
+    expect(document.activeElement).toBe(within(sheet).getByRole('button', { name: 'Keep editing' }));
+
+    await user.keyboard('{Enter}');
+
+    // "Keep editing" means keep editing. All three of these, or the button is lying about one of them.
+    expect(screen.getByRole('dialog', { name: 'Task detail' })).toBeInTheDocument();
+    expect(within(sheet).queryByText('Discard your unsaved edits?')).not.toBeInTheDocument();
+    expect(within(sheet).getByLabelText('Done-condition')).toHaveValue(typed);
+    // Not closed-and-saved either: the sheet is still the place the draft lives.
+    expect(requests('PATCH', '/api/tasks/')).toHaveLength(0);
+  });
+
+  it('and puts the caret back in the field it interrupted, not on <body>', async () => {
+    const { user } = openDirtyDetail();
+    await user.click(await screen.findByText('Book the Tuesday slot'));
+    const sheet = await screen.findByRole('dialog', { name: 'Task detail' });
+    const description = within(sheet).getByLabelText('Description');
+    await user.type(description, 'ask about the 7am slot');
+
+    await user.keyboard('{Escape}');
+    await user.click(within(sheet).getByRole('button', { name: 'Keep editing' }));
+
+    // The strip unmounts the button holding focus, and the browser's answer to that is `<body>` — outside
+    // an `aria-modal` dialog, mid-sentence. The trap still held (the next Tab re-entered), but the user had
+    // lost their place in a sheet they had just chosen to stay in.
+    expect(document.activeElement).not.toBe(document.body);
+    expect(sheet.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(description);
+  });
+
+  it('the same on Enter — the answer, not just the click, hands focus back', async () => {
+    const { user } = openDirtyDetail();
+    await user.click(await screen.findByText('Book the Tuesday slot'));
+    const sheet = await screen.findByRole('dialog', { name: 'Task detail' });
+    const title = within(sheet).getByLabelText('Title');
+    await user.type(title, ' (moved)');
+
+    await user.keyboard('{Escape}');
+    await user.keyboard('{Enter}');
+
+    expect(document.activeElement).toBe(title);
+  });
+
+  it('a held Escape cannot answer the question it just asked', async () => {
+    const { user } = openDirtyDetail();
+    await user.click(await screen.findByText('Book the Tuesday slot'));
+    const sheet = await screen.findByRole('dialog', { name: 'Task detail' });
+    await user.type(within(sheet).getByLabelText('Description'), 'paragraphs of it');
+
+    // Held down, Escape auto-repeats at roughly 30/s after half a second. If a repeat counted as the second
+    // press, the strip would appear and be answered inside one keypress and the draft would be gone before
+    // the user had read the question — the only path found from "strip up" to "closed and discarded" that
+    // the user never chose.
+    await user.keyboard('{Escape}');
+    for (let i = 0; i < 5; i += 1) fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape', repeat: true });
+
+    expect(screen.getByRole('dialog', { name: 'Task detail' })).toBeInTheDocument();
+    expect(within(sheet).getByText('Discard your unsaved edits?')).toBeInTheDocument();
+    expect(within(sheet).getByLabelText('Description')).toHaveValue('paragraphs of it');
+
+    // Still never a dead end: a deliberate second press leaves, exactly as before.
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('the heading takes focus for the screen reader without drawing a ring round itself', async () => {
+    const { user } = openDirtyDetail();
+    await user.click(await screen.findByText('Book the Tuesday slot'));
+    const sheet = await screen.findByRole('dialog', { name: 'Task detail' });
+    const heading = within(sheet).getByRole('heading', { name: 'Task detail' });
+
+    // Focused and announced — that part was right, and stays.
+    expect(document.activeElement).toBe(heading);
+    expect(heading).toHaveAttribute('tabindex', '-1');
+    // But not ringed. At `flex: 1` the app's own `:focus-visible` outline drew a full-width green box
+    // across the sheet whenever it was opened from the keyboard.
+    expect(heading.style.outline).toBe('none');
+
+    const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'index.html'), 'utf8');
+    // `tabindex="-1"` is script-focus only, so the shared ring skips it. Everything genuinely interactive
+    // still matches on its own element name and keeps the ring.
+    expect(html).toContain(':where(a, button, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible');
   });
 });

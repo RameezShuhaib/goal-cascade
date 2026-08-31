@@ -36,6 +36,16 @@ const FOCUSABLE =
 const focusables = (root: HTMLElement): HTMLElement[] =>
   Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.getAttribute('aria-hidden') !== 'true' && !el.hasAttribute('hidden'));
 
+/**
+ * Where focus goes when the discard strip is dismissed and the field it interrupted has since gone away —
+ * the first thing you can actually type into, or failing that the first stop in the sheet. Never `<body>`:
+ * outside the dialog is the one place an `aria-modal` sheet may not put you.
+ */
+const firstField = (root: HTMLElement): HTMLElement | undefined => {
+  const items = focusables(root);
+  return items.find((el) => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) ?? items[0];
+};
+
 export interface SheetProps {
   onClose: () => void;
   children: ReactNode;
@@ -62,6 +72,8 @@ export function Sheet({ onClose, children, label, headerRight, grip = false, uns
   const sheetRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
+  /** Where the caret was when the strip went up, so `Keep editing` can put it back mid-sentence. */
+  const interruptedRef = useRef<HTMLElement | null>(null);
   const [confirming, setConfirming] = useState(false);
 
   /**
@@ -70,6 +82,8 @@ export function Sheet({ onClose, children, label, headerRight, grip = false, uns
    */
   const requestClose = useCallback(() => {
     if (unsaved && !confirming) {
+      // Remembered BEFORE the strip mounts and steals focus — this is the field being typed into.
+      interruptedRef.current = document.activeElement as HTMLElement | null;
       setConfirming(true);
       return;
     }
@@ -87,9 +101,26 @@ export function Sheet({ onClose, children, label, headerRight, grip = false, uns
     };
   }, []);
 
-  // Keep focus inside while the strip is up, so the choice cannot be tabbed past.
+  // Keep focus inside while the strip is up, so the choice cannot be tabbed past — and put it BACK when the
+  // strip goes away.
+  //
+  // Dismissing the strip unmounts the button that holds focus, and the browser's answer to that is `<body>`:
+  // outside the dialog, mid-sentence, with the caret gone (docs/work/09-e2e-browser, re-verification nit 1).
+  // The trap still held — the next Tab re-entered the sheet — but a keyboard user had lost their place in a
+  // sheet they had just chosen to stay in, which is the opposite of what `Keep editing` promises.
   useEffect(() => {
-    if (confirming) keepRef.current?.focus();
+    if (confirming) {
+      keepRef.current?.focus();
+      return;
+    }
+    const interrupted = interruptedRef.current;
+    interruptedRef.current = null;
+    const el = sheetRef.current;
+    if (!interrupted || !el) return;
+    // Back to the field, unless the render that dismissed the strip also took it away (a link removed, a
+    // `Save changes` button that is no longer dirty) — then the first field, never `<body>`.
+    if (interrupted.isConnected && el.contains(interrupted)) interrupted.focus();
+    else firstField(el)?.focus();
   }, [confirming]);
 
   useEffect(() => {
@@ -100,6 +131,11 @@ export function Sheet({ onClose, children, label, headerRight, grip = false, uns
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
+        // "Ask once, then out" counts DELIBERATE presses. Held down, Escape auto-repeats at ~30/s after
+        // half a second, so the first repeat would answer the question the user has not been shown yet and
+        // throw the draft away — the strip appears and vanishes inside one keypress. A repeat may raise the
+        // strip; it may never be the press that discards.
+        if (e.repeat && confirming) return;
         requestClose();
         return;
       }
@@ -131,7 +167,7 @@ export function Sheet({ onClose, children, label, headerRight, grip = false, uns
     // Capture, so a field that stops propagation cannot swallow Escape.
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [requestClose]);
+  }, [confirming, requestClose]);
 
   return (
     <>
