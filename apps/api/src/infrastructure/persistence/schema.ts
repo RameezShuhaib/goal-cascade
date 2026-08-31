@@ -329,6 +329,21 @@ export const backlogItems = sqliteTable(
     capturedAt: text('captured_at').notNull(),
     /** D-12 — the Monday of the week the task was LIVE in when it was moved out. */
     fromWeekStart: text('from_week_start'),
+    /**
+     * ⚠ **A1, new (R-backlog-17)** — the manual position within this item's OWN goal's list.
+     *
+     * An **opaque, lexicographically ordered string** and never a position index: an index has to be
+     * rewritten across the whole list on every insert and is racy against a concurrent one, whereas a
+     * mid-point key lets a reorder write exactly one row. The scheme is fixed-width zero-padded decimal
+     * (`domain/sort-keys.ts`), so lexicographic order IS numeric order and SQLite needs no collation of
+     * its own.
+     *
+     * **Deliberately not unique.** R-backlog-17 makes the order total with `sort_key` asc, then
+     * `captured_at` desc, then `id` desc, precisely so that two captures landing on the same key in the
+     * same millisecond resolve rather than one of them failing to write. A unique index here would turn a
+     * tie into a lost capture.
+     */
+    sortKey: text('sort_key').notNull().default(''),
     status: text('status', { enum: BACKLOG_STATUSES }).notNull().default('open'),
     convertedToTaskId: text('converted_to_task_id'),
     convertedAt: text('converted_at'),
@@ -337,9 +352,21 @@ export const backlogItems = sqliteTable(
     version: integer('version').notNull().default(1),
   },
   (t) => [
-    // R-backlog-5 / Q-7 — newest first within a group: `captured_at` desc, `id` desc.
+    // R-backlog-5 / R-backlog-21 / Q-7 — the CROSS-GOAL order, which manual ordering does not touch:
+    // `captured_at` desc, `id` desc. It serves the Backlog page's group order, the Life-goal aggregate and
+    // the pull list, none of which has a manual order to render (two items on different goals have no
+    // relative position at all).
     index('ix_backlog_owner').on(t.userId, t.status, t.capturedAt, t.id),
     index('ix_backlog_goal').on(t.userId, t.goalId, t.status),
+    /**
+     * ⚠ **A1, new (R-backlog-17/21)** — the WITHIN-GOAL order, served with no filesort:
+     * `WHERE user_id=? AND goal_id=? AND status='open' ORDER BY sort_key, …`.
+     *
+     * `sort_key` sits after the two equality columns and the status, which is what makes the ordering
+     * free; `id` closes it so the index covers the tie-break's last term. This is the only list in the
+     * product with a manual order, and it is the only index that carries one.
+     */
+    index('ix_backlog_goal_sort').on(t.userId, t.goalId, t.status, t.sortKey, t.id),
     uniqueIndex('ux_backlog_converted_task')
       .on(t.convertedToTaskId)
       .where(sql`converted_to_task_id IS NOT NULL`),

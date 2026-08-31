@@ -23,17 +23,48 @@ describe('The Backlog page (R-backlog-13)', () => {
     renderApp(<AppShell />, { route: '/backlog' });
 
     expect(await screen.findByText('Find a squat rack that is free at 7am')).toBeInTheDocument();
-    // The grouping is resolved from the scoped lens reads the client already holds (R-lens-16).
+    // ⚠ **A2** — the branch path is the SERVER's now (`goalTitle` + `lifeGoalTitle`), so it is exact for
+    // every item rather than resolved from whichever lens pages the client happened to be holding.
     expect(await screen.findByText('Be strong at 60 › Lift three times a week')).toBeInTheDocument();
     // D-12 — the week the task was LIVE in, an absolute Monday, not "this week".
     expect(screen.getByText('from week of Mon 24 Aug')).toBeInTheDocument();
   });
 
-  it('D-27: an item whose goal is not in any page the client holds is still reachable, not dropped', async () => {
-    withBacklog([F.backlogItem({ goalId: F.ulid(98) })]);
+  it('S-backlog-13-1 (retired D-27 `Elsewhere`): an item on a goal in ANY period gets its own exact header', async () => {
+    /**
+     * ⚠ **RETIRED — "an item whose goal is not in any page the client holds falls under `Elsewhere`".**
+     *
+     * **Verdict: R-backlog-13.** The bucket was never a product rule. It was the honest rendering of a
+     * WIRE gap: `BacklogItemView` carried a `goalId` and no title, so the page guessed the branch path
+     * from the current period's four lens reads and surfaced the misses rather than dropping them (D-27's
+     * position, which is about not dropping rows and is untouched). `goalTitle` and `lifeGoalTitle` are on
+     * the wire now, resolved server-side from the interior tree, so there is no miss left to bucket.
+     *
+     * The assertion is INVERTED rather than deleted, so the bucket cannot come back unnoticed: an item on
+     * a goal that appears in NO lens page this client holds — last quarter's goal — must still be headed
+     * by its own branch path, and the word `Elsewhere` must appear nowhere.
+     */
+    withBacklog([
+      F.backlogItem({
+        goalId: F.ulid(98),
+        goalTitle: 'Something from last quarter',
+        lifeGoalTitle: 'Be strong at 60',
+      }),
+    ]);
     renderApp(<AppShell />, { route: '/backlog' });
-    expect(await screen.findByText('Elsewhere')).toBeInTheDocument();
+
+    expect(await screen.findByText('Be strong at 60 › Something from last quarter')).toBeInTheDocument();
     expect(screen.getByText('Find a squat rack that is free at 7am')).toBeInTheDocument();
+    expect(screen.queryByText('Elsewhere')).not.toBeInTheDocument();
+  });
+
+  it('R-lens-20: an item whose chain reaches no Life goal is named by its own goal, never bucketed', async () => {
+    // The one case that has no `<Life goal> ›` prefix to render. It is a data-integrity surface, so the
+    // row still appears and still says which goal it is on — surfacing beats inventing a heading.
+    withBacklog([F.backlogItem({ goalId: F.ulid(97), goalTitle: 'An orphaned goal', lifeGoalTitle: null })]);
+    renderApp(<AppShell />, { route: '/backlog' });
+    expect(await screen.findByText('An orphaned goal')).toBeInTheDocument();
+    expect(screen.queryByText('Elsewhere')).not.toBeInTheDocument();
   });
 
   it('R-backlog-13: the empty state', async () => {

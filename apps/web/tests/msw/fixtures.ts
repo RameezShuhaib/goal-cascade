@@ -1,6 +1,7 @@
 import { API_TOKEN_PREFIX, MCP_PATH } from '@goal-cascade/shared';
 import type {
   BacklogItemView,
+  GoalRefView,
   GoalView,
   Horizon,
   LearningView,
@@ -123,11 +124,18 @@ export const taskDetail = (over: Partial<TaskDetailView> = {}): TaskDetailView =
 export const backlogItem = (over: Partial<BacklogItemView> = {}): BacklogItemView => ({
   id: ulid(40),
   goalId: ulid(2),
+  // ⚠ **A2 (R-backlog-13)** — the branch path is the SERVER's now. The default matches `M` / `L` below,
+  // which is the goal the default item hangs off, so a fixture that forgets to override `goalId` and the
+  // labels together fails loudly rather than rendering a header for the wrong goal.
+  goalTitle: 'Lift three times a week',
+  lifeGoalTitle: 'Be strong at 60',
   title: 'Find a squat rack that is free at 7am',
   description: '',
   links: [],
   capturedAt: NOW,
   fromWeekStart: null,
+  /** ⚠ **A1 (R-backlog-17)** — opaque, server-minted, never parsed by the client. */
+  sortKey: '000001000000',
   status: 'open',
   convertedToTaskId: null,
   convertedAt: null,
@@ -265,6 +273,10 @@ export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensRespo
   return {
     nextCursor: null,
     hasForwardContent: false,
+    // R-lens-24 — an account with life goals that has used this horizon before is the ORDINARY case, so
+    // it is the default; the two empty states are what a test opts into.
+    hasAnyAtHorizon: true,
+    hasLifeGoals: true,
     serverNow: NOW,
     ...over,
     lens: over.lens,
@@ -273,7 +285,27 @@ export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensRespo
     items,
     carried: over.carried ?? [],
     tasks: over.tasks ?? [],
+    // R-lens-23 — one entry per DISTINCT parent, with Life parents left out (the suppression is an
+    // absence). Derived here exactly as `GoalService.lens` derives it, from the same fixture tree.
+    parents: over.parents ?? parentsOf([...items, ...(over.carried ?? [])]),
   };
+}
+
+/** Every interior goal in the fixture account, by id — the set `GoalService` resolves parent lines from. */
+const INTERIOR = (): GoalView[] => [...lifeGoals(), ...yearlyGoals(), ...quarterlyGoals(), ...monthlyGoals()];
+
+function parentsOf(items: readonly GoalView[]): GoalRefView[] {
+  const byId = new Map(INTERIOR().map((g) => [g.id, g]));
+  const out: GoalRefView[] = [];
+  const seen = new Set<string>();
+  for (const g of items) {
+    if (g.parentId === null || seen.has(g.parentId)) continue;
+    seen.add(g.parentId);
+    const parent = byId.get(g.parentId);
+    if (!parent || parent.horizon === 'Life') continue;
+    out.push({ id: parent.id, title: parent.title, period: parent.period });
+  }
+  return out;
 }
 
 const defaultKey = (h: Horizon) => (h === 'Yearly' ? '2026' : h === 'Quarterly' ? '2026-Q3' : h === 'Monthly' ? '2026-08' : THIS_MONDAY);

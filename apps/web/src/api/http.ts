@@ -42,6 +42,7 @@ import {
   type MoveGoalRequest,
   type MoveTaskToBacklogRequest,
   type PatchBacklogItemRequest,
+  type ReorderBacklogItemRequest,
   type PatchGoalRequest,
   type PatchLearningRequest,
   type PatchPreferencesRequest,
@@ -323,6 +324,13 @@ export class HttpApiClient {
   }
   moveBacklogItem(id: string, body: MoveBacklogItemRequest, key: string) {
     return this.request('POST', ENDPOINTS.backlogItemMove(id), BacklogItemResponse, { body, idempotencyKey: key });
+  }
+  /**
+   * R-backlog-19 — the manual order, as one RELATIVE move: `after`, `before`, `to`. The client never
+   * computes, parses or sends a `sortKey`; there is no field for one.
+   */
+  reorderBacklogItem(id: string, body: ReorderBacklogItemRequest, key: string) {
+    return this.request('POST', ENDPOINTS.backlogItemReorder(id), BacklogItemResponse, { body, idempotencyKey: key });
   }
   /** R-backlog-6 — the only way backlog becomes work. The item is CONVERTED, never duplicated (D-19). */
   convertBacklogItem(id: string, body: ConvertBacklogItemRequest, key: string) {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   BacklogItemView,
+  GoalRefView,
   GoalView,
   Horizon,
   Iso,
@@ -90,12 +91,56 @@ export const LensResponse = z.object({
   /** Q-12 / R-lens-16 — the opaque cursor for the next page, or `null` when this is the last one. */
   nextCursor: z.string().nullable(),
   /**
+   * ⚠ **A2, new (R-lens-23)** — **the parent lines, as a lookup keyed off `GoalView.parentId`.**
+   *
+   * One entry per DISTINCT parent of the goals in `items` + `carried`; the client looks its item's
+   * `parentId` up and renders `under <title>` when it finds one.
+   *
+   * **A map, not a field on each item, and the reason is the cap.** A Weekly lens page is bounded by
+   * `MAX_WEEKLY_GOALS_PER_WEEK` — 50 goals in one week — and those 50 hang off a handful of Monthly goals,
+   * because that is what a month *is*. Denormalising the parent onto each item would repeat the same title
+   * up to fifty times in one payload (~6 kB at the cap, most of it duplicate); the distinct-parent map is
+   * a few hundred bytes and cannot get larger than the denormalised form even in the pathological case
+   * where every item has its own parent.
+   *
+   * **The suppression rule is the server's, and it is expressed as an ABSENCE** (R-lens-23: nothing renders
+   * when the parent is the group's own Life goal). A Life parent is simply not put in this map, so a
+   * client that renders every hit it finds implements the rule by doing nothing. That also covers the
+   * Yearly lens, whose items' parents are always Life goals, with no horizon test on either side.
+   */
+  parents: z.array(GoalRefView),
+  /**
    * R-lens-26 — the dot on the forward chevron: does ANY later period at this horizon hold at least one
    * goal, or one task originating in it? One dot, no number. Without it a goal written three months out
    * is invisible from every screen except that month's, which unbounded forward creation makes far more
    * likely than it was.
    */
   hasForwardContent: z.boolean(),
+  /**
+   * ⚠ **A2, new (R-lens-24)** — **has this horizon EVER held a goal, in any period?**
+   *
+   * It is what separates R-lens-6's *"`Q3 2026` is unclaimed"* (this period is empty) from R-lens-24's
+   * *"Nothing quarterly yet"* (you have never used this lens). The two copies say different things and
+   * only one of them can be true, so the client cannot pick between them from a period-scoped payload —
+   * `hasForwardContent` only looks forward, and saying "nothing quarterly yet" to someone with last year's
+   * quarterly goals is a lie.
+   *
+   * **It is never a second scan.** For the four INTERIOR horizons the answer is already in memory: the
+   * lens read loads the interior tree once per request (R-lens-27) and it contains every Yearly, Quarterly
+   * and Monthly goal the account has, so this is an array test costing nothing. Only **Weekly** needs the
+   * database, and only when the page came back empty — a `(user_id, horizon)` exact-prefix seek on
+   * `ix_goals_lens` with `LIMIT 1`, which never counts and never fetches a second row. A non-empty page
+   * answers `true` with no query at all.
+   */
+  hasAnyAtHorizon: z.boolean(),
+  /**
+   * R-lens-24's other half — *"When the account has Life goals but no goals at this horizon…"*. A brand
+   * new account gets the cold-start state, not "Nothing quarterly yet" beside a `+ Quarterly goal` button
+   * with no legal parent to hang it off.
+   *
+   * Free: the interior tree the lens already read contains every Life goal (R-lens-2).
+   */
+  hasLifeGoals: z.boolean(),
   serverNow: Iso,
 });
 

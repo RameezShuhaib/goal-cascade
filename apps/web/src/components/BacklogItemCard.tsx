@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { BacklogItemView } from '@goal-cascade/shared';
+import type { ReorderControlProps, ReorderMenu } from './ReorderableList';
 import { useUI } from '../context/UIContext';
 import { useDeleteBacklogItem, useLens, useMoveBacklogItem } from '../api/queries';
 import { useWeekClock } from '../lib/weekClock';
@@ -27,11 +28,19 @@ export function BacklogItemCard({
   selected,
   onSelect,
   goalLabel,
+  reorder,
 }: {
   item: BacklogItemView;
   selected: boolean;
   onSelect: (id: string | null) => void;
   goalLabel?: string;
+  /**
+   * R-backlog-22 — the row's half of the manual order: the always-visible control, and the four menu
+   * actions that make grab mode optional. Absent on a list that has no manual order to render — the
+   * Life-goal read-only aggregate (R-backlog-12, S-backlog-21-1) and the pull list (R-backlog-28), both
+   * of which span several goals and therefore have no order to rearrange (R-backlog-21).
+   */
+  reorder?: { control: ReorderControlProps; menu: ReorderMenu; grabbed: boolean };
 }) {
   const S = useSkin();
   const ui = useUI();
@@ -47,8 +56,8 @@ export function BacklogItemCard({
   const monthly = useLens('Monthly', undefined, moving);
   const targets = [...(yearly.data?.items ?? []), ...(quarterly.data?.items ?? []), ...(monthly.data?.items ?? [])].filter((g) => g.id !== item.goalId);
 
-  return (
-    <div style={{ background: S.T.card, borderRadius: 12, padding: '12px 14px', border: `1px solid ${selected ? S.ring : S.T.line}` }}>
+  const body = (
+    <>
       <button
         type="button"
         onClick={() => {
@@ -66,7 +75,6 @@ export function BacklogItemCard({
         {/* R-task-15 / D-12 — the week the task was LIVE in, an absolute Monday, not "this week". */}
         {item.fromWeekStart && <div style={{ fontSize: 11.5, color: S.T.mut, marginTop: 2 }}>from week of {weekLabel(item.fromWeekStart)}</div>}
       </button>
-
       {selected && moving && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
           {targets.map((g) => (
@@ -116,10 +124,64 @@ export function BacklogItemCard({
           <button type="button" style={S.menuBtn} onClick={() => setMoving(true)}>
             Move to another goal
           </button>
+          {/*
+           * R-backlog-22 (4) — `Move up` / `Move down` / `Move to top` / `Move to bottom`, so the whole
+           * feature is reachable **without ever entering grab mode**. They are absent, not disabled, at
+           * the ends: a disabled `Move up` on the first row invites "why?" on every list.
+           */}
+          {reorder?.menu.moveUp && (
+            <button type="button" style={S.menuBtn} onClick={reorder.menu.moveUp}>
+              Move up
+            </button>
+          )}
+          {reorder?.menu.moveDown && (
+            <button type="button" style={S.menuBtn} onClick={reorder.menu.moveDown}>
+              Move down
+            </button>
+          )}
+          {reorder?.menu.moveTop && (
+            <button type="button" style={S.menuBtn} onClick={reorder.menu.moveTop}>
+              Move to top
+            </button>
+          )}
+          {reorder?.menu.moveBottom && (
+            <button type="button" style={S.menuBtn} onClick={reorder.menu.moveBottom}>
+              Move to bottom
+            </button>
+          )}
           <button type="button" style={S.dangerBtn} disabled={remove.isPending} onClick={() => remove.mutate({ id: item.id }, { onSuccess: () => onSelect(null) })}>
             Delete
           </button>
         </div>
+      )}
+    </>
+  );
+
+  /**
+   * With a manual order, the row is a two-column grid: the always-visible control, then the card body.
+   * The control is a SIBLING of the body's button rather than inside it — a button inside a button is not
+   * a control anyone can operate, and the reorder handle must be its own focus stop (R-backlog-22).
+   */
+  return (
+    <div
+      {...(reorder ? { 'data-reorder-row': item.id } : {})}
+      style={{
+        background: S.T.card,
+        borderRadius: 12,
+        padding: '12px 14px',
+        border: `1px solid ${reorder?.grabbed ? S.ring : selected ? S.ring : S.T.line}`,
+        ...(reorder?.grabbed ? { boxShadow: `0 2px 10px ${S.T.line}` } : {}),
+      }}
+    >
+      {reorder ? (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          {/* `type` is stated here and not in the props object: a button's type must be readable in the
+              source rather than inferred from a spread (`tests/screens/buttonTypes.test.tsx`). */}
+          <button type="button" {...reorder.control} />
+          <div style={{ flex: 1, minWidth: 0 }}>{body}</div>
+        </div>
+      ) : (
+        body
       )}
     </div>
   );

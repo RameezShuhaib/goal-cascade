@@ -1,24 +1,29 @@
 import { useMemo, useState } from 'react';
 import type { BacklogItemView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useBacklog, useLens } from '../api/queries';
+import { useBacklog } from '../api/queries';
 import { TopActions } from '../components/TopActions';
 import { BacklogItemCard } from '../components/BacklogItemCard';
-import { Empty, Loading, LoadError } from '../components/states';
+import { useReorderList } from '../components/ReorderableList';
+import { Empty, FieldError, Loading, LoadError } from '../components/states';
 import { useSkin } from '../skin';
 
 /**
- * R-backlog-13 — the full backlog page: grouped by `<Life goal> › <owning goal>`, newest first.
+ * R-backlog-13 — the full backlog page: grouped by `<Life goal> › <owning goal>`.
  *
- * The ORDER is the server's (`capturedAt` desc, `id` desc — Q-7/D-17) and nothing here re-sorts.
+ * ⚠ **A2 — the grouping is EXACT now, and the `Elsewhere` bucket is gone.** It existed because a
+ * `BacklogItemView` carried a `goalId` and no title, so the page guessed the branch path from the current
+ * period's lens reads and bucketed every miss — an item on last quarter's goal, an item on a goal three
+ * months out — under a heading that named a client limitation rather than anything about the owner's
+ * plan. The server resolves `goalTitle` and `lifeGoalTitle` now, from the interior tree it already reads
+ * (R-lens-27), so every item lands under its own goal and the four extra lens reads this page used to
+ * make are deleted with the guess.
  *
- * ⚠ **A2** — the grouping is now best-effort, and the reason is a real limit rather than a shortcut. A
- * `BacklogItemView` carries `goalId` and no title, and the client holds no tree to look one up in
- * (R-lens-16). Three scoped lens reads — this year's, this quarter's and this month's goals, which is
- * where backlog items overwhelmingly sit — plus the Life lens give most items a header; anything they do
- * not cover falls into **`Elsewhere`** rather than being dropped, which is the position `orderedTree`
- * already took for a broken chain (D-27). Recorded in `docs/work/17-lens-web/build.md`: the honest fix is
- * an owning-goal label on the wire, not more reads from here.
+ * **Two orders, both the server's, and neither of them re-computed here** (R-backlog-21):
+ *  - the GROUPS are newest-first — group order is its newest item's `capturedAt`, which is what falls out
+ *    of taking the goals in first-appearance order of the payload;
+ *  - **within** a group it is that goal's manual order (R-backlog-17), which is the arrangement the
+ *    server sent and the arrangement `useReorderList` rearranges.
  *
  * R-nav-2 — this page has no tab. It is reached from the `+` drawer or a goal's detail page.
  */
@@ -28,34 +33,32 @@ export function BacklogScreen() {
   const backlogQ = useBacklog();
   const [selected, setSelected] = useState<string | null>(null);
 
-  const life = useLens('Life');
-  const yearly = useLens('Yearly');
-  const quarterly = useLens('Quarterly');
-  const monthly = useLens('Monthly');
+  const items = useMemo(() => backlogQ.data?.items ?? [], [backlogQ.data]);
 
-  const labels = useMemo(() => {
-    const lifeTitles = new Map((life.data?.items ?? []).map((g) => [g.id, g.title]));
-    const out = new Map<string, string>();
-    for (const g of [...(yearly.data?.items ?? []), ...(quarterly.data?.items ?? []), ...(monthly.data?.items ?? [])]) {
-      const root = g.lifeRootId ? lifeTitles.get(g.lifeRootId) : undefined;
-      out.set(g.id, root ? `${root} › ${g.title}` : g.title);
+  /**
+   * Group by owning goal, in first-appearance order. The server has already flattened its two ordering
+   * rules into one total order, so this walks the array once and re-sorts nothing.
+   */
+  const groups = useMemo(() => {
+    const out: { goalId: string; title: string; items: BacklogItemView[] }[] = [];
+    const at = new Map<string, number>();
+    for (const item of items) {
+      const existing = at.get(item.goalId);
+      if (existing !== undefined) {
+        out[existing]!.items.push(item);
+        continue;
+      }
+      at.set(item.goalId, out.length);
+      // `lifeGoalTitle` is null only when the chain does not reach a Life goal — R-lens-20's UNSORTED
+      // condition, a data-integrity surface. The row is still named by its own goal, never bucketed.
+      out.push({
+        goalId: item.goalId,
+        title: item.lifeGoalTitle ? `${item.lifeGoalTitle} › ${item.goalTitle}` : item.goalTitle,
+        items: [item],
+      });
     }
     return out;
-  }, [life.data, yearly.data, quarterly.data, monthly.data]);
-
-  const items = backlogQ.data?.items ?? [];
-  const groups: { key: string; title: string; items: BacklogItemView[] }[] = [];
-  const seen = new Set<string>();
-  for (const item of items) {
-    const title = labels.get(item.goalId);
-    if (!title) continue;
-    if (!seen.has(item.goalId)) {
-      seen.add(item.goalId);
-      groups.push({ key: item.goalId, title, items: items.filter((b) => b.goalId === item.goalId) });
-    }
-  }
-  const orphans = items.filter((b) => !labels.has(b.goalId));
-  if (orphans.length) groups.push({ key: '__elsewhere', title: 'Elsewhere', items: orphans });
+  }, [items]);
 
   const failed = backlogQ.error;
   const pending = backlogQ.isPending && !failed;
@@ -85,14 +88,47 @@ export function BacklogScreen() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginTop: 20 }}>
         {groups.map((grp) => (
-          <div key={grp.key}>
-            <div style={{ ...S.sectionLabel, marginBottom: 7 }}>{grp.title}</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {grp.items.map((b) => (
-                <BacklogItemCard key={b.id} item={b} selected={selected === b.id} onSelect={setSelected} />
-              ))}
-            </div>
-          </div>
+          <BacklogGroup key={grp.goalId} title={grp.title} items={grp.items} selected={selected} onSelect={setSelected} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One goal's group — and therefore one re-orderable list (R-backlog-21: a manual order exists within a
+ * goal and nowhere else, so each group owns its own grab state and its own live region).
+ */
+function BacklogGroup({
+  title,
+  items,
+  selected,
+  onSelect,
+}: {
+  title: string;
+  items: BacklogItemView[];
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const S = useSkin();
+  const list = useReorderList({ items, goalTitle: title });
+
+  return (
+    <div data-reorder-list={items[0]?.goalId ?? ''}>
+      <div style={{ ...S.sectionLabel, marginBottom: 7 }}>{title}</div>
+      {/* R-backlog-23 — one live region per list, assertive for the duration of a grab. */}
+      {list.liveRegion}
+      {/* Q-14 / R-nav-13 — a refused reorder is a lost write, and a toast alone is insufficient. */}
+      {list.error && <FieldError>{list.error}</FieldError>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {list.order.map((b) => (
+          <BacklogItemCard
+            key={b.id}
+            item={b}
+            selected={selected === b.id}
+            onSelect={onSelect}
+            reorder={{ control: list.controlProps(b), menu: list.menuFor(b), grabbed: list.grabbedId === b.id }}
+          />
         ))}
       </div>
     </div>

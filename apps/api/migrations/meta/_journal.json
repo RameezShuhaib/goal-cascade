@@ -29,6 +29,13 @@
       "when": 1788209962141,
       "tag": "0003_weekly_horizon",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788217764132,
+      "tag": "0004_backlog_sort_key",
+      "breakpoints": true
     }
   ]
 }

@@ -23,7 +23,8 @@ import {
 import { inject, injectable } from 'tsyringe';
 import type { BacklogItem, BacklogLink, Goal, Task, TaskLink } from '../../domain/entities';
 import { DomainError, notFound } from '../../domain/errors';
-import { indexTree, isLifeHorizon, lifeRootIn } from '../../domain/goal-tree';
+import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
+import { FIRST_SORT_KEY, topKey } from '../../domain/sort-keys';
 import { isPastPeriod, labelOf, periodKeyOf } from '../../domain/periods';
 import { carryWeeks, dateInTimezone, weekStartFromOffset } from '../../domain/weeks';
 import type { RequestContext } from '../context';
@@ -52,7 +53,7 @@ import {
   toEventView,
 } from './activity-log';
 import { GuardedBatch } from './guarded-batch';
-import { toLinkView, toTaskView, weekView } from './views';
+import { backlogLabelsOf, toBacklogItemView, toTaskView, weekView } from './views';
 
 /**
  * The task lifecycle — R-task-3..50, Q-6, Q-17, D-1, D-4, D-12, D-13, D-15.
@@ -340,8 +341,12 @@ export class TaskService {
     this.assertOpenForExit(task);
     // R-task-36 — the week may be a future one: changing your mind about next week is not a fourth exit.
     const fromWeekStart = this.resolveWeekFor(ctx, task, input.week, { allowFuture: true });
-    const host = await this.nearestBacklogHost(ctx, task.goalId);
+    const { host, interior } = await this.nearestBacklogHost(ctx, task.goalId);
     const taskLinks = await this.links.listByTasks(ctx.userId, [task.id]);
+    // ⚠ **A1 (R-backlog-18)** — an item arriving by the Move-to-Backlog exit lands at the TOP of its host
+    // goal's list, exactly like any other capture. There is one rule about where a new item goes and this
+    // is not an exception to it.
+    const top = topKey(await this.backlog.topSortKey(ctx.userId, host.id));
 
     const now = ctx.now;
     const item: BacklogItem = {
@@ -352,6 +357,7 @@ export class TaskService {
       description: task.description,
       capturedAt: now,
       fromWeekStart,
+      sortKey: top ?? FIRST_SORT_KEY,
       status: 'open',
       convertedToTaskId: null,
       convertedAt: null,
@@ -387,7 +393,7 @@ export class TaskService {
 
     return {
       task: await this.detail(ctx, next, fromWeekStart),
-      item: toBacklogItemView(item, itemLinks),
+      item: toBacklogItemView(item, itemLinks, backlogLabelsOf(interior, host.id)),
       serverNow: ctx.now,
     };
   }
@@ -560,16 +566,18 @@ export class TaskService {
    * one read and O(d) hops. A **Life** root is not a legal host (R-backlog-2), so a Weekly goal hung
    * directly off a Life goal is refused rather than given an invented home.
    */
-  private async nearestBacklogHost(ctx: RequestContext, weeklyGoalId: string): Promise<Goal> {
+  private async nearestBacklogHost(ctx: RequestContext, weeklyGoalId: string): Promise<{ host: Goal; interior: TreeIndex<Goal> }> {
     const goal = await this.goals.findById(ctx.userId, weeklyGoalId);
     if (!goal) throw notFound('goal');
-    if (goal.horizon !== 'Weekly') return goal;
+    // The index is returned alongside the host because the caller needs it again immediately, for
+    // R-backlog-13's branch-path labels on the item it is about to create. One read, two uses.
+    const interior = indexTree(await this.goals.listInterior(ctx.userId));
+    if (goal.horizon !== 'Weekly') return { host: goal, interior };
     if (goal.parentId === null) {
       throw new DomainError('LIFE_GOAL_NO_BACKLOG', 'this weekly goal has no goal above it that can hold a backlog item', {
         goalId: goal.id,
       });
     }
-    const interior = indexTree(await this.goals.listInterior(ctx.userId));
     const parent = interior.byId.get(goal.parentId);
     if (!parent || isLifeHorizon(parent.horizon)) {
       throw new DomainError('LIFE_GOAL_NO_BACKLOG', 'a life goal holds no backlog items; this task has nowhere above its week to go', {
@@ -578,7 +586,7 @@ export class TaskService {
         lifeRootId: parent ? lifeRootIn(interior, parent.id)?.id ?? null : null,
       });
     }
-    return parent;
+    return { host: parent, interior };
   }
 
   /**
@@ -671,20 +679,3 @@ export class TaskService {
   }
 }
 
-function toBacklogItemView(item: BacklogItem, links: readonly BacklogLink[]): BacklogItemView {
-  return {
-    id: item.id,
-    goalId: item.goalId,
-    title: item.title,
-    description: item.description,
-    links: links.map(toLinkView),
-    capturedAt: item.capturedAt,
-    fromWeekStart: item.fromWeekStart,
-    status: item.status,
-    convertedToTaskId: item.convertedToTaskId,
-    convertedAt: item.convertedAt,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    version: item.version,
-  };
-}

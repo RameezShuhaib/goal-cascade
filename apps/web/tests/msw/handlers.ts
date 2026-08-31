@@ -106,6 +106,9 @@ export const handlers: HttpHandler[] = [
   http.patch('/api/backlog/:id', () => HttpResponse.json(F.backlogItemResponse())),
   http.delete('/api/backlog/:id', () => HttpResponse.json({ deleted: true, serverNow: F.NOW })),
   http.post('/api/backlog/:id/move', cmd(() => HttpResponse.json(F.backlogItemResponse()))),
+  // ⚠ **A1, new (R-backlog-19)** — the relative move. The default happy path echoes the item; a test
+  // asserting the ORDER overrides it with a handler that actually rearranges its own list.
+  http.post('/api/backlog/:id/reorder', cmd(() => HttpResponse.json(F.backlogItemResponse()))),
   http.post(
     '/api/backlog/:id/convert-to-task',
     cmd(() =>

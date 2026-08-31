@@ -86,6 +86,7 @@ function rawItem(userId: string, goalId: string): BacklogItem {
     description: '',
     capturedAt: now,
     fromWeekStart: null,
+    sortKey: '000001000000',
     status: 'open',
     convertedToTaskId: null,
     convertedAt: null,

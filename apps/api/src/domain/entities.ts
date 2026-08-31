@@ -175,6 +175,12 @@ export type BacklogItem = {
   description: string;
   capturedAt: string;
   fromWeekStart: string | null;
+  /**
+   * ⚠ **A1 (R-backlog-17)** — the manual position within this item's own goal's list: an opaque,
+   * lexicographically ordered string minted by the server (`domain/sort-keys.ts`) and never by a client.
+   * Order within a goal is this asc, then `capturedAt` desc, then `id` desc.
+   */
+  sortKey: string;
   status: BacklogStatus;
   convertedToTaskId: string | null;
   convertedAt: string | null;

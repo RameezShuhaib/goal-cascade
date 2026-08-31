@@ -40,8 +40,12 @@ describe('the surface an agent connects to', () => {
      * `clear_goal_focus`, `save_weekly_plan`) with the entity (R-rm-2, R-rm-3), and `list_goals` with
      * the whole-tree read (R-lens-16) — plus `get_period` and `list_lens` replacing what they did.
      * **Added (3)**: `list_lens` (R-lens-16), `get_period` (R-goal-34), `repeat_last_week` (R-goal-46).
+     *
+     * ⚠ **A1** — 36 → 37. **Added (1)**: `reorder_backlog_item` (R-backlog-19), the relative move behind
+     * the manual per-goal backlog order. It is the only tool that writes a position, and there is
+     * deliberately no second one that writes an index.
      */
-    expect(tools).toHaveLength(36);
+    expect(tools).toHaveLength(37);
     expect(resources.length + templates.length).toBe(9);
     expect(prompts).toHaveLength(4);
 

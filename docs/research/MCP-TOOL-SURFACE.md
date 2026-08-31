@@ -1038,7 +1038,11 @@ BACKLOG AND LEARNINGS. Backlog items are deferred work on a Yearly/Quarterly/Mon
 life goal, and never a weekly goal, because an item has no week and a weekly goal would give it one.
 No checkbox, no due date, no status. Converting one is the only way backlog becomes work: it lands on
 a weekly goal for the target week, it consumes the item, and if two weekly goals qualify you must ask
-which. Learnings are insights, tagged to a life goal, and are never converted into work.
+which, and it leaves a gap in the goal's order rather than renumbering anything. Within one goal the
+order of parked items is the OWNER'S: they arrange it by hand, new items land on top, and
+reorder_backlog_item moves one relative to a neighbour — after it, before it, or to an end. There is
+no position number, and there is no order at all ACROSS goals, so never present the backlog as one
+ranked list. Learnings are insights, tagged to a life goal, and are never converted into work.
 
 NO REPORTS. There is no review wizard, no audit trail, no week report, no completion rate, no streak
 and no progress bar, and a goal has no "done" state at any horizon. Whether a week went well is

@@ -10,6 +10,7 @@ import type {
   LensResponse,
   LearningView,
   LifeGroupView,
+  GoalRefView,
   MoveGoalRequest,
   PatchGoalRequest,
   PeriodView,
@@ -60,7 +61,8 @@ import {
 } from '../ports';
 import type { GuardedWrite } from '../ports/statement';
 import { GuardedBatch } from './guarded-batch';
-import { toTaskView, weekView } from './views';
+import { newestFirst } from './backlog.service';
+import { backlogLabelsOf, toBacklogItemView, toTaskView, weekView } from './views';
 
 /**
  * Goals, and the five lenses (R-lens-1 … R-lens-27).
@@ -165,10 +167,11 @@ export class GoalService {
       .sort((a, b) => (a.periodKey === b.periodKey ? siblingCompare(a, b) : a.periodKey < b.periodKey ? -1 : 1));
 
     const rendered = [...page.items, ...carried];
-    const [backlogRows, forwardGoals, forwardTasks] = await Promise.all([
+    const [backlogRows, forwardGoals, forwardTasks, everAtHorizon] = await Promise.all([
       this.backlog.listOpenByGoals(ctx.userId, rendered.map((g) => g.id)),
       isLife ? Promise.resolve(false) : this.goals.hasLaterPeriod(ctx.userId, horizon, periodKey),
       horizon === 'Weekly' ? this.tasks.hasOriginAfter(ctx.userId, periodKey) : Promise.resolve(false),
+      this.everAtHorizon(ctx, horizon, interiorRows, rendered.length > 0),
     ]);
 
     const view = await this.viewContext(ctx, { interior, today, rendered, backlogRows });
@@ -186,9 +189,76 @@ export class GoalService {
       // carry mechanic and lose work silently.
       tasks: weekTasks.map((t) => toTaskView(t, [], periodKey, ctx.currentWeekStart)),
       nextCursor: page.nextCursor,
+      parents: this.parentsOf(interior, rendered),
       hasForwardContent: forwardGoals || forwardTasks,
+      hasAnyAtHorizon: everAtHorizon,
+      // R-lens-24's precondition, free: the interior tree the lens already read holds every Life goal.
+      hasLifeGoals: interiorRows.some((g) => isLifeHorizon(g.horizon)),
       serverNow: ctx.now,
     };
+  }
+
+  /**
+   * R-lens-23 — **the parent lines, as one entry per DISTINCT parent, with the suppression already
+   * applied.**
+   *
+   * A lens is flat and period-scoped, so an item's parent is usually not in the payload at all — a Weekly
+   * goal's Monthly parent lives in another lens entirely — and the client may not walk an ancestor chain
+   * it does not hold (R-lens-16, S-lens-16-2). This is the read that closes that gap, and it costs nothing:
+   * the interior tree is already in memory and every legal parent is in it (a Weekly goal is terminal, so
+   * it can never be one — R-goal-31).
+   *
+   * **The suppression is an ABSENCE, not a flag.** R-lens-23 renders nothing when the parent is the group's
+   * own Life goal, so a Life parent is simply left out and a client that renders every hit it finds
+   * implements the rule by doing nothing. That covers the Yearly lens — whose items all hang off Life
+   * goals — with no horizon test on either side, and it covers R-goal-32's level-skipped Monthly-under-Life
+   * goal by the same sentence.
+   *
+   * A **map keyed by `parentId`, not a field on each item**: at `MAX_WEEKLY_GOALS_PER_WEEK` a Weekly page
+   * is 50 goals hanging off a handful of Monthly ones, so denormalising would repeat the same title up to
+   * fifty times. The map cannot be larger than the denormalised form even when every item has its own
+   * parent, and is several times smaller in the shape a real week actually has.
+   */
+  private parentsOf(interior: TreeIndex<Goal>, rendered: readonly Goal[]): GoalRefView[] {
+    const out: GoalRefView[] = [];
+    const seen = new Set<string>();
+    for (const g of rendered) {
+      if (g.parentId === null || seen.has(g.parentId)) continue;
+      seen.add(g.parentId);
+      const parent = interior.byId.get(g.parentId);
+      // A missing parent is a dangling `parentId` — the same data problem that puts the item in UNSORTED
+      // (R-lens-20). It renders no line rather than an invented one.
+      if (!parent || isLifeHorizon(parent.horizon)) continue;
+      out.push({ id: parent.id, title: parent.title, period: parent.period });
+    }
+    return out;
+  }
+
+  /**
+   * R-lens-24 — has this horizon EVER held a goal, in any period? It is what separates *"`Q3 2026` is
+   * unclaimed"* from *"Nothing quarterly yet"*, and the two sentences cannot both be true.
+   *
+   * **It is never a second scan**, and the reason is the read the lens already does:
+   *
+   *  - a **non-empty page** answers `true` with no work at all;
+   *  - the four **interior** horizons are answered from `listInterior`, which by definition holds every
+   *    Yearly, Quarterly and Monthly goal the account has — an array test over rows already in memory;
+   *  - only **Weekly** reaches the database, and only on an empty page: a `(user_id, 'Weekly')`
+   *    exact-prefix seek on `ix_goals_lens` with `LIMIT 1`, which never counts and never fetches a second
+   *    row (R-lens-27).
+   *
+   * The **Life** lens has no third empty state — an empty Life lens is the account's cold start, which
+   * R-lens-6 already answers — so it reports `true` and the client never consults it.
+   */
+  private everAtHorizon(
+    ctx: RequestContext,
+    horizon: Horizon,
+    interiorRows: readonly Goal[],
+    pageHasItems: boolean,
+  ): Promise<boolean> {
+    if (pageHasItems || horizon === 'Life') return Promise.resolve(true);
+    if (horizon !== 'Weekly') return Promise.resolve(interiorRows.some((g) => g.horizon === horizon));
+    return this.goals.hasAnyAtHorizon(ctx.userId, 'Weekly');
   }
 
   /**
@@ -248,7 +318,15 @@ export class GoalService {
     const pullScope = ancestorChain.filter((a) => !isLifeHorizon(a.horizon)).map((a) => a.id);
 
     const [ownItems, pullItems, lineLearnings, weeklyTasks] = await Promise.all([
-      isWeekly ? Promise.resolve([]) : this.backlog.listOpenByGoals(ctx.userId, isLife ? subtree.filter((x) => x !== id) : [id]),
+      // ⚠ **A1 (R-backlog-11/17/21)** — TWO different orders, because they are two different rules. This
+      // goal's OWN block is one goal, so it renders that goal's MANUAL order; the Life roll-up spans
+      // several goals, where no manual order is defined at all and `capturedAt` desc is the only honest
+      // arrangement (S-backlog-21-1).
+      isWeekly
+        ? Promise.resolve([])
+        : isLife
+          ? this.backlog.listOpenByGoals(ctx.userId, subtree.filter((x) => x !== id))
+          : this.backlog.listOpenByGoalOrdered(ctx.userId, id),
       isWeekly && pullScope.length > 0 ? this.backlog.listOpenByGoals(ctx.userId, pullScope) : Promise.resolve([]),
       this.lineLearnings(ctx, interior, goal),
       isWeekly ? this.tasks.listByGoals(ctx.userId, [id]) : Promise.resolve([]),
@@ -264,9 +342,12 @@ export class GoalService {
       goal: this.toView(goal, view),
       ancestors: this.ancestorsOf(interior, goal).map((g) => this.toView(g, view)),
       children: children.map((g) => this.toView(g, view)),
-      backlog: ownItems.map((i) => backlogItemView(i, links)),
+      // The own-goal block arrives in its manual order and is NOT re-sorted here; the two cross-goal
+      // lists are put in `capturedAt` desc order explicitly, because each merges rows from several
+      // chunked queries and Q-7 asks for an order that is total rather than whatever storage returned.
+      backlog: (isLife ? newestFirst(ownItems) : ownItems).map((i) => toBacklogItemView(i, links, backlogLabelsOf(interior, i.goalId))),
       backlogIsAggregate: isLife,
-      pullList: pullItems.map((i) => backlogItemView(i, links)),
+      pullList: newestFirst(pullItems).map((i) => toBacklogItemView(i, links, backlogLabelsOf(interior, i.goalId))),
       tasks: weeklyTasks
         .filter((t) => t.status === 'open' || t.status === 'done')
         .map((t) => toTaskView(t, taskLinks, goal.periodKey, ctx.currentWeekStart)),
@@ -938,28 +1019,6 @@ function assertNoPeriodWrite(goal: Goal, patch: Partial<Goal>): void {
 function addWeeksTo(weekStart: string, n: number): string {
   const t = Date.parse(`${weekStart}T00:00:00.000Z`);
   return new Date(t + n * 7 * 86_400_000).toISOString().slice(0, 10);
-}
-
-/** Local projections. `BacklogService` / `LearningService` own the canonical ones; these read only. */
-function backlogItemView(
-  item: BacklogItem,
-  links: readonly { id: string; itemId: string; url: string; createdAt: string }[],
-): BacklogItemView {
-  return {
-    id: item.id,
-    goalId: item.goalId,
-    title: item.title,
-    description: item.description,
-    links: links.filter((l) => l.itemId === item.id).map((l) => ({ id: l.id, url: l.url, createdAt: l.createdAt })),
-    capturedAt: item.capturedAt,
-    fromWeekStart: item.fromWeekStart,
-    status: item.status,
-    convertedToTaskId: item.convertedToTaskId,
-    convertedAt: item.convertedAt,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    version: item.version,
-  };
 }
 
 function learningView(l: Learning): LearningView {

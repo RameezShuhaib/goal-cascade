@@ -66,7 +66,19 @@ describe('The task page — a route, not a sheet (S-task-45-1)', () => {
 
     // Never the current week: landing somewhere the task is not visible would read as a broken link.
     await user.click(screen.getByRole('button', { name: '‹ Week of Mon 10 Aug' }));
-    expect(await screen.findByText('Three easy runs and one long run')).toBeInTheDocument();
+    /**
+     * R-lens-14 — arriving here settles through TWO reads, not one: the lens loads `2026-08-10`, then
+     * rewrites the address bar to the server's own canonical period key (`replace`) and loads THAT. The
+     * body is unmounted and remounted in between.
+     *
+     * ⚠ The assertion is `waitFor(getBy…)` rather than `expect(await findBy…)` for that exact reason, and
+     * it is a strengthening rather than a relaxation: `findBy` resolves with the element it saw on one
+     * tick, and the second read can detach that element before the matcher runs — which fails as
+     * "could not be found in the document" on a screen that is about to be perfectly correct. This
+     * retries the whole assertion instead of trusting one snapshot of it. (It went red intermittently at
+     * HEAD too; it is not a new race.)
+     */
+    await waitFor(() => expect(screen.getByText('Three easy runs and one long run')).toBeInTheDocument());
   });
 
   it('R-task-45: the context line is the ancestry the task lost by leaving the tree, in one line', async () => {

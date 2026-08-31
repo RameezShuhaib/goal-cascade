@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import type { BacklogItemView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useCreateBacklogItem, useGoal } from '../api/queries';
 import { useWeekClock } from '../lib/weekClock';
 import { TaskRow } from '../components/TaskRow';
 import { BacklogItemCard } from '../components/BacklogItemCard';
+import { useReorderList } from '../components/ReorderableList';
 import { TopActions } from '../components/TopActions';
 import { FieldError, Loading, LoadError, commandError } from '../components/states';
 import { useSkin } from '../skin';
@@ -205,23 +207,32 @@ export function GoalDetailScreen() {
           <div style={{ ...S.sectionLabel, marginBottom: 8 }}>
             {detail.backlogIsAggregate ? `Backlog across this line (${detail.backlog.length})` : `Backlog (${detail.backlog.length})`}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {detail.backlog.map((b) =>
-              detail.backlogIsAggregate ? (
+          {detail.backlogIsAggregate ? (
+            /*
+             * R-backlog-12 / S-backlog-21-1 — the Life-goal roll-up spans several goals, so it is ordered
+             * `capturedAt` desc across all of them and **no reorder affordance is rendered here at all**.
+             * A manual order across goals is not defined and must not be invented (R-backlog-21), and a
+             * handle on a read-only aggregate would promise one.
+             */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {detail.backlog.map((b) => (
                 <div key={b.id} style={{ background: S.T.cardSoft, border: `1px solid ${S.T.lineSoft}`, borderRadius: 10, padding: '10px 12px' }}>
                   <div style={{ fontSize: 14, color: S.T.ink }}>{b.title}</div>
-                  <div style={{ fontSize: 12, color: S.T.mut, marginTop: 2 }}>added {capturedLabel(b.capturedAt)}</div>
+                  {/* R-backlog-12 — each row is labelled with the goal it actually belongs to. */}
+                  <div style={{ fontSize: 12, color: S.T.mut, marginTop: 2 }}>
+                    {b.goalTitle} · added {capturedLabel(b.capturedAt)}
+                  </div>
                 </div>
-              ) : (
-                <BacklogItemCard key={b.id} item={b} selected={selected === b.id} onSelect={setSelected} />
-              ),
-            )}
-            {detail.backlog.length === 0 && (
-              <div style={{ fontSize: 13, color: S.T.mut }}>
-                {detail.backlogIsAggregate ? 'Nothing deferred anywhere on this line.' : 'Nothing deferred on this goal.'}
-              </div>
-            )}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <OwnBacklog items={detail.backlog} goalTitle={goal.title} selected={selected} onSelect={setSelected} />
+          )}
+          {detail.backlog.length === 0 && (
+            <div style={{ fontSize: 13, color: S.T.mut }}>
+              {detail.backlogIsAggregate ? 'Nothing deferred anywhere on this line.' : 'Nothing deferred on this goal.'}
+            </div>
+          )}
           {detail.backlogIsAggregate ? (
             <button type="button" style={{ ...S.linkBtn, padding: '8px 0 0 0' }} onClick={() => navigate(BACKLOG_PATH)}>
               Open Backlog →
@@ -267,6 +278,40 @@ function Crumb({ label, onClick }: { label: string; onClick: () => void }) {
     >
       {label}
     </button>
+  );
+}
+
+/**
+ * R-backlog-11 + R-backlog-17 — one goal's OWN items, which is one goal, which is the one scope a manual
+ * order exists in (R-backlog-21). Same list component, same command and same announcements as the Backlog
+ * page: there is one reorder implementation in this app and this is its second caller.
+ */
+function OwnBacklog({
+  items,
+  goalTitle,
+  selected,
+  onSelect,
+}: {
+  items: BacklogItemView[];
+  goalTitle: string;
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const list = useReorderList({ items, goalTitle });
+  return (
+    <div data-reorder-list={items[0]?.goalId ?? ''} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {list.liveRegion}
+      {list.error && <FieldError>{list.error}</FieldError>}
+      {list.order.map((b) => (
+        <BacklogItemCard
+          key={b.id}
+          item={b}
+          selected={selected === b.id}
+          onSelect={onSelect}
+          reorder={{ control: list.controlProps(b), menu: list.menuFor(b), grabbed: list.grabbedId === b.id }}
+        />
+      ))}
+    </div>
   );
 }
 

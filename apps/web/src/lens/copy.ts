@@ -66,6 +66,34 @@ export function emptyCopy(lens: Horizon, label: string, isCurrent: boolean, isPa
 }
 
 /**
+ * R-lens-24 — **the third empty state: a lens empty at EVERY period.**
+ *
+ * `Q3 2026 is unclaimed` misleads someone who has never opened the Quarterly lens at all — it says *this
+ * quarter is empty*, which invites "so what was in the last one?", and the answer is "there has never been
+ * one". These four lines say the true thing instead, and each one explains what the horizon is FOR,
+ * because a person who has not used it does not need a period, they need a reason.
+ *
+ * There is no Life entry: an empty Life lens is the account's cold start, which `emptyCopy` already
+ * answers. Copy is UX-PLAN §7.2, verbatim.
+ */
+export function horizonEmptyCopy(lens: Exclude<Horizon, 'Life'>): EmptyCopy {
+  switch (lens) {
+    case 'Yearly':
+      return { title: 'Nothing yearly yet.', body: "A Life goal is the direction; a yearly goal is this year's version of it.", cta: true };
+    case 'Quarterly':
+      return { title: 'Nothing quarterly yet.', body: 'A quarter is long enough to change something and short enough to finish.', cta: true };
+    case 'Monthly':
+      return { title: 'Nothing monthly yet.', body: 'Months are where a quarter turns into something you can actually do.', cta: true };
+    default:
+      return {
+        title: 'Nothing weekly yet.',
+        body: 'Weekly goals are where tasks hang. Pick a monthly goal and give this week something concrete.',
+        cta: true,
+      };
+  }
+}
+
+/**
  * R-goal-47 — the planned-ness line on a Monthly goal, and **dormancy's one surface**.
  *
  * Four states, mapped 1:1 off `weeklyBreakdown`. `thisWeek` is null when the viewed month does not contain

@@ -102,6 +102,15 @@ export interface IGoalRepo {
   countByLens(userId: string, keys: readonly LensKey[]): Promise<LensCount[]>;
   /** R-lens-26 — does any later period at this horizon hold a goal? A `>` probe, `LIMIT 1`, no count. */
   hasLaterPeriod(userId: string, horizon: Goal['horizon'], afterKey: string): Promise<boolean>;
+  /**
+   * ⚠ **A2, new (R-lens-24)** — has this horizon EVER held a goal, in ANY period?
+   *
+   * A `(user_id, horizon)` exact-prefix seek on `ix_goals_lens` with `LIMIT 1`. It never counts and never
+   * fetches a second row, and it is called for exactly one horizon — **Weekly** — and only when that
+   * lens's page came back empty. Every other horizon is answered from the interior tree the request
+   * already holds, so this is never a second table scan (R-lens-27).
+   */
+  hasAnyAtHorizon(userId: string, horizon: Goal['horizon']): Promise<boolean>;
   /** Q-12 — the interior-goal cap, checked on create. */
   countInterior(userId: string): Promise<number>;
   /** Q-12 — the per-week Weekly-goal cap, checked on create. */
@@ -220,11 +229,31 @@ export interface IBacklogRepo {
   listOpen(userId: string, limit?: number): Promise<BacklogItem[]>;
   listOpenByGoals(userId: string, goalIds: readonly string[]): Promise<BacklogItem[]>;
   /**
+   * ⚠ **A1, new (R-backlog-17/19)** — ONE goal's open items in their **manual** order: `sort_key` asc,
+   * then `capturedAt` desc, then `id` desc, straight off `ix_backlog_goal_sort`.
+   *
+   * It is separate from `listOpenByGoals` because the two orders are different rules, not a parameter:
+   * within a goal the order is the owner's, and across goals there is no manual order at all
+   * (R-backlog-21). A single method taking a flag would let a cross-goal caller ask for a per-goal order
+   * that does not exist.
+   */
+  listOpenByGoalOrdered(userId: string, goalId: string): Promise<BacklogItem[]>;
+  /** R-backlog-18/20 — the top key of a goal's list, or `null` when it holds nothing. `LIMIT 1`. */
+  topSortKey(userId: string, goalId: string): Promise<string | null>;
+  /**
    * Q-5 — every item under a set of goals, converted ones included: a converted item still owns link
    * rows, and the subtree delete needs both the ids and the exact count for `expectedChanges`.
    */
   listByGoals(userId: string, goalIds: readonly string[]): Promise<BacklogItem[]>;
   insertStmt(item: BacklogItem): WriteStmt;
+  /**
+   * ⚠ **A1, new (R-backlog-19)** — the RE-KEY write: `sort_key` and nothing else.
+   *
+   * It deliberately does not bump `version` or `updatedAt`. A re-key is invisible to the client and
+   * changes no order, and the client never holds, parses or sends a key — so bumping the version would
+   * make every other device's pending edit lose a race to a write that changed nothing anybody can see.
+   */
+  setSortKeyStmt(userId: string, id: string, sortKey: string): WriteStmt;
   updateGuardedStmt(
     userId: string,
     id: string,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { HORIZONS, type GoalView, type Horizon, type LifeGroupView, type TaskView } from '@goal-cascade/shared';
+import { HORIZONS, type GoalRefView, type GoalView, type Horizon, type LifeGroupView, type TaskView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useLens, useRepeatWeek } from '../api/queries';
 import { useWeekClock } from '../lib/weekClock';
@@ -11,7 +11,7 @@ import { firstDayOf, PERIOD_UNIT, rank, stepPeriod, validKeyFor } from '../utils
 import { lensPath } from '../routes';
 import { LensRow, OffNowRow } from './LensRow';
 import { CarriedCard, LifeCard, MonthlyCard, PlainCard, WeeklyCard } from './cards';
-import { createLabel, emptyCopy, offNowBadge, UNSORTED_NOTE } from './copy';
+import { createLabel, emptyCopy, horizonEmptyCopy, offNowBadge, UNSORTED_NOTE } from './copy';
 
 /**
  * **A lens: a flat list of every goal at one horizon in one period, grouped by the Life goal each belongs
@@ -222,6 +222,11 @@ interface LensData {
   items: GoalView[];
   carried: GoalView[];
   tasks: TaskView[];
+  /** R-lens-23 — one entry per DISTINCT parent, Life parents already suppressed by the server. */
+  parents: GoalRefView[];
+  /** R-lens-24 — has this horizon ever held a goal, and does the account have Life goals at all? */
+  hasAnyAtHorizon: boolean;
+  hasLifeGoals: boolean;
   period: { periodKey: string; label: string; isCurrent: boolean; isPast: boolean } | null;
 }
 
@@ -239,10 +244,30 @@ function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: Lens
     [data.groups, data.items],
   );
 
+  /**
+   * R-lens-23 — the parent lines, indexed once per render. The client holds no tree and walks no ancestor
+   * chain (R-lens-16); this is a `Map` over the payload's own `parents` array.
+   */
+  const parents = useMemo(() => new Map(data.parents.map((p) => [p.id, p])), [data.parents]);
+
   if (data.items.length === 0 && data.carried.length === 0) {
-    const copy = emptyCopy(lens, label, data.period?.isCurrent ?? true, data.period?.isPast ?? false);
+    /**
+     * R-lens-24 — **three empty states, not two**, and the difference is what the server just told us.
+     *
+     * *"`Q3 2026` is unclaimed"* means *this period is empty*; *"Nothing quarterly yet"* means *you have
+     * never used this horizon*. They cannot both be true, and the client cannot tell them apart from a
+     * period-scoped payload — `hasForwardContent` only looks forward, so an account with last year's
+     * quarterly goals would have been told a flat lie.
+     *
+     * The horizon-level state also needs a Life goal to exist: with none, its `+ Quarterly goal` would
+     * have no legal parent to hang off, so a brand-new account gets R-lens-6's cold start instead.
+     */
+    const horizonLevel = lens !== 'Life' && !data.hasAnyAtHorizon && data.hasLifeGoals;
+    const copy = horizonLevel
+      ? horizonEmptyCopy(lens)
+      : emptyCopy(lens, label, data.period?.isCurrent ?? true, data.period?.isPast ?? false);
     return (
-      <div style={{ marginTop: 20 }}>
+      <div style={{ marginTop: 20 }} data-empty-state={horizonLevel ? 'horizon' : data.period?.isPast ? 'past-period' : 'period'}>
         <Empty title={copy.title} body={copy.body} action={copy.cta && canCreate ? <CreateButton lens={lens} periodKey={data.period?.periodKey ?? ''} /> : undefined} />
       </div>
     );
@@ -271,13 +296,14 @@ function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: Lens
           weekOffset={weekOffset}
           periodKey={data.period?.periodKey ?? ''}
           canCreate={canCreate}
+          parents={parents}
           // R-lens-19 — with exactly one group the header does not render at all. There is nothing to
           // disambiguate, and a header over the only group names the card beneath it.
           showHeader={rendered.length > 1}
         />
       ))}
       {lens === 'Weekly' && data.carried.length > 0 && (
-        <CarriedBand goals={data.carried} tasks={data.tasks} weekOffset={weekOffset} periodKey={data.period?.periodKey ?? ''} />
+        <CarriedBand goals={data.carried} tasks={data.tasks} weekOffset={weekOffset} periodKey={data.period?.periodKey ?? ''} parents={parents} />
       )}
       {data.items.length === 0 && (
         <div style={{ ...S.dashed, padding: '22px 20px', textAlign: 'center', fontSize: 13.5, color: S.T.mut }}>
@@ -320,6 +346,7 @@ function Group({
   weekOffset,
   periodKey,
   canCreate,
+  parents,
   showHeader,
 }: {
   lens: Horizon;
@@ -329,6 +356,7 @@ function Group({
   weekOffset: number;
   periodKey: string;
   canCreate: boolean;
+  parents: ReadonlyMap<string, GoalRefView>;
   showHeader: boolean;
 }) {
   const S = useSkin();
@@ -362,7 +390,15 @@ function Group({
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: showHeader ? 7 : 0 }}>
           {items.map((g) => (
-            <Item key={g.id} lens={lens} goal={g} tasks={tasks.filter((t) => t.goalId === g.id)} weekOffset={weekOffset} canCreate={canCreate} />
+            <Item
+              key={g.id}
+              lens={lens}
+              goal={g}
+              tasks={tasks.filter((t) => t.goalId === g.id)}
+              weekOffset={weekOffset}
+              canCreate={canCreate}
+              parent={g.parentId ? parents.get(g.parentId) : undefined}
+            />
           ))}
           {canCreate && (
             <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
@@ -419,10 +455,25 @@ function RepeatLastWeek({ lifeGoalId, weekStart }: { lifeGoalId: string; weekSta
   );
 }
 
-function Item({ lens, goal, tasks, weekOffset, canCreate }: { lens: Horizon; goal: GoalView; tasks: TaskView[]; weekOffset: number; canCreate: boolean }) {
-  if (lens === 'Weekly') return <WeeklyCard goal={goal} tasks={tasks} week={weekOffset} canCreate={canCreate} />;
-  if (lens === 'Monthly') return <MonthlyCard goal={goal} canCreate={canCreate} />;
-  return <PlainCard goal={goal} />;
+function Item({
+  lens,
+  goal,
+  tasks,
+  weekOffset,
+  canCreate,
+  parent,
+}: {
+  lens: Horizon;
+  goal: GoalView;
+  tasks: TaskView[];
+  weekOffset: number;
+  canCreate: boolean;
+  /** R-lens-23 — `undefined` when the server suppressed it, which is the whole of the rule here. */
+  parent?: GoalRefView;
+}) {
+  if (lens === 'Weekly') return <WeeklyCard goal={goal} tasks={tasks} week={weekOffset} canCreate={canCreate} parent={parent} />;
+  if (lens === 'Monthly') return <MonthlyCard goal={goal} canCreate={canCreate} parent={parent} />;
+  return <PlainCard goal={goal} parent={parent} />;
 }
 
 /**
@@ -437,7 +488,19 @@ function Item({ lens, goal, tasks, weekOffset, canCreate }: { lens: Horizon; goa
  *
  * Collapsible as a whole (Q-21), and there are **no create stops inside it** (§8.1).
  */
-function CarriedBand({ goals, tasks, weekOffset, periodKey }: { goals: GoalView[]; tasks: TaskView[]; weekOffset: number; periodKey: string }) {
+function CarriedBand({
+  goals,
+  tasks,
+  weekOffset,
+  periodKey,
+  parents,
+}: {
+  goals: GoalView[];
+  tasks: TaskView[];
+  weekOffset: number;
+  periodKey: string;
+  parents: ReadonlyMap<string, GoalRefView>;
+}) {
   const S = useSkin();
   const ui = useUI();
   const key = `Weekly|__carried|${periodKey}`;
@@ -456,7 +519,7 @@ function CarriedBand({ goals, tasks, weekOffset, periodKey }: { goals: GoalView[
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 7 }}>
           {goals.map((g) => (
-            <CarriedCard key={g.id} goal={g} tasks={tasks.filter((t) => t.goalId === g.id)} week={weekOffset} />
+            <CarriedCard key={g.id} goal={g} tasks={tasks.filter((t) => t.goalId === g.id)} week={weekOffset} parent={g.parentId ? parents.get(g.parentId) : undefined} />
           ))}
         </div>
       )}

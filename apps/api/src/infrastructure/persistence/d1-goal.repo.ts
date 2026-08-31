@@ -259,6 +259,26 @@ export class D1GoalRepo implements IGoalRepo {
   }
 
   /**
+   * ⚠ **A2, new (R-lens-24)** — has this horizon EVER held a goal, in any period?
+   *
+   * A `(user_id, horizon)` exact-prefix seek on `ix_goals_lens`, `LIMIT 1`. It is what separates "this
+   * period is empty" from "you have never used this lens", and the two copies say different things.
+   *
+   * **It is not a second scan and it is not a count.** `GoalService.lens` calls it for **Weekly** alone,
+   * and only when the page came back empty — every other horizon is answered from the interior tree that
+   * request already read (R-lens-27), at zero cost.
+   */
+  async hasAnyAtHorizon(userId: string, horizon: Goal['horizon']): Promise<boolean> {
+    const row = await this.db
+      .select({ id: goals.id })
+      .from(goals)
+      .where(and(eq(goals.userId, userId), eq(goals.horizon, horizon)))
+      .limit(1)
+      .get();
+    return row !== undefined;
+  }
+
+  /**
    * Q-12 — **the interior-goal cap**, counted on create. This is the set every request holds in memory
    * (R-lens-27), so it is the one number that protects the read strategy; it grows ~85/year, which makes
    * 1,000 a decade of headroom. It is deliberately NOT a lifetime cap on goals: that would be a cap on

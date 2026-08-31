@@ -62,7 +62,7 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
       { id: B.weeklyGoal, userId: B.userId, parentId: B.monthlyGoal, horizon: 'Weekly', title: "B's private week", why: '', pulse: 'On track', periodKey: WEEK, period: 'Week of 31 Aug', createdAt: NOW, updatedAt: NOW, version: 1 },
     ]);
     await db.insert(tasks).values({ id: B.task, userId: B.userId, goalId: B.weeklyGoal, title: "B's secret task", cond: '', description: '', status: 'open', originWeekStart: WEEK, doneWeekStart: null, doneAt: null, exitReason: null, exitedAt: null, movedToBacklogItemId: null, createdAt: NOW, updatedAt: NOW, version: 1 });
-    await db.insert(backlogItems).values({ id: B.item, userId: B.userId, goalId: B.monthlyGoal, title: "B's parked item", description: '', capturedAt: NOW, fromWeekStart: null, status: 'open', convertedToTaskId: null, convertedAt: null, createdAt: NOW, updatedAt: NOW, version: 1 });
+    await db.insert(backlogItems).values({ id: B.item, userId: B.userId, goalId: B.monthlyGoal, title: "B's parked item", description: '', capturedAt: NOW, fromWeekStart: null, sortKey: '000001000000', status: 'open', convertedToTaskId: null, convertedAt: null, createdAt: NOW, updatedAt: NOW, version: 1 });
     await db.insert(learnings).values({ id: B.learning, userId: B.userId, goalId: B.lifeGoal, text: "B's private learning", applied: false, capturedAt: NOW, createdAt: NOW, updatedAt: NOW });
   });
 
@@ -105,6 +105,9 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     ['create_backlog_item', { goal_id: B.monthlyGoal, title: 'A item on B goal' }],
     ['update_backlog_item', { item_id: B.item, title: 'renamed by A' }],
     ['move_backlog_item', { item_id: B.item, goal_id: B.monthlyGoal }],
+    // A1, new (R-backlog-19). Both id slots carry B's ids: the item being moved AND the neighbour it is
+    // being placed next to, because a neighbour lookup that forgot the owner scope would be a read.
+    ['reorder_backlog_item', { item_id: B.item, after_item_id: B.item }],
     ['delete_backlog_item', { item_id: B.item }],
     ['convert_backlog_item_to_task', { item_id: B.item }],
     // learnings

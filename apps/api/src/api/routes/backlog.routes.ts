@@ -6,6 +6,7 @@ import {
   IdParams,
   MoveBacklogItemRequest,
   PatchBacklogItemRequest,
+  ReorderBacklogItemRequest,
 } from '@goal-cascade/shared';
 import { Hono } from 'hono';
 import { BacklogService } from '../../application/services';
@@ -40,6 +41,22 @@ export const backlogRoutes = new Hono<AppBindings>()
   .post(E.backlogItemMove(':id'), idempotent, zParams(IdParams), zJson(MoveBacklogItemRequest), async (c) =>
     c.json(
       await c.get('container').resolve(BacklogService).move(ctx(c), params(c, IdParams).id, body(c, MoveBacklogItemRequest)),
+    ),
+  )
+
+  /**
+   * ⚠ **A1, new (R-backlog-19)** — the manual order, as one RELATIVE move within the item's own goal.
+   *
+   * Idempotency-wrapped like every command, and for a reason this route feels more than most: a reorder is
+   * the write a flaky connection retries, and replaying the original response is what stops a retried
+   * "move down one" from becoming "move down two".
+   */
+  .post(E.backlogItemReorder(':id'), idempotent, zParams(IdParams), zJson(ReorderBacklogItemRequest), async (c) =>
+    c.json(
+      await c
+        .get('container')
+        .resolve(BacklogService)
+        .reorder(ctx(c), params(c, IdParams).id, body(c, ReorderBacklogItemRequest)),
     ),
   )
 

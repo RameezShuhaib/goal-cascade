@@ -174,6 +174,26 @@ export const Period = z.string().max(32);
 export const Theme = z.enum(['light', 'dark', 'system']);
 
 /**
+ * ⚠ **A1 (R-backlog-17)** — a backlog item's manual position within its **own goal's** list.
+ *
+ * **Opaque, lexicographically ordered, server-minted, and never a position index.** An index has to be
+ * rewritten across the whole list on every insert and is racy against a concurrent one; a key that sorts
+ * lexicographically lets a move write ONE row. The client never parses, computes or sends one — there is
+ * no `sortKey` field on any request schema, which is what makes that true by construction rather than by
+ * a handler remembering to drop it (R-backlog-19).
+ *
+ * The server's scheme is fixed-width zero-padded decimal (`000001000000`), so lexicographic order **is**
+ * numeric order; the bound and the alphabet here are the contract, not the scheme. See
+ * `apps/api/src/domain/sort-keys.ts`.
+ */
+export const SortKey = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9]+$/, 'sortKey is opaque and alphanumeric')
+  .describe('opaque, lexicographically ordered manual position within one goal');
+
+/**
  * ⚠ **A2 (R-task-46)** — the three creation sources. `planning` became `goal` (there is no planning
  * screen) and `idea` is gone with the entity. Recorded once, on the `created` event, and never changed.
  */
@@ -400,6 +420,21 @@ export const LifeGroupView = z.object({
   openTasks: z.int().nonnegative(),
 });
 
+/**
+ * ⚠ **A2, new (R-lens-23)** — **the parent line's one name.**
+ *
+ * A lens is deliberately flat and period-scoped, so an item's parent is usually NOT in `items` — a Weekly
+ * goal's Monthly parent is in another lens entirely. `GoalView.parentId` alone therefore renders nothing,
+ * and the client may not walk an ancestor chain it does not hold (R-lens-16, S-lens-16-2).
+ *
+ * **At most one name** (R-lens-23): this is the immediate parent, never a breadcrumb path. The full path
+ * is the tree wearing a different hat, which is the thing A2 removed.
+ *
+ * `period` is carried because a parent named from a lens has no other way to say *which* `Q3` it is; the
+ * line itself renders the title alone.
+ */
+export const GoalRefView = z.object({ id: Ulid, title: z.string(), period: z.string() });
+
 export const ExternalLinkView = z.object({
   id: Ulid,
   url: z.string(),
@@ -480,11 +515,43 @@ export const TaskDetailView = TaskView.extend({ events: z.array(TaskEventView) }
 export const BacklogItemView = z.object({
   id: Ulid,
   goalId: Ulid,
+  /**
+   * ⚠ **A2, new (R-backlog-13)** — **the owning goal's own title**, and with `lifeGoalTitle` the whole of
+   * the `<Life goal> › <owning goal>` branch path R-backlog-13 groups by.
+   *
+   * It is on the wire because the client cannot resolve it: an item's goal is a Yearly, Quarterly or
+   * Monthly goal in whatever period it happens to sit in, and a client holding one lens page holds neither
+   * that goal nor a tree to walk (R-lens-16). Resolving it from the client meant guessing from the current
+   * period's lens reads and bucketing the misses under `Elsewhere` — an accurate label for a client
+   * limitation and a meaningless one for an owner.
+   *
+   * The server resolves both from the INTERIOR tree it already reads (R-lens-27): a backlog item can only
+   * ever sit on a non-Weekly goal (R-backlog-2), so the interior set always contains its owner.
+   */
+  goalTitle: z.string(),
+  /**
+   * R-backlog-13 — the Life goal at the head of the branch path, or `null` when the chain does not reach
+   * one (R-lens-20's `UNSORTED` condition, restated here). The client renders `<life> › <goal>` when it is
+   * present and the goal's own title alone when it is not; it never invents a bucket.
+   */
+  lifeGoalTitle: z.string().nullable(),
   title: z.string(),
   description: z.string(),
   links: z.array(ExternalLinkView),
   capturedAt: Iso,
   fromWeekStart: WeekStart.nullable(),
+  /**
+   * ⚠ **A1, new (R-backlog-17)** — the item's manual position within its OWN goal's list.
+   *
+   * Within a goal the order is `sortKey` asc, then `capturedAt` desc, then `id` desc — total and stable
+   * even if two keys ever collide, which is why no unique index enforces one (Q-7). **Across** goals there
+   * is no manual order at all (R-backlog-21): the Backlog page's group order and the Life-goal aggregate
+   * stay `capturedAt` desc, and two items on different goals have no relative position.
+   *
+   * It is on the wire so a list can be rendered in the server's order without a second sort rule, and so
+   * a reorder's optimistic result can be checked against what came back. It is never sent.
+   */
+  sortKey: SortKey,
   status: BacklogStatus,
   /** R-backlog-6 — set when the item became a task. A converted item never appears in a backlog list. */
   convertedToTaskId: Ulid.nullable(),
@@ -516,6 +583,7 @@ export type Pulse = z.infer<typeof Pulse>;
 export type WeekOffset = z.infer<typeof WeekOffset>;
 export type PeriodKey = z.infer<typeof PeriodKey>;
 export type Period = z.infer<typeof Period>;
+export type SortKey = z.infer<typeof SortKey>;
 export type Theme = z.infer<typeof Theme>;
 export type TaskSource = z.infer<typeof TaskSource>;
 export type TaskStatus = z.infer<typeof TaskStatus>;
@@ -527,6 +595,7 @@ export type WeekView = z.infer<typeof WeekView>;
 export type PeriodView = z.infer<typeof PeriodView>;
 export type GoalView = z.infer<typeof GoalView>;
 export type LifeGroupView = z.infer<typeof LifeGroupView>;
+export type GoalRefView = z.infer<typeof GoalRefView>;
 export type ExternalLinkView = z.infer<typeof ExternalLinkView>;
 export type TaskEventView = z.infer<typeof TaskEventView>;
 export type TaskView = z.infer<typeof TaskView>;

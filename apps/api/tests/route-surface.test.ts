@@ -85,6 +85,8 @@ const ROUTES: Row[] = [
   { method: 'PATCH', path: ENDPOINTS.backlogItem(ULID), json: { title: 'Renamed' } },
   { method: 'DELETE', path: ENDPOINTS.backlogItem(ULID) },
   { method: 'POST', path: ENDPOINTS.backlogItemMove(ULID), json: { goalId: ULID }, command: true },
+  // A1, new (R-backlog-19). Exactly one of after / before / to, and never a position index.
+  { method: 'POST', path: ENDPOINTS.backlogItemReorder(ULID), json: { to: 'top' }, command: true },
   { method: 'POST', path: ENDPOINTS.backlogItemConvert(ULID), json: {}, command: true },
 
 

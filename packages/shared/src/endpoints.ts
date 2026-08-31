@@ -84,6 +84,16 @@ export const ENDPOINTS = {
   backlogItem: (id: string) => `/backlog/${id}`,
   /** Move to another non-life goal. */
   backlogItemMove: (id: string) => `/backlog/${id}/move`,
+  /**
+   * ⚠ **A1, new (R-backlog-19)** — the manual order, as ONE relative move: `after`, `before`, `top` or
+   * `bottom`, within the item's own goal. Never a position index, and never a `sortKey` — the key is
+   * server-minted and the client has no field to send one in.
+   *
+   * It is its own command rather than a field on `PATCH /backlog/:id` (R-backlog-19, and the spec-delta's
+   * item 22 says so explicitly): ordering is version-guarded, may re-key a whole list inside one
+   * transaction, and must not ride along with a title edit.
+   */
+  backlogItemReorder: (id: string) => `/backlog/${id}/reorder`,
   /** The ONLY way backlog becomes work. The item is CONVERTED (removed), never duplicated. */
   backlogItemConvert: (id: string) => `/backlog/${id}/convert-to-task`,
 

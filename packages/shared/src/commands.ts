@@ -489,8 +489,43 @@ export const PatchBacklogItemRequest = z
   })
   .strict();
 
-/** R-backlog-10 — move to any other non-Life, non-Weekly goal. `capturedAt`/`fromWeekStart` unchanged. */
+/**
+ * R-backlog-10 — move to any other non-Life, non-Weekly goal. `capturedAt`/`fromWeekStart` unchanged.
+ *
+ * ⚠ **A1 (R-backlog-20)** — the item also gets a **fresh `sortKey` at the top of the destination's list**.
+ * Its old position is not preserved and there is no field here to preserve it with: manual order is per
+ * goal (R-backlog-21), so a position in the goal it left means nothing in the goal it joined.
+ */
 export const MoveBacklogItemRequest = z.object({ goalId: Ulid, version: OptionalVersion }).strict();
+
+/**
+ * ⚠ **A1, new (R-backlog-19)** — **reorder is a RELATIVE MOVE, and never a position index.**
+ *
+ * Exactly one of `after`, `before` or `to` — the item goes immediately after a named neighbour,
+ * immediately before one, or to the top/bottom of its own goal's list. The server mints a key strictly
+ * between the two neighbours the move implies; a client never sees, parses or sends a key.
+ *
+ * **Why relative and not `{ position: 3 }`.** An index is a statement about the whole list, so it is wrong
+ * the moment anything else in that list moved — and on a phone, where the other device is the same
+ * person's laptop, that is a normal Tuesday. A neighbour id is a statement about two rows, and it either
+ * still means what it meant or it is refused. It is also what lets drag and the keyboard share one code
+ * path (R-backlog-24): both end up naming the row they landed next to.
+ *
+ * Refused, with the order unchanged: a neighbour in another goal, a converted neighbour, a neighbour that
+ * does not exist, the item as its own neighbour, and a stale `version` (`CONCURRENT_UPDATE`, Q-2).
+ */
+export const ReorderBacklogItemRequest = z
+  .object({
+    after: Ulid.optional(),
+    before: Ulid.optional(),
+    to: z.enum(['top', 'bottom']).optional(),
+    version: OptionalVersion,
+  })
+  .strict()
+  .refine(
+    (v) => [v.after, v.before, v.to].filter((x) => x !== undefined).length === 1,
+    'name exactly one of after, before or to',
+  );
 
 /**
  * R-backlog-6/9/26, Q-4, D-18, D-19 — "Add to this week", the ONLY way backlog becomes work. One atomic
@@ -586,6 +621,7 @@ export type MoveTaskToBacklogResponse = z.infer<typeof MoveTaskToBacklogResponse
 export type CreateBacklogItemRequest = z.infer<typeof CreateBacklogItemRequest>;
 export type PatchBacklogItemRequest = z.infer<typeof PatchBacklogItemRequest>;
 export type MoveBacklogItemRequest = z.infer<typeof MoveBacklogItemRequest>;
+export type ReorderBacklogItemRequest = z.infer<typeof ReorderBacklogItemRequest>;
 export type ConvertBacklogItemRequest = z.infer<typeof ConvertBacklogItemRequest>;
 export type BacklogItemResponse = z.infer<typeof BacklogItemResponse>;
 export type ConvertBacklogItemResponse = z.infer<typeof ConvertBacklogItemResponse>;

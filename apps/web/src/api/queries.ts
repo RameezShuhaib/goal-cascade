@@ -698,6 +698,42 @@ export function useMoveBacklogItem() {
   });
 }
 
+/**
+ * R-backlog-19 — **the one write behind every reorder affordance in the app.**
+ *
+ * Drag, grab mode and the row menu's four items all end up here, which is what R-backlog-24 means by
+ * "drag is a second front-end on one command": there is no drag-only write path and no drag-only
+ * ordering semantics, so a drag and an arrow press cannot disagree about what happened.
+ *
+ * `quiet` on `CONCURRENT_UPDATE`: the list announces its own failure line into the live region and shows
+ * a non-toast error beside the row (R-backlog-23, Q-14, R-nav-13). A toast alone is insufficient for a
+ * lost write, and two messages for one failure is worse than one.
+ *
+ * The response is deliberately NOT patched into the cache. A reorder can re-key a whole goal's list
+ * server-side, so the one item that came back is not enough to reconstruct the order — the invalidation
+ * is what settles it, and the list renders its own optimistic arrangement until then.
+ */
+export function useReorderBacklogItem() {
+  return useCommand<
+    { id: string; after?: string; before?: string; to?: 'top' | 'bottom'; version?: number },
+    Awaited<ReturnType<ApiClient['reorderBacklogItem']>>
+  >({
+    run: (c, v, k) =>
+      c.reorderBacklogItem(
+        v.id,
+        {
+          ...(v.after ? { after: v.after } : {}),
+          ...(v.before ? { before: v.before } : {}),
+          ...(v.to ? { to: v.to } : {}),
+          ...(v.version ? { version: v.version } : {}),
+        },
+        k,
+      ),
+    invalidate: [keys.backlogAll, ...GOAL_KEYS],
+    quiet: ['CONCURRENT_UPDATE', 'VALIDATION_FAILED'],
+  });
+}
+
 export function useDeleteBacklogItem() {
   return useCommand<{ id: string }, Awaited<ReturnType<ApiClient['deleteBacklogItem']>>>({
     run: (c, v) => c.deleteBacklogItem(v.id),

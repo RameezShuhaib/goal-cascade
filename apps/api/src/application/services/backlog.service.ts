@@ -11,6 +11,7 @@ import type {
   MoveBacklogItemRequest,
   PatchBacklogItemRequest,
   GoalView,
+  ReorderBacklogItemRequest,
   TaskDetailView,
   TaskEventView,
 } from '@goal-cascade/shared';
@@ -19,8 +20,9 @@ import type { RequestContext } from '../context';
 import type { BacklogItem, BacklogLink, Goal, Task, TaskEvent, TaskLink } from '../../domain/entities';
 import { TASK_EVENT_GLYPHS, type TaskSource } from '../../domain/enums';
 import { DomainError, notFound } from '../../domain/errors';
-import { indexTree, isLifeHorizon, lifeRootIn } from '../../domain/goal-tree';
+import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
 import { isPastPeriod, labelOf } from '../../domain/periods';
+import { between, rekey, topKey, withinGoal } from '../../domain/sort-keys';
 import { dateInTimezone, weekStartFromOffset } from '../../domain/weeks';
 import type { GuardedWrite } from '../ports';
 import {
@@ -34,6 +36,7 @@ import {
   ITaskRepo,
 } from '../ports';
 import { GuardedBatch } from './guarded-batch';
+import { backlogLabelsOf, toBacklogItemView, type BacklogLabels } from './views';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers. `capture.service.ts` imports `newestFirst` so the two capture-style lists answer in
@@ -56,24 +59,6 @@ export function newestFirst<T extends { capturedAt: string; id: string }>(rows: 
 
 export function toLinkView(l: { id: string; url: string; createdAt: string }): ExternalLinkView {
   return { id: l.id, url: l.url, createdAt: l.createdAt };
-}
-
-export function toBacklogItemView(item: BacklogItem, links: readonly BacklogLink[]): BacklogItemView {
-  return {
-    id: item.id,
-    goalId: item.goalId,
-    title: item.title,
-    description: item.description,
-    links: links.filter((l) => l.itemId === item.id).map(toLinkView),
-    capturedAt: item.capturedAt,
-    fromWeekStart: item.fromWeekStart,
-    status: item.status,
-    convertedToTaskId: item.convertedToTaskId,
-    convertedAt: item.convertedAt,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    version: item.version,
-  };
 }
 
 /**
@@ -270,11 +255,17 @@ export function assertCanHoldBacklog(goal: Goal): void {
   }
 }
 
-/** Builds the item row + its link rows for a new backlog item. */
+/**
+ * Builds the item row + its link rows for a new backlog item.
+ *
+ * ⚠ **A1 (R-backlog-18)** — `sortKey` is a REQUIRED argument and not a default, because there is exactly
+ * one right answer and it needs a read: the top of the destination goal's list. A default here would be a
+ * second, silent ordering rule living in a pure function.
+ */
 export function buildBacklogItem(
   ctx: RequestContext,
   ids: IIdGenerator,
-  input: { goalId: string; title: string; description: string; links: readonly string[]; fromWeekStart?: string | null },
+  input: { goalId: string; title: string; description: string; links: readonly string[]; fromWeekStart?: string | null; sortKey: string },
 ): { item: BacklogItem; links: BacklogLink[] } {
   const item: BacklogItem = {
     id: ids.ulid(),
@@ -284,6 +275,7 @@ export function buildBacklogItem(
     description: input.description,
     capturedAt: ctx.now,
     fromWeekStart: input.fromWeekStart ?? null,
+    sortKey: input.sortKey,
     status: 'open',
     convertedToTaskId: null,
     convertedAt: null,
@@ -341,10 +333,32 @@ export class BacklogService {
     const rows = await this.items.listOpen(ctx.userId, limit + 1);
     const page = rows.slice(0, limit);
     return {
-      items: await this.viewsOf(ctx, page),
+      items: await this.viewsOf(ctx, this.pageOrder(page), { ordered: true }),
       nextCursor: rows.length > limit ? (page[page.length - 1]?.id ?? null) : null,
       serverNow: ctx.now,
     };
+  }
+
+  /**
+   * ⚠ **A1 (R-backlog-13 + R-backlog-21)** — **the Backlog page's one total order, which is two rules.**
+   *
+   * The page groups by owning goal, and the two orders are different because they answer different
+   * questions:
+   *
+   *  - **the GROUPS** are newest first — a group's place is its newest item's `capturedAt`. There is no
+   *    manual order across goals and R-backlog-21 forbids inventing one: two items on different goals have
+   *    no relative position, so the only honest arrangement is the one that needs no decision.
+   *  - **within a group** it is that goal's manual order (`sortKey` asc, `capturedAt` desc, `id` desc).
+   *
+   * Flattening them here rather than shipping a nested shape means the client groups by first appearance
+   * and re-sorts nothing — which is what keeps Q-7's "no read ever returns a different arrangement of an
+   * unchanged list" true of a screen as well as of a query.
+   */
+  private pageOrder(rows: readonly BacklogItem[]): BacklogItem[] {
+    const byGoal = new Map<string, BacklogItem[]>();
+    // `listOpen` already answers `capturedAt` desc, `id` desc, so first appearance IS the group order.
+    for (const r of newestFirst(rows)) byGoal.set(r.goalId, [...(byGoal.get(r.goalId) ?? []), r]);
+    return [...byGoal.values()].flatMap((group) => withinGoal(group));
   }
 
   /**
@@ -367,23 +381,39 @@ export class BacklogService {
     if (goal.horizon === 'Weekly') return { items: [], isAggregate: false };
 
     const isAggregate = isLifeHorizon(goal.horizon);
-    // The Life roll-up asks for the descendants only — including the root would be meaningless (it can
-    // hold nothing) and would hide a data problem rather than surfacing it.
-    const scope = isAggregate ? (await this.goals.subtreeIds(ctx.userId, goalId)).filter((id) => id !== goalId) : [goalId];
+    if (!isAggregate) {
+      // ⚠ **A1 (R-backlog-11 + R-backlog-17)** — ONE goal, so this is the one list in the product that
+      // renders a MANUAL order, and it is the same order the Backlog page shows inside that goal's group.
+      const own = await this.items.listOpenByGoalOrdered(ctx.userId, goalId);
+      return { items: await this.viewsOf(ctx, own, { ordered: true }), isAggregate: false };
+    }
+    // R-backlog-12 / R-backlog-21 / S-backlog-21-1 — the Life roll-up spans several goals, so it keeps
+    // `capturedAt` desc and IGNORES every per-goal manual order. It asks for the descendants only:
+    // including the root would be meaningless (it can hold nothing) and would hide a data problem rather
+    // than surfacing it. The client renders no reorder affordance here at all.
+    const scope = (await this.goals.subtreeIds(ctx.userId, goalId)).filter((id) => id !== goalId);
     const rows = scope.length === 0 ? [] : await this.items.listOpenByGoals(ctx.userId, scope);
-    return { items: await this.viewsOf(ctx, rows), isAggregate };
+    return { items: await this.viewsOf(ctx, rows), isAggregate: true };
   }
 
-  /** R-backlog-2/4/16 — capture on a non-Life goal. `title` is trimmed and non-empty by schema. */
+  /**
+   * R-backlog-2/4/16 — capture on a non-Life goal. `title` is trimmed and non-empty by schema.
+   *
+   * ⚠ **A1 (R-backlog-18)** — the new item lands at the **TOP** of its goal's list. Every capture flow in
+   * the product puts the newest thing where you can see it, and it keeps R-backlog-5's arrangement
+   * (newest first) exactly true for any list nobody has re-ordered.
+   */
   async create(ctx: RequestContext, input: CreateBacklogItemRequest): Promise<BacklogItemResponse> {
     assertCanHoldBacklog(await this.requireGoal(ctx, input.goalId));
 
-    const { item, links } = buildBacklogItem(ctx, this.ids, input);
+    const top = await this.mintTop(ctx, input.goalId);
+    const { item, links } = buildBacklogItem(ctx, this.ids, { ...input, sortKey: top.sortKey });
     await this.batch.run([
+      ...top.rekeyWrites,
       { label: 'backlogItem.insert', stmt: this.items.insertStmt(item) },
       ...links.map((l) => ({ label: 'backlogLink.insert', stmt: this.links.insertStmt(l) })),
     ]);
-    return { item: toBacklogItemView(item, links), serverNow: ctx.now };
+    return { item: await this.viewOf(ctx, item, links), serverNow: ctx.now };
   }
 
   /**
@@ -430,7 +460,7 @@ export class BacklogService {
         }),
       },
     ]);
-    return { item: toBacklogItemView(next, nextLinks), serverNow: ctx.now };
+    return { item: await this.viewOf(ctx, next, nextLinks), serverNow: ctx.now };
   }
 
   /**
@@ -442,18 +472,134 @@ export class BacklogService {
     const item = await this.requireOpenItem(ctx, id, input.version);
     assertCanHoldBacklog(await this.requireGoal(ctx, input.goalId));
 
-    const next: BacklogItem = { ...item, goalId: input.goalId, updatedAt: ctx.now, version: item.version + 1 };
+    // ⚠ **A1 (R-backlog-20)** — a FRESH key at the top of the destination. Its old position is not
+    // preserved, because a per-goal order has nothing to preserve it against (R-backlog-21) and the
+    // destination's own order is the only one that now applies. `capturedAt` and `fromWeekStart` are
+    // still untouched (S-backlog-10-1): the item did not become newer by being re-filed, and "came out of
+    // the week of …" is a fact about its history, not about its current goal.
+    const top = await this.mintTop(ctx, input.goalId);
+    const next: BacklogItem = { ...item, goalId: input.goalId, sortKey: top.sortKey, updatedAt: ctx.now, version: item.version + 1 };
     await this.batch.run([
+      ...top.rekeyWrites,
       {
         label: 'backlogItem.move',
         stmt: this.items.updateGuardedStmt(ctx.userId, id, item.version, {
           goalId: next.goalId,
+          sortKey: next.sortKey,
           updatedAt: next.updatedAt,
           version: next.version,
         }),
       },
     ]);
-    return { item: toBacklogItemView(next, await this.links.listByItems(ctx.userId, [id])), serverNow: ctx.now };
+    return { item: await this.viewOf(ctx, next, await this.links.listByItems(ctx.userId, [id])), serverNow: ctx.now };
+  }
+
+  /**
+   * ⚠ **A1, new (R-backlog-19)** — **the reorder: one relative move, `version`-guarded, within one goal.**
+   *
+   * `after: <id>` / `before: <id>` / `to: 'top' | 'bottom'`, and never a position index — an index is a
+   * statement about the whole list and is wrong the moment anything else in it moved, whereas a neighbour
+   * id either still means what it meant or is refused (S-backlog-19-1).
+   *
+   * **What is refused, with the order unchanged** (S-backlog-19-2/3): a neighbour on another goal, a
+   * converted neighbour, a neighbour that does not exist, the item naming itself, and a stale `version`
+   * (`CONCURRENT_UPDATE`). Every one of them is answered before a single write is built.
+   *
+   * **D1 has no interactive transactions**, so the write — the item's new key, and on exhaustion the whole
+   * goal's renumbering with it — goes through `GuardedBatch` as one atomic sequence. The guarded update's
+   * own WHERE clause pins the version, so a lost race rolls the re-key back with it and no half-renumbered
+   * list can exist.
+   *
+   * **Two concurrent reorders of DIFFERENT items cannot corrupt the order.** Each writes one row's key,
+   * and the order is total under `sortKey` asc / `capturedAt` desc / `id` desc whatever the two keys turn
+   * out to be — so the worst case is that one of the owner's two intents lost, never that the list becomes
+   * ambiguous or loses a row.
+   */
+  async reorder(ctx: RequestContext, id: string, input: ReorderBacklogItemRequest): Promise<BacklogItemResponse> {
+    const item = await this.requireOpenItem(ctx, id, input.version);
+    const list = await this.items.listOpenByGoalOrdered(ctx.userId, item.goalId);
+    const neighbourId = input.after ?? input.before;
+
+    // R-auth-3 / S-backlog-19-2 — one refusal for every way a neighbour can be unusable. A neighbour on
+    // another goal is indistinguishable here from one that does not exist, which is exactly right: manual
+    // order is per goal, so a row outside this goal has no position to sit next to.
+    if (neighbourId !== undefined && !list.some((r) => r.id === neighbourId && r.id !== id)) {
+      throw new DomainError('VALIDATION_FAILED', 'that neighbour is not an open item in this goal', {
+        itemId: id,
+        goalId: item.goalId,
+        neighbourId,
+      });
+    }
+
+    const others = list.filter((r) => r.id !== id);
+    const target = this.targetIndex(others, input);
+    const write = this.keyFor(ctx, others, target);
+
+    const next: BacklogItem = { ...item, sortKey: write.sortKey, updatedAt: ctx.now, version: item.version + 1 };
+    await this.batch.run([
+      ...write.rekeyWrites,
+      {
+        label: 'backlogItem.reorder',
+        stmt: this.items.updateGuardedStmt(ctx.userId, id, item.version, {
+          sortKey: next.sortKey,
+          updatedAt: next.updatedAt,
+          version: next.version,
+        }),
+      },
+    ]);
+    return { item: await this.viewOf(ctx, next, await this.links.listByItems(ctx.userId, [id])), serverNow: ctx.now };
+  }
+
+  /**
+   * Where in the list-without-the-moved-item the item now sits. `others.length` is "past the last row",
+   * which is `toBottom` and also `after: <the last item>` — the two are the same position and must produce
+   * the same key, or the ends of the list would behave differently from its middle.
+   */
+  private targetIndex(others: readonly BacklogItem[], input: ReorderBacklogItemRequest): number {
+    if (input.to === 'top') return 0;
+    if (input.to === 'bottom') return others.length;
+    const at = others.findIndex((r) => r.id === (input.after ?? input.before));
+    return input.after !== undefined ? at + 1 : at;
+  }
+
+  /**
+   * R-backlog-19 — the key strictly between the two rows the target position sits between, **and the
+   * re-key that runs in the same transaction when there is no room left between them**.
+   *
+   * The re-key is invisible: it renumbers that one goal's list onto the default grid in the order it is
+   * already in, so no order changes and the client is told nothing. It takes ~20 successive drops into the
+   * same gap to reach it.
+   */
+  private keyFor(
+    ctx: RequestContext,
+    others: readonly BacklogItem[],
+    target: number,
+  ): { sortKey: string; rekeyWrites: GuardedWrite[] } {
+    const key = between(others[target - 1]?.sortKey ?? null, others[target]?.sortKey ?? null);
+    if (key !== null) return { sortKey: key, rekeyWrites: [] };
+
+    const grid = rekey(others.length);
+    const rekeyWrites = others.map((row, i) => ({
+      label: 'backlogItem.rekey',
+      stmt: this.items.setSortKeyStmt(ctx.userId, row.id, grid[i]!),
+    }));
+    // On the fresh grid the gap is `SORT_KEY_GAP` again, so this cannot fail a second time.
+    const after = between(grid[target - 1] ?? null, grid[target] ?? null);
+    return { sortKey: after!, rekeyWrites };
+  }
+
+  /**
+   * R-backlog-18/20 — the key for an item arriving at the **top** of `goalId`'s list, with the re-key that
+   * runs in the same transaction on the (vanishingly rare) occasion the top is full.
+   *
+   * Shared by capture and by move, so "a new item lands on top" and "a moved item lands on top" are one
+   * implementation of one rule rather than two that drift.
+   */
+  private async mintTop(ctx: RequestContext, goalId: string): Promise<{ sortKey: string; rekeyWrites: GuardedWrite[] }> {
+    const key = topKey(await this.items.topSortKey(ctx.userId, goalId));
+    if (key !== null) return { sortKey: key, rekeyWrites: [] };
+    const list = await this.items.listOpenByGoalOrdered(ctx.userId, goalId);
+    return this.keyFor(ctx, list, 0);
   }
 
   /** R-backlog-10 — Delete. The ONLY thing that removes an item outright; a conversion never deletes. */
@@ -529,6 +675,9 @@ export class BacklogService {
       },
     );
 
+    // ⚠ **A1 (R-backlog-20)** — conversion leaves a **GAP**. The row keeps its `sortKey` where it stops
+    // participating in any order, and no sibling is re-keyed: the survivors' relative order is already
+    // correct, and renumbering them would be a write nobody asked for on every conversion (S-backlog-20-2).
     const converted: BacklogItem = {
       ...item,
       status: 'converted',
@@ -557,7 +706,7 @@ export class BacklogService {
 
     return {
       task: toNewTaskDetailView(built, ctx.currentWeekStart),
-      item: toBacklogItemView(converted, itemLinks),
+      item: await this.viewOf(ctx, converted, itemLinks),
       goal: resolved.created ? toGoalView(resolved.created) : null,
       serverNow: ctx.now,
     };
@@ -698,12 +847,38 @@ export class BacklogService {
     return item;
   }
 
-  private async viewsOf(ctx: RequestContext, rows: readonly BacklogItem[]): Promise<BacklogItemView[]> {
+  /**
+   * The list projection, plus R-backlog-13's branch-path labels.
+   *
+   * `ordered: true` means the caller has ALREADY put the rows in the order the client must render — the
+   * per-goal manual order, or the Backlog page's group-then-manual arrangement. Without it the rows are
+   * sorted `capturedAt` desc here, which is the cross-goal rule (R-backlog-21) and the only one that
+   * applies to a list spanning several goals.
+   *
+   * **One interior read serves every label.** A backlog item can only hang off a Yearly, Quarterly or
+   * Monthly goal (R-backlog-2), so the interior set contains every owning goal there can be, and it is
+   * the same bounded read every lens already does (R-lens-27) — never one `GET /goals/:id` per row.
+   */
+  private async viewsOf(
+    ctx: RequestContext,
+    rows: readonly BacklogItem[],
+    opts: { ordered?: boolean } = {},
+  ): Promise<BacklogItemView[]> {
     if (rows.length === 0) return [];
-    const links = await this.links.listByItems(
-      ctx.userId,
-      rows.map((r) => r.id),
-    );
-    return newestFirst(rows).map((r) => toBacklogItemView(r, links));
+    const [links, interior] = await Promise.all([
+      this.links.listByItems(ctx.userId, rows.map((r) => r.id)),
+      this.goals.listInterior(ctx.userId),
+    ]);
+    const ix = indexTree(interior);
+    const labels = new Map<string, BacklogLabels>();
+    for (const goalId of new Set(rows.map((r) => r.goalId))) labels.set(goalId, backlogLabelsOf(ix, goalId));
+    const ordered = opts.ordered ? [...rows] : newestFirst(rows);
+    return ordered.map((r) => toBacklogItemView(r, links, labels.get(r.goalId)!));
+  }
+
+  /** One item's projection, for a command response. Same labels, same single interior read. */
+  private async viewOf(ctx: RequestContext, item: BacklogItem, links: readonly BacklogLink[]): Promise<BacklogItemView> {
+    const ix = indexTree(await this.goals.listInterior(ctx.userId));
+    return toBacklogItemView(item, links, backlogLabelsOf(ix, item.goalId));
   }
 }

@@ -353,3 +353,106 @@ describe('Lenses — the Zoom sheet (R-lens-17, R-lens-22)', () => {
     expect(within(await screen.findByRole('dialog', { name: 'Change lens' })).queryByRole('button', { name: 'Jump to now' })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * ⚠ **A2 — the two things the client could not render until the wire carried them.**
+ *
+ * Both were reported in `docs/work/17-lens-web/build.md` §6 as **missing fields, not client shortcuts**,
+ * and both were re-checked before being built: neither could have been resolved from a lens payload,
+ * because a lens is one horizon and one period and holds neither the parent nor the account's history.
+ */
+describe('R-lens-23 — the parent line', () => {
+  it('S-lens-23-1: renders for an item whose parent is OUTSIDE the period, and opens that parent', async () => {
+    // The Weekly lens is one week. `Lift three times a week` is a MONTHLY goal — it is not in `items`,
+    // not in `carried` and not in `groups`, so before `LensResponse.parents` there was nothing on the
+    // wire to render this line from, and the client may not go and fetch one (R-lens-16).
+    withLens(F.weeklyLens());
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
+
+    const line = await screen.findAllByRole('button', { name: 'under Lift three times a week, Aug 2026. Open goal.' });
+    expect(line[0]).toHaveTextContent('under Lift three times a week');
+    // R-lens-23 — the only way to walk UP one step without a tree. There is still no way to walk down.
+    await user.click(line[0]!);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Lift three times a week' })).toBeInTheDocument();
+  });
+
+  it('S-lens-23-2: nothing renders when the parent is the group’s own Life goal', async () => {
+    // The Yearly lens: every item's parent is a Life goal, so the server sends no parents at all and the
+    // client implements the suppression by rendering every hit it finds.
+    withLens(F.lensFor('Yearly'));
+    renderApp(<AppShell />, { route: '/year/2026' });
+    expect(await screen.findByText('Get back under 80kg')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^under / })).not.toBeInTheDocument();
+  });
+
+  it('R-lens-12: the carried band’s goals carry the line too', async () => {
+    withLens(F.weeklyLens());
+    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    const band = await screen.findByTestId('carried-band');
+    expect(within(band).getByRole('button', { name: /^under Lift three times a week/ })).toBeInTheDocument();
+  });
+});
+
+describe('R-lens-24 — three empty states, and they are distinguishable', () => {
+  it('S-lens-24-1: a horizon never used says so, and explains what the horizon is for', async () => {
+    withLens(F.lens({ lens: 'Quarterly', items: [], groups: [], period: F.period({ periodKey: '2026-Q3' }), hasAnyAtHorizon: false, hasLifeGoals: true }));
+    renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+
+    expect(await screen.findByText('Nothing quarterly yet.')).toBeInTheDocument();
+    expect(screen.getByText('A quarter is long enough to change something and short enough to finish.')).toBeInTheDocument();
+    // `Q3 2026 is unclaimed` would be a different claim about a different thing.
+    expect(screen.queryByText('Q3 2026 is unclaimed.')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '+ Quarterly goal' }).length).toBeGreaterThan(0);
+  });
+
+  it('S-lens-24-2: a horizon used in ANOTHER period gets the PERIOD-level state instead', async () => {
+    withLens(F.lens({ lens: 'Quarterly', items: [], groups: [], period: F.period({ periodKey: '2026-Q3' }), hasAnyAtHorizon: true, hasLifeGoals: true }));
+    renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+
+    expect(await screen.findByText('Q3 2026 is unclaimed.')).toBeInTheDocument();
+    // Telling someone with last year's quarterly goals "nothing quarterly yet" is a flat lie, and it is
+    // the lie the field exists to prevent.
+    expect(screen.queryByText('Nothing quarterly yet.')).not.toBeInTheDocument();
+  });
+
+  it('R-lens-6 / R-goal-36: a PAST period is the third distinguishable state, and offers no CTA', async () => {
+    withLens(
+      F.lens({
+        lens: 'Quarterly',
+        items: [],
+        groups: [],
+        period: F.period({ periodKey: '2026-Q1', isCurrent: false, isPast: true }),
+        hasAnyAtHorizon: true,
+        hasLifeGoals: true,
+      }),
+    );
+    renderApp(<AppShell />, { route: '/quarter/2026-Q1' });
+
+    expect(await screen.findByText('Nothing was set for 2026-Q1.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Quarterly goal' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Nothing quarterly yet.')).not.toBeInTheDocument();
+  });
+
+  it('R-lens-24: a brand-new account gets the COLD START, not "nothing quarterly yet"', async () => {
+    // With no Life goals, `+ Quarterly goal` has no legal parent to hang off. The horizon-level state
+    // needs both halves of the signal, and this is the half that is easy to forget.
+    withLens(F.lens({ lens: 'Quarterly', items: [], groups: [], period: F.period({ periodKey: '2026-Q3' }), hasAnyAtHorizon: false, hasLifeGoals: false }));
+    renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+
+    expect(await screen.findByText('Q3 2026 is unclaimed.')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing quarterly yet.')).not.toBeInTheDocument();
+  });
+
+  it('the horizon-level state exists at all four horizons, each with its own reason', async () => {
+    for (const [lens, route, headline] of [
+      ['Yearly', '/year/2026', 'Nothing yearly yet.'],
+      ['Monthly', '/month/2026-08', 'Nothing monthly yet.'],
+      ['Weekly', '/week/2026-08-31', 'Nothing weekly yet.'],
+    ] as const) {
+      withLens(F.lens({ lens, items: [], groups: [], hasAnyAtHorizon: false, hasLifeGoals: true }));
+      const { unmount } = renderApp(<AppShell />, { route });
+      expect(await screen.findByText(headline)).toBeInTheDocument();
+      unmount();
+    }
+  });
+});

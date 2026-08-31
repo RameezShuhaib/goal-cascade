@@ -148,6 +148,7 @@ export async function seedBacklogItem(t: TestApp, userId: string, goalId: string
     description: '',
     capturedAt: now,
     fromWeekStart: null,
+    sortKey: '000001000000',
     status: 'open',
     convertedToTaskId: null,
     convertedAt: null,

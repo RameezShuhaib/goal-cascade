@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import type { GoalView, Horizon, TaskView } from '@goal-cascade/shared';
+import type { GoalRefView, GoalView, Horizon, TaskView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
@@ -18,12 +18,14 @@ import { plannedNess, stalePlanLine } from './copy';
  * `QUARTERLY` badge repeated down a quarterly list is the definition of noise. The chip survives on the
  * goal detail page, where the horizon is genuinely ambiguous.
  *
- * ── The one thing the wire cannot answer yet ──────────────────────────────────
- * **R-lens-23's parent line (`under Run a sub-2h half marathon in 2026`) is not rendered**, and it is not
- * an omission by choice. A lens item carries `parentId` but no parent title, and the client must never
- * hold the interior tree or walk an ancestor chain (R-lens-16, S-lens-16-2) — so there is nothing to put
- * in the line. Resolving it per item would be one `GET /goals/:id` per card. Recorded in
- * `docs/work/17-lens-web/build.md`; the fix is a field on `LensResponse`, not a read from here.
+ * ── The parent line (R-lens-23) ───────────────────────────────────────────────
+ * `LensResponse.parents` carries one entry per DISTINCT parent of the page's goals, so a card renders
+ * `under <title>` by looking its own `parentId` up. The client still walks no ancestor chain and holds no
+ * tree (R-lens-16, S-lens-16-2) — the lookup is a `Map.get`.
+ *
+ * **The suppression is the server's, expressed as an absence.** R-lens-23 renders nothing when the parent
+ * is the group's own Life goal, and a Life parent is simply not in the map — so this component renders
+ * every hit it finds and implements the rule by doing nothing. There is deliberately no horizon test here.
  */
 
 function CardShell({ children, onOpen, label }: { children: ReactNode; onOpen?: () => void; label?: string }) {
@@ -41,6 +43,48 @@ function CardShell({ children, onOpen, label }: { children: ReactNode; onOpen?: 
       ) : (
         children
       )}
+    </div>
+  );
+}
+
+/**
+ * R-lens-23 — **the parent line: one muted line, one name, and a way UP.**
+ *
+ * A button opening that parent's detail page, which is the only way to walk up one step now that there is
+ * no tree. You can never walk *down* into a subtree, which is the thing that was cluttered.
+ *
+ * `T.mut` at 12.5px and **never** `faint`, which fails AA in both themes and may not carry anything
+ * load-bearing. It re-uses the `Muted` register the backlog line and the staleness line already sit in, so
+ * it adds no colour token and cannot fail `contrast.test.ts`.
+ *
+ * **At most one name.** The full breadcrumb path is the tree wearing a different hat (R-lens-1); today's
+ * accessible name adds the parent's PERIOD, because "under Lift three times a week" read aloud from a
+ * weekly card does not say which month — and that is a clarification, not a second name.
+ */
+function ParentLine({ parent }: { parent: GoalRefView | undefined }) {
+  const S = useSkin();
+  const navigate = useNavigate();
+  if (!parent) return null;
+  return (
+    <div style={{ marginTop: 3 }}>
+      <button
+        type="button"
+        aria-label={`under ${parent.title}${parent.period ? `, ${parent.period}` : ''}. Open goal.`}
+        onClick={() => navigate(goalPath(parent.id))}
+        style={{
+          border: 'none',
+          background: 'none',
+          padding: 0,
+          minHeight: 22,
+          textAlign: 'left',
+          fontSize: 12.5,
+          color: S.T.mut,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+        }}
+      >
+        under {parent.title}
+      </button>
     </div>
   );
 }
@@ -92,13 +136,27 @@ export function LifeCard({ goal, openTasks }: { goal: GoalView; openTasks: numbe
   );
 }
 
-/** Yearly and Quarterly: title, `why`, `N in backlog`. Nothing else belongs on them. */
-export function PlainCard({ goal }: { goal: GoalView }) {
+/**
+ * Yearly and Quarterly: title, `why`, the parent line, `N in backlog`. Nothing else belongs on them.
+ *
+ * The shell no longer wraps the whole card in one button, because R-lens-23's parent line IS a button and
+ * a button inside a button is not a control anyone can operate. The title keeps its own button and the
+ * lines below it are siblings — which also puts them in the order R-goal-43 fixes: parent line, then the
+ * backlog line, with the staleness line between them on a Weekly card.
+ */
+export function PlainCard({ goal, parent }: { goal: GoalView; parent?: GoalRefView }) {
   const navigate = useNavigate();
   return (
-    <CardShell onOpen={() => navigate(goalPath(goal.id))}>
-      <Title goal={goal} />
-      {goal.why && <Muted>{goal.why}</Muted>}
+    <CardShell>
+      <button
+        type="button"
+        onClick={() => navigate(goalPath(goal.id))}
+        style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none', padding: 0, cursor: 'pointer', minWidth: 0, fontFamily: 'inherit' }}
+      >
+        <Title goal={goal} />
+        {goal.why && <Muted>{goal.why}</Muted>}
+      </button>
+      <ParentLine parent={parent} />
       <BacklogLine goal={goal} />
     </CardShell>
   );
@@ -120,7 +178,7 @@ export function PlainCard({ goal }: { goal: GoalView }) {
  * The card carries **no `+ Weekly goal`** (R-task-49, Q-20 amended): a create button for the horizon below
  * on every card is a tree growing back one affordance at a time.
  */
-export function MonthlyCard({ goal, canCreate }: { goal: GoalView; canCreate: boolean }) {
+export function MonthlyCard({ goal, canCreate, parent }: { goal: GoalView; canCreate: boolean; parent?: GoalRefView }) {
   const navigate = useNavigate();
   const clock = useWeekClock();
   const b = goal.weeklyBreakdown;
@@ -142,10 +200,12 @@ export function MonthlyCard({ goal, canCreate }: { goal: GoalView; canCreate: bo
       >
         <Title goal={goal} />
         {goal.why && <Muted>{goal.why}</Muted>}
-        {/* The planned-ness line is text and takes no focus stop; it is folded into the card's name above. */}
-        {line && <Muted>{line}</Muted>}
-        <BacklogLine goal={goal} />
       </button>
+      {/* R-lens-23, then R-goal-47's planned-ness line, then the backlog line — one muted register. */}
+      <ParentLine parent={parent} />
+      {/* The planned-ness line is text and takes no focus stop; it is folded into the card's name above. */}
+      {line && <Muted>{line}</Muted>}
+      <BacklogLine goal={goal} />
       {canCreate && <LinkRow goal={goal} horizon="Monthly" weekStart={targetWeek} />}
     </CardShell>
   );
@@ -191,7 +251,7 @@ function LinkRow({ goal, horizon, weekStart }: { goal: GoalView; horizon: Horizo
  * including the checkbox (R-task-14): history is readable and truthful, and completing something you
  * actually did is not rewriting it.
  */
-export function WeeklyCard({ goal, tasks, week, canCreate }: { goal: GoalView; tasks: TaskView[]; week: number; canCreate: boolean }) {
+export function WeeklyCard({ goal, tasks, week, canCreate, parent }: { goal: GoalView; tasks: TaskView[]; week: number; canCreate: boolean; parent?: GoalRefView }) {
   const S = useSkin();
   const navigate = useNavigate();
   return (
@@ -203,14 +263,17 @@ export function WeeklyCard({ goal, tasks, week, canCreate }: { goal: GoalView; t
       >
         <Title goal={goal} />
         {goal.why && <Muted>{goal.why}</Muted>}
-        {/*
-         * R-goal-43 — `planned N weeks ago`, once the week has ARRIVED and only at `>= 2`. Age 1 is
-         * ordinary planning; a week that has not arrived is early, not stale. The threshold is the
-         * server's number, rendered here as one muted line — never a chip, never coloured, never blocking.
-         */}
-        {goal.plannedAgeWeeks !== null && goal.plannedAgeWeeks >= 2 && <Muted>{stalePlanLine(goal.plannedAgeWeeks)}</Muted>}
-        <BacklogLine goal={goal} />
       </button>
+      {/* R-lens-23 — the parent line, which on a weekly card is the month this week belongs to. */}
+      <ParentLine parent={parent} />
+      {/*
+       * R-goal-43 — `planned N weeks ago`, once the week has ARRIVED and only at `>= 2`. Age 1 is
+       * ordinary planning; a week that has not arrived is early, not stale. The threshold is the
+       * server's number, rendered here as one muted line — never a chip, never coloured, never blocking.
+       * Its place is fixed: BETWEEN the parent line and the backlog line, in the same `T.mut` register.
+       */}
+      {goal.plannedAgeWeeks !== null && goal.plannedAgeWeeks >= 2 && <Muted>{stalePlanLine(goal.plannedAgeWeeks)}</Muted>}
+      <BacklogLine goal={goal} />
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: 8 }}>
         {tasks.map((t) => (
           <TaskRow key={t.id} t={t} week={week} />
@@ -233,7 +296,7 @@ export function WeeklyCard({ goal, tasks, week, canCreate }: { goal: GoalView; t
  * past week's goal is back-dating. Carried work is finished, moved to the backlog or cancelled where it
  * stands.
  */
-export function CarriedCard({ goal, tasks, week }: { goal: GoalView; tasks: TaskView[]; week: number }) {
+export function CarriedCard({ goal, tasks, week, parent }: { goal: GoalView; tasks: TaskView[]; week: number; parent?: GoalRefView }) {
   const S = useSkin();
   const navigate = useNavigate();
   return (
@@ -246,6 +309,8 @@ export function CarriedCard({ goal, tasks, week }: { goal: GoalView; tasks: Task
         <Title goal={goal} />
         <Muted>from week of {weekLabel(goal.periodKey)}</Muted>
       </button>
+      {/* R-lens-23 — a carried goal is still an item in this lens, and it still hangs off something. */}
+      <ParentLine parent={parent} />
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: 8 }}>
         {tasks.map((t) => (
           <TaskRow key={t.id} t={t} week={week} />

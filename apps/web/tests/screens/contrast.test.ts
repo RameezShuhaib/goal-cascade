@@ -64,6 +64,28 @@ describe('Palette — muted text meets WCAG AA on every surface it is drawn on',
     expect(contrastRatio('#ffffff', '#000000')).toBeCloseTo(21, 5);
   });
 
+  /**
+   * ⚠ **A1 (R-backlog-22)** — the reorder control's own colour.
+   *
+   * R-backlog-22 requires the always-visible `Reorder "<title>"` control to meet "the enforced contrast
+   * rule", and S-backlog-22-3 fails the build if it does not. The control deliberately introduces **no new
+   * token**: it draws in `body`, the same colour the app's menu buttons already use, on `card` and on the
+   * softer `cardSoft` it takes while grabbed. Asserting it here is what makes "it reuses an existing token"
+   * a checked fact rather than a claim in a comment — and what catches a future palette edit that softens
+   * `body` for text but forgets this control.
+   */
+  for (const [theme, T, bodyToken] of [
+    ['light', LIGHT, '#4a4a44'],
+    ['dark', DARK, '#c9c9c1'],
+  ] as const) {
+    it(`${theme}: the reorder control's label clears AA on a card and on a grabbed card`, () => {
+      for (const bg of [T.card, T.cardSoft]) {
+        const ratio = contrastRatio(bodyToken, bg);
+        expect(ratio, `${theme} reorder control ${bodyToken} on ${bg} is ${ratio.toFixed(2)}:1 — under AA`).toBeGreaterThanOrEqual(AA);
+      }
+    });
+  }
+
   /** Body copy and headings sit on the same two surfaces and must not regress either. */
   for (const [theme, T] of [
     ['light', LIGHT],
