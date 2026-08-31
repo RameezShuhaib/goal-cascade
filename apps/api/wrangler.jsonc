@@ -77,6 +77,17 @@
     "APP_NAME": "Goal Cascade",
     // Comma-separated extra origins trusted by Better Auth + CORS (the request origin is always trusted).
     "TRUSTED_ORIGINS": "http://localhost:5173",
+    // Browser origins allowed to call `/mcp` cross-origin — Claude web's MCP connector runs in a page,
+    // so without these its preflight gets no `Access-Control-Allow-Origin` and the connector never
+    // reaches the endpoint. Listed here rather than in code so the set can change without a deploy of
+    // new source. The request's own origin is always allowed on top of these.
+    //
+    // NOT the same list as TRUSTED_ORIGINS, and it must not be merged into it. TRUSTED_ORIGINS admits
+    // an origin to the cookie-authenticated `/api/*` surface, which answers with
+    // `Access-Control-Allow-Credentials: true`. `/mcp` is a bearer-token endpoint and deliberately
+    // sends NO credentials header at all — a cookie attached cross-origin there would be a CSRF
+    // surface buying nothing, since the token is already on the request by hand.
+    "MCP_ALLOWED_ORIGINS": "https://claude.ai,https://claude.com",
     // `from` for outbound mail. `.local` is reserved for mDNS and can never be delegated to a registrant,
     // so this address is non-registrable ON PURPOSE: it can never be the sender of a real message.
     "EMAIL_FROM": "Goal Cascade <noreply@goal-cascade.local>",

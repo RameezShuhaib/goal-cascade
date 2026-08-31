@@ -8,6 +8,7 @@ import { requireSession } from './middleware/auth';
 import { withContainer } from './middleware/container';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { idempotent } from './middleware/idempotency';
+import { mcpCors } from './middleware/mcp-cors';
 import { checkOrigin } from './middleware/origin';
 import { resolveTimezone } from './middleware/timezone';
 import { backlogRoutes } from './routes/backlog.routes';
@@ -46,23 +47,35 @@ export function createApp(options: AppOptions = {}) {
   app.onError(errorHandler);
   app.notFound(notFoundHandler);
 
-  app.use(
-    '*',
-    cors({
-      // In production the SPA is served by this same Worker, so CORS never fires for the real client.
-      // It exists for `vite dev` on :5173 and for the e2e scripts.
-      origin: (origin, c) => {
-        if (!origin) return origin;
-        const self = new URL(c.req.url).origin;
-        return origin === self || parseTrustedOrigins(c.env).includes(origin) ? origin : null;
-      },
-      credentials: true,
-      allowHeaders: ['Content-Type', 'Idempotency-Key', 'X-Timezone', 'X-Internal-Secret'],
-      allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-      exposeHeaders: ['Idempotent-Replayed'],
-      maxAge: 600,
-    }),
-  );
+  /**
+   * The app's own CORS: cookie-authenticated, same-origin browser traffic. It runs with
+   * `credentials: true` and a narrow origin list and must STAY narrow — widening it is how a
+   * third-party origin gets handed the owner's session cookie.
+   *
+   * In production the SPA is served by this same Worker, so this never fires for the real client. It
+   * exists for `vite dev` on :5173 and for the e2e scripts.
+   */
+  const apiCors = cors({
+    origin: (origin, c) => {
+      if (!origin) return origin;
+      const self = new URL(c.req.url).origin;
+      return origin === self || parseTrustedOrigins(c.env).includes(origin) ? origin : null;
+    },
+    credentials: true,
+    allowHeaders: ['Content-Type', 'Idempotency-Key', 'X-Timezone', 'X-Internal-Secret'],
+    allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    exposeHeaders: ['Idempotent-Replayed'],
+    maxAge: 600,
+  });
+  /**
+   * `/mcp` is EXCLUDED from that policy and gets `mcpCors` instead (registered at the mount below).
+   *
+   * The two are not variations of one policy, they are two policies: `/mcp` is a bearer-token API that
+   * a browser at `https://claude.ai` calls cross-origin, and it must run with credentials OFF. Letting
+   * both middlewares touch the same response would mean the narrow one's `Allow-Credentials: true`
+   * landing on a cross-origin MCP response, which is the one thing `mcp-cors.ts` exists to prevent.
+   */
+  app.use('*', (c, next) => (c.req.path === MCP_PATH ? next() : apiCors(c, next)));
   app.use('*', withContainer(options.overrides));
 
   // ── public ──
@@ -80,11 +93,15 @@ export function createApp(options: AppOptions = {}) {
    * own origin primitive and its own bearer gate, and it rebuilds the same `RequestContext` (same
    * timezone rule, same `weekStartOf`) so both paths agree on which week "now" is.
    *
-   * The `cors()` middleware above still applies and is harmless: its origin callback opens with
-   * `if (!origin) return origin`, and a non-browser MCP client sends no Origin at all.
+   * `mcpCors` is registered on this exact path, and the app's `/api/*`-shaped CORS is skipped for it
+   * (see the exclusion above). It answers the `OPTIONS` preflight Claude web sends with `204` plus the
+   * allow headers, reflects only an allowlisted origin, and — the point of the whole file — never
+   * sends `Access-Control-Allow-Credentials`. A bearer token needs no ambient cookie, and granting one
+   * cross-origin would be a CSRF surface for no benefit.
    *
    * The SPA not-found fallback never sees `/mcp` either, because this IS a registered route.
    */
+  app.use(MCP_PATH, mcpCors);
   app.route(MCP_PATH, mcpRoutes);
 
   // ── R-auth-4: everything else under /api needs a session. Including every read. ──

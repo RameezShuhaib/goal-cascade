@@ -12,8 +12,10 @@ import { IClock, IPreferencesRepo, IUserRepo } from '../../application/ports';
 import { ApiTokenService } from '../../application/services';
 import { DomainError } from '../../domain/errors';
 import { isValidTimezone, weekStartOf } from '../../domain/weeks';
+import { mcpAllowedOriginHostnames } from '../middleware/mcp-cors';
 import { createMcpServer } from '../mcp/server';
 import type { McpDeps } from '../mcp/shapes';
+import { resolvePresentedToken } from '../mcp/token-headers';
 import type { AppBindings } from '../types';
 
 /**
@@ -55,9 +57,19 @@ export const mcpRoutes = new Hono<AppBindings>().all('/', async (c) => {
    * through — which is exactly right: the header only exists to protect a browser, and its absence is
    * not a claim about anything. `checkOrigin` (the repo's own middleware) is not applied to this path
    * because it is scoped to `/api/*`, and its "no Origin is allowed" rule is the same rule.
+   *
+   * **Claude web is a browser, so it DOES send an Origin**, and this check is the second half of making
+   * it reachable: CORS headers on the preflight are useless if the POST that follows is then answered
+   * 403 here. The allowlist and the CORS allowlist are therefore the same list — one `vars` entry,
+   * `MCP_ALLOWED_ORIGINS` — because two lists that must agree eventually will not.
    */
   const self = new URL(c.req.url).hostname;
-  const rejected = originValidationResponse(c.req.raw, [self, 'localhost', '127.0.0.1']);
+  const rejected = originValidationResponse(c.req.raw, [
+    self,
+    'localhost',
+    '127.0.0.1',
+    ...mcpAllowedOriginHostnames(c.env),
+  ]);
   if (rejected) return rejected;
 
   const dc = c.get('container');
@@ -105,7 +117,20 @@ export const mcpRoutes = new Hono<AppBindings>().all('/', async (c) => {
     },
   });
 
-  const auth = await gate(c.req.raw);
+  /**
+   * Where the token is READ from, before the gate above verifies it.
+   *
+   * `Authorization: Bearer …` is the standard and is untouched — when no api-key-style header is
+   * present, `resolvePresentedToken` hands the original request straight through. In addition, the
+   * seven header names Claude web's connector UI offers are accepted as aliases carrying the raw
+   * token, because that UI does not offer `Authorization` at all and the endpoint is otherwise
+   * unreachable from it. See `mcp/token-headers.ts`: one resolver, one verification path, and two
+   * disagreeing tokens are refused rather than silently reconciled.
+   */
+  const presented = resolvePresentedToken(c.req.raw);
+  if (!presented.ok) return presented.response;
+
+  const auth = await gate(presented.request);
   if (auth instanceof Response) return auth;
 
   /**

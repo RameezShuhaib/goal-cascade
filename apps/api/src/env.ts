@@ -41,6 +41,17 @@ export type AppEnv = {
   SIGNUP_ALLOWLIST?: string;
   /** `off` disables Better Auth's rate limiter (tests only). Anything else, including unset, = enabled. */
   AUTH_RATE_LIMIT?: string;
+  /**
+   * Comma-separated browser origins allowed to call `/mcp` cross-origin — Claude web and anything like
+   * it. Unset falls back to `MCP_DEFAULT_ALLOWED_ORIGINS` (`https://claude.ai,https://claude.com`), so
+   * the connector works out of the box and the list is still changeable without a code edit.
+   *
+   * SEPARATE from `TRUSTED_ORIGINS` on purpose. That one admits an origin to the cookie-authenticated
+   * `/api/*` surface, which runs with `Access-Control-Allow-Credentials: true`. This one admits an
+   * origin to a bearer-token endpoint that never sends credentials at all (`middleware/mcp-cors.ts`).
+   * One list would mean granting the second privilege every time you meant to grant the first.
+   */
+  MCP_ALLOWED_ORIGINS?: string;
 
   // ── secrets (`wrangler secret put` / .dev.vars) ──
   /** Signing key for Better Auth sessions and tokens. Required; the Worker cannot serve auth without it. */

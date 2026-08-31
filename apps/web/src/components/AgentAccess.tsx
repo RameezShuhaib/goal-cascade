@@ -50,6 +50,26 @@ const COPIED_MS = 2400;
 const mono = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 /**
+ * The one thing a connector form makes you guess at.
+ *
+ * Claude Code and the CLI send `Authorization: Bearer`. Claude web's connector UI does not offer that
+ * name at all — it makes you pick one header out of a fixed list of api-key spellings. The server
+ * accepts every one of them and the bearer form, so there is no wrong answer, and this sentence exists
+ * only to say so. It deliberately names NO header: recommending one would imply the others are wrong,
+ * and would go stale the day that list changes.
+ */
+function AuthNote() {
+  const S = useSkin();
+  return (
+    // `S.T.mut` is the app's ordinary quiet grey, held above 4.5:1 on both surfaces by
+    // `tests/screens/contrast.test.ts`. A note this minor does not need a colour of its own.
+    <p style={{ fontSize: 12, color: S.T.mut, margin: '0 0 10px 0', lineHeight: 1.45 }}>
+      Send it as a bearer token or in any usual API-key header — whichever your client offers works.
+    </p>
+  );
+}
+
+/**
  * What a refused create/replace should say next to the password field.
  *
  * The API answers a wrong password with `422 VALIDATION_FAILED` and the same flat sentence
@@ -202,6 +222,8 @@ export function AgentAccess() {
             state={copied?.field === 'url' ? copied.result : null}
             onCopy={() => void onCopy('url', originMcpUrl)}
           />
+
+          <AuthNote />
 
           {statusQ.isPending && (
             <p style={{ fontSize: 13, color: S.T.mut, margin: '0 0 10px 0' }}>Checking…</p>
@@ -369,6 +391,9 @@ function Revealed({
         state={copied?.field === 'token' ? copied.result : null}
         onCopy={() => void onCopy('token', token)}
       />
+
+      {/* Said here too: this is the screen someone is on while they fill in a connector form. */}
+      <AuthNote />
 
       <button type="button" style={{ ...S.btn(true), width: '100%', marginTop: 12 }} onClick={onDone}>
         Done

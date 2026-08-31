@@ -310,3 +310,106 @@ token must not be committed.
    `changePassword` requires one and this path has none. The sign-out is not optional tidiness —
    `revokeOtherSessions` spares the session performing the change, so skipping it would leave a live
    session row that nothing holds.
+
+---
+
+## 8. Claude web compatibility
+
+`POST /mcp` was reachable from Claude Code, the CLI and `curl`, and unreachable from **Claude web's MCP
+connector UI**, for two unrelated reasons. Fixing either one alone changes nothing.
+
+### 8.1 The header name
+
+Claude web's connector form does not offer `Authorization`. It makes the user pick exactly one header
+out of a fixed list of seven and sends the **raw token** as its value — no scheme, no OAuth:
+
+```
+x-api-key · api-key · apikey · x-apikey · x-api-token · api-token · x-auth-token
+```
+
+All seven are now accepted, **in addition to** `Authorization: Bearer <token>`, which is untouched.
+The owner's stance is that the user never picks: every one of these works, so there is no wrong answer
+and the Agent access sheet deliberately names none of them.
+
+`api/mcp/token-headers.ts` is the one place a presented token is resolved from a request. It does **not**
+verify anything — it hands the SDK's own `requireBearerAuth` gate a request carrying
+`Authorization: Bearer …`, so the constant-time compare, the scope check, the `expiresAt` fiction and
+the 401 shape all stay exactly where they were. A second verification path is how two ways of
+authenticating end up disagreeing about what a valid token is.
+
+| Request | Result |
+|---|---|
+| `Authorization` only | The **original request**, byte for byte. The resolver does not re-parse or re-format it, so a malformed one still earns the SDK's own format message. |
+| One api-key header | Synthetic request with `Authorization: Bearer <token>`. A `Bearer ` prefix inside the value is stripped case-insensitively and whitespace trimmed — some clients add it. |
+| Several headers, same token | Fine. Not a conflict. |
+| Two headers, **different** tokens | **401**, `Conflicting credentials: …`, in the SDK's own challenge shape. |
+
+The refusal is the deliberate part. A stale credential in a proxy or connector config, sitting beside
+the live one, is an ordinary situation; silently preferring either header produces a 401 (or a success)
+the owner cannot explain from anything they can see. It is not a token oracle either — it is a fact
+about the *shape* of the request, decided before any value is compared against anything stored. A
+non-`Bearer` `Authorization` counts as a different credential rather than as noise, because ignoring it
+is exactly the silent preference this rule exists to prevent.
+
+### 8.2 CORS — `/mcp` has its own policy
+
+Probed against production before the change: a preflight from `https://claude.ai` returned `204` with
+**no `Access-Control-Allow-Origin` at all**, and `Access-Control-Allow-Headers: Content-Type,
+Idempotency-Key, X-Timezone, X-Internal-Secret`. The connector failed with nothing in it about why.
+
+`/mcp` is now **excluded** from the app's CORS middleware and gets `api/middleware/mcp-cors.ts`
+instead (`app.use(MCP_PATH, mcpCors)` at the mount). The `/api/*` policy was **not** widened: it guards
+cookie-authenticated, same-origin browser traffic, runs with `credentials: true`, and must stay narrow —
+widening it is how a third-party origin gets handed the owner's session cookie. Two policies, one per
+threat model, pinned by `tests/mcp/browser-clients.test.ts` (Claude web is allowed at `/mcp` and refused
+at `/api/*`).
+
+- **Origins:** `vars.MCP_ALLOWED_ORIGINS` in `wrangler.jsonc`, defaulting to
+  `https://claude.ai,https://claude.com`, plus the request's own origin. Changeable without a code
+  edit. Parsed through `URL`, so a trailing slash in the var cannot produce an entry that silently never
+  matches. The origin is **reflected only when it matches** — never echoed blindly, never `*`.
+- **`Access-Control-Allow-Headers`:** `Authorization`, `Content-Type`, `Accept`, `Last-Event-ID`,
+  `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Session-Id`, and all seven api-key names.
+  Verified against the installed `@modelcontextprotocol/server@2.0.0` rather than taken on trust:
+  `dist/index.mjs` reads exactly `accept`, `authorization`, `content-type`, `host`, `origin`,
+  `last-event-id`, `mcp-method`, `mcp-name`, `mcp-protocol-version` and `mcp-session-id` off inbound
+  requests. `host` and `origin` are forbidden header names a page cannot set, so they are not listed.
+  **`Last-Event-ID` was not in the brief's list** and is included because the SDK reads it for stream
+  resumption and it is not on the CORS safelist.
+- **`Access-Control-Expose-Headers`:** `Mcp-Session-Id` (the SDK sets it on its responses) and
+  `WWW-Authenticate` (the bearer challenge — without it a connector sees a status line and cannot tell
+  "your token is wrong" from "the server is broken").
+- **`OPTIONS` is answered `204` with the allow headers.** A disallowed origin still gets `204`, but with
+  no `Access-Control-Allow-Origin`, so the browser refuses the response.
+
+### 8.3 Why credentials are OFF — the security property
+
+**`Access-Control-Allow-Credentials` is never sent on `/mcp`**, and
+`tests/mcp/browser-clients.test.ts` asserts it explicitly across the preflight, the 200 and the 401.
+
+`/mcp` authenticates with a bearer token the client puts on the request by hand. It has no use for
+ambient credentials — and allowing them cross-origin would mean the browser attaching this deployment's
+`__Secure-` session cookie to requests issued by an allowed third-party origin, turning every page on
+that origin into a CSRF gun pointed at the account. There is nothing to weigh against that: a token in a
+header is not a cookie and never needed the permission. The corollary the spec makes an actual rule —
+`*` and credentials must never appear together — is satisfied by never sending credentials at all and
+by reflecting only a recognised origin.
+
+### 8.4 The origin check, extended
+
+CORS headers on the preflight are worth nothing if the POST that follows is answered `403`. Claude web
+is a browser and **does** send an `Origin`, so `originValidationResponse` in `mcp.routes.ts` — the
+spec's DNS-rebinding defence — now takes `MCP_ALLOWED_ORIGINS`' hostnames alongside `self`, `localhost`
+and `127.0.0.1`. It is the same list as the CORS allowlist, from the same var, because two lists that
+must agree eventually will not. `checkOrigin` (the repo's own middleware) remains scoped to `/api/*` and
+is still not applied here; the bearer token is the guard.
+
+### 8.5 UI
+
+`AgentAccess` gained one sentence, shown under the MCP URL and again in the show-once panel:
+
+> Send it as a bearer token or in any usual API-key header — whichever your client offers works.
+
+It names no header on purpose. Recommending one would imply the other six are wrong, which is the
+opposite of true, and would go stale the day Claude web's list changes. Drawn in `S.T.mut`, the app's
+ordinary quiet grey, which `tests/screens/contrast.test.ts` holds above 4.5:1 on both surfaces.
