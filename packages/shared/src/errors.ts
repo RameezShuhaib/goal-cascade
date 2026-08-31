@@ -9,6 +9,19 @@
 export const ERROR_STATUS = {
   IDEMPOTENCY_KEY_MISSING: 400,
   UNAUTHENTICATED: 401,
+  /**
+   * The MCP endpoint's static bearer token is absent, malformed, or does not match the one stored hash.
+   *
+   * Distinct from `UNAUTHENTICATED` on purpose: that code means "the Better Auth session cookie is gone,
+   * sign in again", which is advice an external agent cannot act on — it has no browser and no cookie
+   * jar. This one means "the `Authorization: Bearer …` header is wrong; the owner must mint a new token
+   * in Agent access and paste it into your config". Same 401, different recovery.
+   *
+   * `/mcp` answers with the MCP SDK's own `401 + WWW-Authenticate: Bearer` challenge rather than this
+   * envelope (that is what an MCP client parses), so this code is what the DOMAIN layer speaks and what
+   * `goalcascade://rules/errors` documents.
+   */
+  INVALID_API_TOKEN: 401,
   FORBIDDEN: 403,
   /**
    * R-auth-1 — Goal Cascade is single-user. `SIGNUP_ALLOWLIST` holds the owner's address and nothing else;

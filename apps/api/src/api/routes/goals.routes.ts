@@ -61,12 +61,20 @@ export const goalsRoutes = new Hono<AppBindings>()
     c.json(await c.get('container').resolve(GoalService).replan(ctx(c), params(c, IdParams).id, body(c, ReplanGoalRequest))),
   )
 
-  /** Q-5 — cascade is opt-in; without it a goal with children refuses with the counts in `details`. */
-  .delete(E.goal(':id'), zParams(IdParams), zQuery(DeleteGoalQuery), async (c) =>
-    c.json(
+  /**
+   * Q-5 — cascade is opt-in; without it a goal with children refuses with the counts in `details`.
+   *
+   * `?dryRun=true` is the read-only preview: it runs the same subtree walk and returns the same shape
+   * with `deleted: false`, writing nothing. It backs the MCP surface's `preview_goal_deletion` tool and
+   * covers the case the live guard cannot — a leaf goal, which deletes silently and takes its tasks,
+   * timelines and backlog with it.
+   */
+  .delete(E.goal(':id'), zParams(IdParams), zQuery(DeleteGoalQuery), async (c) => {
+    const q = query(c, DeleteGoalQuery);
+    return c.json(
       await c
         .get('container')
         .resolve(GoalService)
-        .remove(ctx(c), params(c, IdParams).id, { cascade: query(c, DeleteGoalQuery).cascade === true }),
-    ),
-  );
+        .remove(ctx(c), params(c, IdParams).id, { cascade: q.cascade === true, dryRun: q.dryRun === true }),
+    );
+  });

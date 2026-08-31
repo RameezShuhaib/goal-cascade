@@ -1,4 +1,5 @@
 import type {
+  ApiToken,
   AuthUser,
   BacklogItem,
   BacklogLink,
@@ -240,6 +241,28 @@ export interface IEmailOutboxRepo {
   purgeBefore(createdBefore: string): Promise<number>;
 }
 export const IEmailOutboxRepo = Symbol.for('goal-cascade.IEmailOutboxRepo');
+
+/**
+ * The agent-access token. The ONE repo in this file whose primary read is NOT owner-scoped, and that is
+ * the point: `findByHash` is how an anonymous `POST /mcp` RESOLVES an owner. Every other read below is
+ * scoped by a `userId` the caller already proved; this one produces that `userId`.
+ *
+ * Consequences, both deliberate:
+ *  - `findByHash` takes a HASH, never a plaintext. Hashing happens in the service, above this port, so a
+ *    repo can never be handed a live key and can never log one.
+ *  - `upsert` is create-or-replace against the `user_id` primary key, in one statement. There is no
+ *    `insert` and no `update`: two tokens must not be a representable state, so no method can make one.
+ */
+export interface IApiTokenRepo {
+  findByUser(userId: string): Promise<ApiToken | null>;
+  /** The `/mcp` bearer lookup. One indexed seek on `ux_api_tokens_hash`; returns null for anything else. */
+  findByHash(tokenHash: string): Promise<ApiToken | null>;
+  /** Create or REPLACE. The previous token stops authenticating in the same write. */
+  upsert(token: ApiToken): Promise<void>;
+  /** Idempotent: returns the number of rows removed, which is 0 when nothing was active. */
+  deleteByUser(userId: string): Promise<number>;
+}
+export const IApiTokenRepo = Symbol.for('goal-cascade.IApiTokenRepo');
 
 /** Better Auth's `rateLimit.customStorage` contract: ONE atomic consume, never a get/set pair. */
 export interface IAuthRateLimitRepo {

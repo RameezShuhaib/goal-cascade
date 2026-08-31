@@ -229,8 +229,22 @@ export class GoalService {
    * Every statement states the exact number of rows it must remove, which `GuardedBatch` turns into a
    * precondition: if another device added a task under this subtree between the read and the write, the
    * batch rolls back with a clean 409 rather than leaving that task orphaned.
+   *
+   * ── `dryRun` ─────────────────────────────────────────────────────────────────────────────────────
+   * `dryRun: true` runs the entire READ phase — the same subtree walk, the same five queries, the same
+   * counts — and then returns `{ deleted: false, … }` instead of running the batch. Nothing is written.
+   *
+   * It exists because of a real hole in the guard above: `GOAL_HAS_CHILDREN` only fires when
+   * `descendants.size > 0`, so deleting a LEAF goal carrying forty open tasks and a full backlog
+   * succeeded on the first call with no counts and no warning — the most dangerous delete in the product
+   * was the one with no preview. A dry run deliberately SKIPS both the cascade guard and the leaf case's
+   * silence and always emits the counts, which is what makes `preview_goal_deletion` able to answer for
+   * every goal rather than only for the ones that were already refusing.
+   *
+   * No new read model: it reuses `DeleteGoalResponse` with `deleted: false`, exactly as the tool-surface
+   * design's open question #1 recommends.
    */
-  async remove(ctx: RequestContext, id: string, opts: { cascade: boolean }): Promise<DeleteGoalResponse> {
+  async remove(ctx: RequestContext, id: string, opts: { cascade: boolean; dryRun?: boolean }): Promise<DeleteGoalResponse> {
     const all = await this.goals.listAll(ctx.userId);
     if (!all.some((g) => g.id === id)) throw notFound('goal');
 
@@ -243,6 +257,26 @@ export class GoalService {
       this.ideas.listAll(ctx.userId),
       this.learnings.listByGoals(ctx.userId, subtree),
     ]);
+    const taggedIdeasRead = ideaRows.filter((i) => i.goalId !== null && subtree.includes(i.goalId));
+
+    if (opts.dryRun) {
+      // The event count is the one number a preview cannot get from the reads above without a sixth
+      // query, and it is worth it: "11 tasks" understates the loss when those tasks carry 63 timeline
+      // entries that also vanish. Only the dry run pays for it — the real delete already needs the ids.
+      const events = await this.taskEvents.listByTasks(ctx.userId, taskRows.map((t) => t.id));
+      return {
+        deleted: false,
+        removed: {
+          goals: subtree.length,
+          weeklyFocuses: focusRows.length,
+          tasks: taskRows.length,
+          taskEvents: events.length,
+          backlogItems: itemRows.length,
+        },
+        untagged: { ideas: taggedIdeasRead.length, learnings: learningRows.length },
+        serverNow: ctx.now,
+      };
+    }
 
     if (!opts.cascade && descendants.size > 0) {
       throw new DomainError('GOAL_HAS_CHILDREN', 'this goal has sub-goals; confirm the cascade to delete them', {
@@ -260,7 +294,7 @@ export class GoalService {
       this.taskEvents.listByTasks(ctx.userId, taskIds),
       this.backlogLinks.listByItems(ctx.userId, itemIds),
     ]);
-    const taggedIdeas = ideaRows.filter((i) => i.goalId !== null && subtree.includes(i.goalId));
+    const taggedIdeas = taggedIdeasRead;
 
     const writes: GuardedWrite[] = [];
     /**

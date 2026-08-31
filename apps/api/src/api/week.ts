@@ -15,7 +15,13 @@ import { weekStartFromOffset } from '../domain/weeks';
  * Anything older is still readable by naming its `weekStart` explicitly (Q-13); this bound is the
  * switcher's, and it is one number for both controls.
  */
-export function resolveWeek(ctx: RequestContext, offset = 0, maxHistory = WEEK_HISTORY_WEEKS): WeekView {
+/**
+ * `maxHistory` is annotated `number` rather than left to inference: `WEEK_HISTORY_WEEKS` is `8 as const`,
+ * so the default alone would type the parameter as the literal `8` and no other bound could be passed.
+ * The MCP surface passes its own (`api/mcp/shapes.ts`) — the 8-week clamp is the WEEK SWITCHER's range
+ * (R-nav-4, D-24), a UI bound, and an agent has no switcher.
+ */
+export function resolveWeek(ctx: RequestContext, offset = 0, maxHistory: number = WEEK_HISTORY_WEEKS): WeekView {
   if (offset > 0) throw new DomainError('WEEK_OUT_OF_RANGE', 'future weeks are not addressable', { offset });
   if (offset < -(maxHistory - 1)) {
     throw new DomainError('WEEK_OUT_OF_RANGE', `the week switcher reaches back ${maxHistory} weeks`, { offset, maxHistory });

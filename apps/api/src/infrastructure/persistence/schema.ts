@@ -427,6 +427,39 @@ export const emailOutbox = sqliteTable(
 );
 
 /**
+ * The ONE agent-access token per account — the credential behind `POST /mcp`.
+ *
+ * **`user_id` is the PRIMARY KEY, not `id`.** That is the design, not a shortcut: "exactly one token,
+ * creating replaces it" becomes a constraint the database enforces rather than a property the service
+ * hopes for, so there is no state in which two tokens are live and no code path that could produce one.
+ * There is deliberately no `name` column and no list endpoint (UX §8: one person connecting one or two
+ * agents does not need a revocation list, and a list is a management surface this product has removed).
+ *
+ * **Only a HASH is stored.** `token_hash` is `sha256Hex(plaintext)` — the same primitive the idempotency
+ * middleware uses and the same shape Better Auth's `verification.storeIdentifier: 'hashed'` gives reset
+ * tokens. Read access to D1 — a leaked backup, a `wrangler d1 execute`, an export — must not be a live
+ * key for an endpoint that bypasses Better Auth entirely. `last4` is the only fragment kept, so the owner
+ * can recognise which token their agent holds without the row ever being able to authenticate.
+ *
+ * The unique index on `token_hash` is what the `/mcp` bearer check seeks on: one indexed lookup resolves
+ * the owner, and `userId` is then closed over for the whole request (see `api/mcp/server.ts`).
+ */
+export const apiTokens = sqliteTable(
+  'api_tokens',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    /** SHA-256 hex of the plaintext. NEVER the plaintext, in any column, at any time. */
+    tokenHash: text('token_hash').notNull(),
+    /** The last 4 characters of the plaintext — a recognition aid, not a credential fragment. */
+    last4: text('last4').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('ux_api_tokens_hash').on(t.tokenHash)],
+);
+
+/**
  * Atomic guarded batches. A permanently EMPTY table whose only job is to raise a SQL error:
  * `GuardedBatch` prepends `INSERT INTO _guard(label) SELECT ? WHERE <precondition is false>` to every
  * batch, so a failed precondition trips `CHECK (0)` and D1 rolls back the whole batch — which is the only
@@ -458,5 +491,6 @@ export const schema = {
   idempotencyKeys,
   authRateLimits,
   emailOutbox,
+  apiTokens,
   guard,
 };

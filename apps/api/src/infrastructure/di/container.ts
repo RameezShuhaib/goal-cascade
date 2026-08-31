@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { container, type DependencyContainer } from 'tsyringe';
 import {
+  IApiTokenRepo,
   IAuthRateLimitRepo,
   IBacklogLinkRepo,
   IBacklogRepo,
@@ -20,6 +21,7 @@ import {
   IWeeklyFocusRepo,
 } from '../../application/ports';
 import {
+  ApiTokenService,
   BacklogService,
   BootstrapService,
   GoalService,
@@ -38,6 +40,7 @@ import { SystemClock } from '../clock';
 import { LogEmailSender } from '../email/log-email-sender';
 import { UlidGenerator } from '../ids/ulid';
 import {
+  D1ApiTokenRepo,
   D1BacklogLinkRepo,
   D1BacklogRepo,
   D1EmailOutboxRepo,
@@ -89,6 +92,7 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
   c.registerSingleton(ILearningRepo, D1LearningRepo);
   c.registerSingleton(IIdempotencyRepo, D1IdempotencyRepo);
   c.registerSingleton(IEmailOutboxRepo, D1EmailOutboxRepo);
+  c.registerSingleton(IApiTokenRepo, D1ApiTokenRepo);
   // The same object is Better Auth's `customStorage` and the purge port.
   c.register(IAuthRateLimitRepo, { useFactory: (dc) => new D1RateLimitStore(dc.resolve<Db>(DB)) });
 
@@ -107,6 +111,7 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
   c.registerSingleton(IdeaService);
   c.registerSingleton(LearningService);
   c.registerSingleton(BootstrapService);
+  c.registerSingleton(ApiTokenService);
 
   overrides?.(c);
   return c;

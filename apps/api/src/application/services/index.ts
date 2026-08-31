@@ -8,3 +8,4 @@ export * from './plan.service';
 export * from './task.service';
 export * from './backlog.service';
 export * from './capture.service';
+export * from './api-token.service';

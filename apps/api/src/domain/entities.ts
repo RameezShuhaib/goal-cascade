@@ -206,3 +206,15 @@ export type OutboxEmail = {
   body: string;
   createdAt: string;
 };
+
+/**
+ * The ONE agent-access token for an account. `tokenHash` is `sha256Hex(plaintext)` — the plaintext is
+ * returned once at creation and then exists nowhere on the server. `userId` is the primary key, so
+ * creating a token replaces the previous one and the old one stops authenticating in the same write.
+ */
+export type ApiToken = {
+  userId: string;
+  tokenHash: string;
+  last4: string;
+  createdAt: string;
+};

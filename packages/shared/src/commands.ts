@@ -75,7 +75,14 @@ export const GoalFilterQuery = z.object({ goalId: Ulid.optional() }).strict();
  * client needs to render the required "N sub-goals, M tasks, K backlog items" confirmation. A leaf goal
  * needs no acknowledgement.
  */
-export const DeleteGoalQuery = z.object({ cascade: z.stringbool().optional() }).strict();
+/**
+ * `dryRun=true` computes exactly what the delete WOULD remove and writes nothing, answering with the
+ * same `DeleteGoalResponse` shape and `deleted: false`. It ignores `cascade` — a preview is never
+ * refused — and, unlike the live delete's `GOAL_HAS_CHILDREN` guard, it emits counts for LEAF goals too.
+ * That is the whole point: a leaf carrying forty open tasks and a full backlog is the delete with no
+ * warning, so it is the one that most needs a preview.
+ */
+export const DeleteGoalQuery = z.object({ cascade: z.stringbool().optional(), dryRun: z.stringbool().optional() }).strict();
 
 const OptionalVersion = z.int().positive().optional();
 
@@ -136,6 +143,53 @@ export const ChangePasswordRequest = z
   })
   .strict();
 export const ChangePasswordResponse = z.object({ changed: z.literal(true), revokedOtherSessions: z.boolean(), ...ServerNow });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The agent-access token — the credential behind `/mcp`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * `POST /me/api-token` — create the token, or REPLACE the one that exists.
+ *
+ * The password is required and the reason is the same one recorded on `change-password`: this token is a
+ * standing, non-expiring, full-access credential for the whole account — strictly more powerful than the
+ * browser session that is asking for it, because it bypasses Better Auth entirely. An unlocked laptop
+ * must not be enough to mint one.
+ *
+ * A wrong password answers `422 VALIDATION_FAILED` with the same flat sentence `change-password` uses, so
+ * neither endpoint can become a password oracle.
+ */
+export const CreateApiTokenRequest = z.object({ password: z.string().min(1).max(200) }).strict();
+
+/**
+ * What the owner can be told about a token that already exists — and the complete list of it.
+ *
+ * There is no `token`, no `hash`, no `prefix+suffix` reconstruction: the row stores a SHA-256 hash and
+ * `last4`, so a D1 export, a backup or a `wrangler d1 execute` cannot yield a live key. `last4` exists
+ * only so the owner can tell "the token my agent is using" from "some other token" without revealing one.
+ */
+export const ApiTokenStatusView = z.object({ createdAt: Iso, last4: z.string().length(4) });
+
+/**
+ * `GET /me/api-token` — needs no password, because it reveals nothing secret.
+ *
+ * `mcpUrl` is on BOTH this response and the create response deliberately: the non-secret half of an agent
+ * config (the URL) is easy to forget and available nowhere else in the product, so the owner must be able
+ * to recover it without replacing a working token. It is derived from the request origin, never a var —
+ * the same rule `better-auth.ts` follows for `baseURL`, so localhost, `workers.dev`, versioned preview
+ * URLs and `goals.rameezshuhaib.com` all answer with themselves and nothing needs configuring.
+ */
+export const ApiTokenStatusResponse = z.object({ token: ApiTokenStatusView.nullable(), mcpUrl: z.url(), ...ServerNow });
+
+/** The ONE response that ever carries `plaintext`. It is never stored and never returned again. */
+export const CreateApiTokenResponse = z.object({
+  token: ApiTokenStatusView.extend({ plaintext: z.string() }),
+  mcpUrl: z.url(),
+  ...ServerNow,
+});
+
+/** `DELETE /me/api-token` — idempotent. Revoking when nothing is active succeeds. */
+export const RevokeApiTokenResponse = z.object({ revoked: z.literal(true), ...ServerNow });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Goals
@@ -382,6 +436,11 @@ export type PatchPreferencesRequest = z.infer<typeof PatchPreferencesRequest>;
 export type PreferencesResponse = z.infer<typeof PreferencesResponse>;
 export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequest>;
 export type ChangePasswordResponse = z.infer<typeof ChangePasswordResponse>;
+export type CreateApiTokenRequest = z.infer<typeof CreateApiTokenRequest>;
+export type ApiTokenStatusView = z.infer<typeof ApiTokenStatusView>;
+export type ApiTokenStatusResponse = z.infer<typeof ApiTokenStatusResponse>;
+export type CreateApiTokenResponse = z.infer<typeof CreateApiTokenResponse>;
+export type RevokeApiTokenResponse = z.infer<typeof RevokeApiTokenResponse>;
 export type CreateGoalRequest = z.infer<typeof CreateGoalRequest>;
 export type PatchGoalRequest = z.infer<typeof PatchGoalRequest>;
 export type MoveGoalRequest = z.infer<typeof MoveGoalRequest>;

@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { API_BASE } from '@goal-cascade/shared';
+import { API_BASE, MCP_PATH } from '@goal-cascade/shared';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { AUTH_BASE_PATH, parseTrustedOrigins } from '../infrastructure/auth/better-auth';
@@ -14,6 +14,7 @@ import { backlogRoutes } from './routes/backlog.routes';
 import { bootstrapRoutes, ideasRoutes, learningsRoutes } from './routes/capture.routes';
 import { goalsRoutes } from './routes/goals.routes';
 import { internalRoutes } from './routes/internal.routes';
+import { mcpRoutes } from './routes/mcp.routes';
 import { meRoutes } from './routes/me.routes';
 import { planRoutes } from './routes/plan.routes';
 import { tasksRoutes } from './routes/tasks.routes';
@@ -68,6 +69,23 @@ export function createApp(options: AppOptions = {}) {
   app.get(`${API_BASE}/health`, (c) => c.json({ ok: true, app: c.env.APP_NAME, now: new Date().toISOString() }));
   app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, (c) => c.get('auth').handler(c.req.raw));
   app.route('/internal', internalRoutes);
+
+  /**
+   * The MCP endpoint, mounted HERE — above the `/api/*` chain, and that placement is the contract.
+   *
+   * `requireSession` demands a Better Auth cookie; an external AI agent has a static bearer token and
+   * no cookie jar, so a `/mcp` that reached that middleware would 401 every request. Registering it
+   * before the `app.use(\`${API_BASE}/*\`, …)` line below is what keeps `checkOrigin`, `requireSession`
+   * and `resolveTimezone` off this path — `mcp.routes.ts` does all three jobs itself, with the SDK's
+   * own origin primitive and its own bearer gate, and it rebuilds the same `RequestContext` (same
+   * timezone rule, same `weekStartOf`) so both paths agree on which week "now" is.
+   *
+   * The `cors()` middleware above still applies and is harmless: its origin callback opens with
+   * `if (!origin) return origin`, and a non-browser MCP client sends no Origin at all.
+   *
+   * The SPA not-found fallback never sees `/mcp` either, because this IS a registered route.
+   */
+  app.route(MCP_PATH, mcpRoutes);
 
   // ── R-auth-4: everything else under /api needs a session. Including every read. ──
   app.use(`${API_BASE}/*`, checkOrigin, requireSession, resolveTimezone);

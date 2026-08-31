@@ -42,6 +42,19 @@ const ROUTES: Row[] = [
     command: true,
     allow: [422],
   },
+  { method: 'GET', path: ENDPOINTS.meApiToken },
+  {
+    method: 'POST',
+    path: ENDPOINTS.meApiToken,
+    // A deliberately WRONG password, for the same reason `change-password` above sends one: a correct
+    // one would MINT A REAL TOKEN inside the census loop, which is a live full-access credential this
+    // test has no business creating. 422 is what a registered, validated, session-gated route answers.
+    // `tests/mcp/api-token.test.ts` is where the happy path is proved.
+    json: { password: 'not the real password' },
+    command: true,
+    allow: [422],
+  },
+  { method: 'DELETE', path: ENDPOINTS.meApiToken },
   { method: 'GET', path: ENDPOINTS.bootstrap },
 
   { method: 'GET', path: ENDPOINTS.goals },

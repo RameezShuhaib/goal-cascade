@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   API_BASE,
+  API_TOKEN_PREFIX,
+  ApiTokenStatusResponse,
+  ApiTokenStatusView,
+  CreateApiTokenRequest,
+  CreateApiTokenResponse,
   CreateGoalRequest,
   CreateTaskRequest,
   DeleteGoalQuery,
   ENDPOINTS,
   ERROR_CODES,
   ERROR_STATUS,
+  MCP_PATH,
   IDEMPOTENCY_KEY_PATTERN,
   Iso,
   PatchGoalRequest,
@@ -171,5 +177,70 @@ describe('endpoints', () => {
   it('the idempotency key pattern accepts a UUID and refuses a short key', () => {
     expect(IDEMPOTENCY_KEY_PATTERN.test(crypto.randomUUID())).toBe(true);
     expect(IDEMPOTENCY_KEY_PATTERN.test('short')).toBe(false);
+  });
+});
+
+describe('the agent-access token contract', () => {
+  it('the MCP path is NOT under /api — it has no session, so it must not sit behind the session guard', () => {
+    expect(MCP_PATH).toBe('/mcp');
+    expect(MCP_PATH.startsWith(API_BASE)).toBe(false);
+  });
+
+  it('the token prefix is short, distinctive and greppable', () => {
+    // A leaked key must be recognisable on sight in a log, and findable with one grep.
+    expect(API_TOKEN_PREFIX).toBe('gcm_');
+    expect(API_TOKEN_PREFIX.endsWith('_')).toBe(true);
+  });
+
+  it('a bad or absent agent token has its own 401 code, distinct from a dead session', () => {
+    // `UNAUTHENTICATED` means "sign in again", which an external agent cannot do — it has no browser
+    // and no cookie jar. The distinct code is what lets the recovery advice differ while the HTTP
+    // status stays the same.
+    expect(ERROR_STATUS.INVALID_API_TOKEN).toBe(401);
+    expect(ERROR_STATUS.UNAUTHENTICATED).toBe(401);
+    expect(ERROR_CODES).toContain('INVALID_API_TOKEN');
+  });
+
+  it('creating a token requires a password; reading its status does not', () => {
+    expect(CreateApiTokenRequest.safeParse({ password: 'hunter2' }).success).toBe(true);
+    expect(CreateApiTokenRequest.safeParse({}).success, 'the password guard is gone').toBe(false);
+    // `.strict()` — an unknown key is a bug, not something to drop silently. There is deliberately no
+    // `name` field: exactly one token exists per account, so there is no list to label.
+    expect(CreateApiTokenRequest.safeParse({ password: 'x', name: 'my laptop' }).success).toBe(false);
+  });
+
+  it('the status response carries a summary or nothing, and has no plaintext field at all', () => {
+    expect(
+      ApiTokenStatusResponse.safeParse({
+        token: null,
+        mcpUrl: 'https://goals.example.com/mcp',
+        serverNow: '2026-08-31T00:00:00.000Z',
+      }).success,
+    ).toBe(true);
+    expect(
+      ApiTokenStatusResponse.safeParse({
+        token: { createdAt: '2026-08-31T00:00:00.000Z', last4: 'a1b2' },
+        mcpUrl: 'https://goals.example.com/mcp',
+        serverNow: '2026-08-31T00:00:00.000Z',
+      }).success,
+    ).toBe(true);
+    // The absence is the guarantee: there is no plaintext member to accidentally populate.
+    expect(Object.keys(ApiTokenStatusView.shape).sort()).toEqual(['createdAt', 'last4']);
+  });
+
+  it('only the CREATE response carries the plaintext, and it is the only one that ever does', () => {
+    expect(Object.keys(CreateApiTokenResponse.shape.token.shape).sort()).toEqual(['createdAt', 'last4', 'plaintext']);
+  });
+
+  it('the delete-goal query accepts a dry run, so a preview needs no new route or response shape', () => {
+    // Q-5's `DeleteGoalResponse` is reused with `deleted: false`; `dryRun` arrives as a query string, so
+    // it coerces from "true" exactly the way `cascade` already does.
+    expect(DeleteGoalQuery.parse({ dryRun: 'true' })).toEqual({ dryRun: true });
+    expect(DeleteGoalQuery.parse({ dryRun: 'false' })).toEqual({ dryRun: false });
+    // `z.stringbool()` has its own truthy vocabulary ("true", "1", "yes", "on", "y", "enabled"), so
+    // this asserts the boundary with a word that is in none of them rather than assuming a narrow set.
+    expect(DeleteGoalQuery.safeParse({ dryRun: 'maybe' }).success).toBe(false);
+    // …and, like every other query schema here, an unknown key is refused rather than ignored.
+    expect(DeleteGoalQuery.safeParse({ dryrun: 'true' }).success).toBe(false);
   });
 });

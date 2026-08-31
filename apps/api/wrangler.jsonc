@@ -15,11 +15,17 @@
   // path falls back to index.html
   // (https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/).
   // `npm run deploy` at the repo root builds the SPA before `wrangler deploy` uploads it.
+  //
+  // `/mcp` MUST be in `run_worker_first`. Without it the asset router owns the path, and
+  // `not_found_handling: "single-page-application"` answers `index.html` with a 200 — the Worker never
+  // runs at all. The failure is silent and reads as "the MCP server returns HTML", which is nothing like
+  // its cause, so `tests/security/mcp-wiring.test.ts` fails the build if this entry disappears. Exact
+  // non-glob paths are supported here (the Cloudflare docs' own example is `["/oauth/callback"]`).
   "assets": {
     "directory": "../web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/internal/*"]
+    "run_worker_first": ["/api/*", "/internal/*", "/mcp"]
   },
 
   // Provisioned resources — all prefixed `goal-cascade-`.
@@ -48,6 +54,21 @@
   // Goal Cascade has no scheduled work. Tasks carry forward by being READ in a later week (an open task
   // is visible in every week >= its origin), not by a nightly job that rewrites rows. Adding a cron
   // would mean inventing state that the read model already derives.
+  //
+  // ── DELIBERATELY ABSENT: `routes` — and `goals.rameezshuhaib.com` is NOT reproducible from here ────
+  // The production hostname `goals.rameezshuhaib.com` is a CUSTOM DOMAIN attached to this Worker in the
+  // Cloudflare DASHBOARD. It is not declared in this file and this file cannot recreate it: a fresh
+  // `wrangler deploy` from a clean checkout will serve `goal-cascade-api.<subdomain>.workers.dev` and
+  // NOTHING will be listening on the custom domain unless it is re-attached by hand in the dashboard.
+  //
+  // A `routes` block is deliberately NOT added to fix that. `routes` and a dashboard-managed custom
+  // domain are two different mechanisms for the same hostname, and declaring one here while the other
+  // exists is how a working route gets replaced by a broken one on the next deploy. The working route
+  // must not be disturbed. If this ever needs to live in config, migrate it deliberately — remove the
+  // custom domain in the dashboard first, then add `routes` with `custom_domain: true` — never both.
+  //
+  // Nothing in the code depends on the hostname either way: the auth base URL and the MCP URL shown in
+  // Agent access are both derived from the incoming request origin.
 
   // Non-secret config. Secrets are set with `wrangler secret put` (production) or `apps/api/.dev.vars`
   // (local dev; vitest also loads it). BETTER_AUTH_URL is NOT set: the auth base URL is derived from the

@@ -14,6 +14,17 @@ export const ENDPOINTS = {
    * "forgot password" is not a recovery path here: changing the password while still signed in is.
    */
   meChangePassword: '/me/change-password',
+  /**
+   * The ONE static bearer token that lets an external AI agent drive this account through `/mcp`.
+   *
+   * `GET` = status (`{ createdAt, last4 }` or `null`) — no password, never the plaintext.
+   * `POST` = create-or-REPLACE, password required, returns the plaintext exactly ONCE.
+   * `DELETE` = revoke, idempotent.
+   *
+   * There is deliberately no list and no `:id`: exactly one token exists per account, creating replaces,
+   * so there is no state in which two tokens are live and therefore no endpoint that could produce one.
+   */
+  meApiToken: '/me/api-token',
 
   // ── cold open ──
   /** Everything the app needs on cold open, in one request (the mockup's `fetchAll`). */
@@ -69,6 +80,21 @@ export const ENDPOINTS = {
   /** Re-tag to a (life) goal. A learning is never converted into work. */
   learningAttach: (id: string) => `/learnings/${id}/attach`,
 } as const;
+
+/**
+ * The MCP endpoint. NOT under `${API_BASE}`, and that is load-bearing in three places:
+ *
+ *  - `app.ts` mounts it BEFORE `app.use(`${API_BASE}/*`, checkOrigin, requireSession, …)`, so the
+ *    session guard never sees it — an external agent has a bearer token, not a cookie.
+ *  - `wrangler.jsonc` must list `"/mcp"` in `assets.run_worker_first`; without it the SPA asset router
+ *    answers `index.html` here and the Worker never runs (`tests/security/mcp-wiring.test.ts`).
+ *  - it is one path, POST only. There is no `/sse`: the 2026-07-28 revision made MCP stateless and
+ *    deprecated the 2024-11-05 HTTP+SSE transport.
+ */
+export const MCP_PATH = '/mcp' as const;
+
+/** `gcm_` = **G**oal **C**ascade **M**CP. Prefixed so a leaked key is greppable and obvious in a log. */
+export const API_TOKEN_PREFIX = 'gcm_' as const;
 
 /** Headers the client must/should send. */
 export const HEADERS = {
