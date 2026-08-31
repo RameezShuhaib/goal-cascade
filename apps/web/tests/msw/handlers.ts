@@ -35,18 +35,29 @@ export const handlers: HttpHandler[] = [
   http.patch('/api/me/preferences', () => HttpResponse.json(F.preferencesResponse())),
   http.get('/api/bootstrap', () => HttpResponse.json(F.bootstrapResponse())),
 
+  // Agent access. The default account has no token; `server.use(...)` is how a test gives it one.
+  // Contract in `src/api/contracts.ts` — see `docs/work/12-web-agent-access/build.md`.
+  http.get('/api/me/agent-token', () => HttpResponse.json({ token: null })),
+  http.post('/api/me/agent-token', cmd(() => HttpResponse.json(F.agentTokenCreated(), { status: 201 }))),
+  http.delete('/api/me/agent-token', () => HttpResponse.json({ deleted: true })),
+
   http.get('/api/goals', () => HttpResponse.json(F.goalsResponse())),
   http.get('/api/goals/:id', () => HttpResponse.json(F.goalDetailResponse())),
   http.post('/api/goals', cmd(() => HttpResponse.json(F.goalResponse(), { status: 201 }))),
   http.patch('/api/goals/:id', () => HttpResponse.json(F.goalResponse())),
-  http.delete('/api/goals/:id', () =>
-    HttpResponse.json({
+  // Q-5 — one route, two jobs. `?dryRun=true` answers with the counts and removes nothing; the delete
+  // confirmation sheet reads it before it offers a button.
+  http.delete('/api/goals/:id', ({ request }) => {
+    if (new URL(request.url).searchParams.get('dryRun') === 'true') {
+      return HttpResponse.json({ subGoals: 0, tasks: 0, backlogItems: 0 });
+    }
+    return HttpResponse.json({
       deleted: true,
       removed: { goals: 1, weeklyFocuses: 0, tasks: 0, taskEvents: 0, backlogItems: 0 },
       untagged: { ideas: 0, learnings: 0 },
       serverNow: F.NOW,
-    }),
-  ),
+    });
+  }),
   http.post('/api/goals/:id/move', cmd(() => HttpResponse.json(F.goalResponse()))),
   http.post('/api/goals/:id/replan', cmd(() => HttpResponse.json(F.goalResponse()))),
 

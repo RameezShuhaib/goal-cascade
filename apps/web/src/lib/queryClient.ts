@@ -28,6 +28,14 @@ export const keys = {
   backlog: (goalId?: string) => ['backlog', goalId ?? null] as const,
   ideas: ['ideas'] as const,
   learnings: ['learnings'] as const,
+  /** Whether an agent token exists, and its `last4`. Never the token itself — it is shown once, in memory. */
+  agentToken: ['agentToken'] as const,
+  /**
+   * Q-5 — what deleting one goal would destroy. Per-goal and deliberately ungrouped: it is read once when
+   * the delete sheet opens and dropped when it closes (`gcTime: 0`), because a stale count on a
+   * confirmation is worse than no count at all.
+   */
+  goalDeletePreview: (id: string) => ['goalDeletePreview', id] as const,
 };
 
 /**
@@ -44,6 +52,7 @@ export const OWNER_KEYS: readonly (readonly unknown[])[] = [
   keys.backlogAll,
   keys.ideas,
   keys.learnings,
+  keys.agentToken,
   ['bootstrap'],
 ];
 

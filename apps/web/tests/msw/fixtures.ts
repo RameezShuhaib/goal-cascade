@@ -326,6 +326,27 @@ export const bootstrapResponse = () => ({
   serverNow: NOW,
 });
 
+// ---- agent access ----------------------------------------------------------
+//
+// Assumed shapes, mirrored from `src/api/contracts.ts`. When the API ships its own schemas these should be
+// built from them, the way every other fixture in this file is.
+
+/** The plaintext, answered exactly once by `POST /me/agent-token` and never readable again. */
+export const PLAINTEXT_TOKEN = 'gcs_9f3b7c11e4a24d8fb0c6e57a2d1934kt';
+
+export const agentTokenSummary = (over: Record<string, unknown> = {}) => ({ createdAt: NOW, last4: '34kt', ...over });
+
+/** `GET /me/agent-token` when one exists. */
+export const agentTokenStatus = (over: Record<string, unknown> = {}) => ({ token: agentTokenSummary(), ...over });
+
+/** `POST /me/agent-token` — create or replace. */
+export const agentTokenCreated = (over: Record<string, unknown> = {}) => ({
+  token: PLAINTEXT_TOKEN,
+  createdAt: NOW,
+  last4: '34kt',
+  ...over,
+});
+
 /** Better Auth's own success body (not the SPEC §5 envelope). */
 export const authUser = (over: Record<string, unknown> = {}) => ({
   id: 'user_owner',

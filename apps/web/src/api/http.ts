@@ -51,6 +51,13 @@ import {
   type UncheckTaskRequest,
 } from '@goal-cascade/shared';
 import { recordServerNow } from '../lib/serverClock';
+import {
+  AgentTokenCreatedResponse,
+  AgentTokenRevokedResponse,
+  AgentTokenStatusResponse,
+  ASSUMED_ENDPOINTS,
+  GoalDeletePreviewResponse,
+} from './contracts';
 import { ApiError, isKnownErrorCode } from './errors';
 
 export interface HttpApiClientOptions {
@@ -140,6 +147,28 @@ export class HttpApiClient {
     return this.request('PATCH', ENDPOINTS.mePreferences, PreferencesResponse, { body });
   }
 
+  // ---- agent access -------------------------------------------------------
+  //
+  // The three calls behind the Account sheet's "Agent access" section. Their paths and schemas live in
+  // `./contracts.ts` because the API that serves them was being written in parallel with this screen; see
+  // that file's header for what to change when the real endpoints land.
+
+  /** Status only — `{ createdAt, last4 }` or `null`. Reading whether a token exists needs no password. */
+  agentTokenStatus() {
+    return this.request('GET', ASSUMED_ENDPOINTS.agentToken, AgentTokenStatusResponse);
+  }
+  /**
+   * Create or replace. Re-authentication guards this call and only this call, and the plaintext comes back
+   * exactly once — there is no read that can ever return it again.
+   */
+  createAgentToken(body: { password: string }, key: string) {
+    return this.request('POST', ASSUMED_ENDPOINTS.agentToken, AgentTokenCreatedResponse, { body, idempotencyKey: key });
+  }
+  /** Idempotent: revoking when there is nothing to revoke is a success. */
+  revokeAgentToken() {
+    return this.request('DELETE', ASSUMED_ENDPOINTS.agentToken, AgentTokenRevokedResponse);
+  }
+
   // ---- cold open ----------------------------------------------------------
 
   /** Everything the app needs on cold open, in one request (the mockup's `fetchAll`). */
@@ -170,6 +199,18 @@ export class HttpApiClient {
     return this.request('DELETE', ENDPOINTS.goal(id), DeleteGoalResponse, {
       query: opts.cascade ? { cascade: true } : undefined,
     });
+  }
+  /**
+   * Q-5 — what deleting this goal WOULD destroy, with nothing destroyed. `dryRun` is the whole contract:
+   * the same route, the same authorisation, no write.
+   *
+   * This exists because `GOAL_HAS_CHILDREN` only fires on descendant GOALS. A Monthly leaf holding forty
+   * open tasks, their activity history and its backlog is childless by that test, so the refusal never
+   * came and the confirmation the spec requires was never shown. A read is the only way to know before the
+   * fact. Schema in `./contracts.ts`.
+   */
+  goalDeletePreview(id: string) {
+    return this.request('DELETE', ENDPOINTS.goal(id), GoalDeletePreviewResponse, { query: { dryRun: true } });
   }
   moveGoal(id: string, body: MoveGoalRequest, key: string) {
     return this.request('POST', ENDPOINTS.goalMove(id), GoalResponse, { body, idempotencyKey: key });

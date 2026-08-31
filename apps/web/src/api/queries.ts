@@ -16,6 +16,7 @@ import type {
 } from '@goal-cascade/shared';
 import { useApi } from '../context/ApiContext';
 import { useUI } from '../context/UIContext';
+import type { AgentTokenStatusResponse } from './contracts';
 import { newIdempotencyKey, type ApiClient } from './http';
 import { isApiError, isTransient, toApiError, type ApiError, type ApiErrorCode } from './errors';
 import { presentError, type Refresh } from '../lib/errorCopy';
@@ -152,6 +153,41 @@ export function useLearnings() {
   const client = useApi();
   const enabled = useSignedIn();
   return useQuery({ queryKey: keys.learnings, queryFn: () => client.learnings(), enabled, ...READ_MODEL });
+}
+
+/**
+ * Whether an agent token exists, and enough of it to recognise. Reading STATUS needs no password — only
+ * creating or replacing does — so this is an ordinary read model like any other.
+ *
+ * `retry: false` because the endpoint may legitimately not be there yet on an older API: one 404 and the
+ * section says so, rather than three rounds of retry behind a spinner.
+ */
+export function useAgentToken() {
+  const client = useApi();
+  const enabled = useSignedIn();
+  return useQuery({ queryKey: keys.agentToken, queryFn: () => client.agentTokenStatus(), enabled, staleTime: 30_000, retry: false });
+}
+
+/**
+ * Q-5 — what deleting this goal would destroy, read when the confirmation sheet opens.
+ *
+ * `gcTime: 0` and `staleTime: 0`: the sheet asks fresh every time it opens and the answer does not outlive
+ * it. A confirmation that names counts from ten minutes ago is a confirmation that lies. `retry: false` so
+ * a server without the `dryRun` parameter costs one request, after which the sheet falls back to the
+ * `GOAL_HAS_CHILDREN` refusal path it has always had.
+ */
+export function useGoalDeletePreview(id: string | null) {
+  const client = useApi();
+  const enabled = useSignedIn() && !!id;
+  return useQuery({
+    queryKey: keys.goalDeletePreview(id ?? ''),
+    queryFn: () => client.goalDeletePreview(id!),
+    enabled,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
 }
 
 // ---- errors ----------------------------------------------------------------
@@ -386,6 +422,54 @@ export function usePatchPreferences() {
     // The owner's timezone decides where every week boundary falls (R-auth-5); a change re-shapes every
     // week-scoped read model, so none of them may be trusted afterwards.
     invalidate: [keys.me, ...WEEK_KEYS],
+  });
+}
+
+// ---- agent access ----------------------------------------------------------
+
+/**
+ * Codes the Agent access section explains next to the password field rather than in a toast.
+ *
+ * A wrong password is the expected way for this call to fail, and it is not clear which code the API will
+ * answer with — 401, 403 and 422 are all defensible for "that password doesn't match" — so all three are
+ * quiet here and the section renders its own sentence from the STATUS. `UNAUTHENTICATED` being quiet costs
+ * nothing: `presentError` still refreshes `['me']`, and a session that has genuinely expired is caught by
+ * the session gate, which is the mechanism that has always owned that.
+ *
+ * `NOT_FOUND` is quiet for a different reason: until the API ships this route, every call is a 404, and a
+ * toast reading "That's no longer here" on a section that has never existed is noise.
+ */
+const AGENT_TOKEN_QUIET = ['UNAUTHENTICATED', 'FORBIDDEN', 'VALIDATION_FAILED', 'RATE_LIMITED', 'NOT_FOUND'] as const;
+
+/**
+ * Create or replace the one token, re-authenticated with the password.
+ *
+ * The plaintext in the response is **not** written to the cache — only `createdAt` and `last4` are. That is
+ * the whole of "show once" on this side of the wire: the secret exists in one component's local state and
+ * in nothing that outlives it.
+ */
+export function useCreateAgentToken() {
+  return useCommand<{ password: string }, Awaited<ReturnType<ApiClient['createAgentToken']>>>({
+    run: (c, v, k) => c.createAgentToken({ password: v.password }, k),
+    onSuccess: (d, _v, qc) =>
+      qc.setQueryData<AgentTokenStatusResponse>(keys.agentToken, (prev) => ({
+        ...prev,
+        token: { createdAt: d.createdAt ?? new Date().toISOString(), last4: d.last4 ?? d.token.slice(-4) },
+      })),
+    invalidate: [keys.agentToken],
+    inline: true,
+    quiet: AGENT_TOKEN_QUIET,
+  });
+}
+
+/** Idempotent revoke. No password: taking access away is never the dangerous direction. */
+export function useRevokeAgentToken() {
+  return useCommand<void, Awaited<ReturnType<ApiClient['revokeAgentToken']>>>({
+    run: (c) => c.revokeAgentToken(),
+    onSuccess: (_d, _v, qc) => qc.setQueryData<AgentTokenStatusResponse>(keys.agentToken, (prev) => ({ ...prev, token: null })),
+    invalidate: [keys.agentToken],
+    inline: true,
+    quiet: AGENT_TOKEN_QUIET,
   });
 }
 

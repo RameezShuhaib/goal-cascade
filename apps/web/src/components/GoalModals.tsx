@@ -1,7 +1,17 @@
 import { useState } from 'react';
 import { HORIZONS, PULSES, type GoalView, type Horizon, type Pulse } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useCreateGoal, useDeleteGoal, useGoal, useGoals, useMoveGoal, usePatchGoal, useReplanGoal } from '../api/queries';
+import {
+  useCreateGoal,
+  useDeleteGoal,
+  useGoal,
+  useGoalDeletePreview,
+  useGoals,
+  useMoveGoal,
+  usePatchGoal,
+  useReplanGoal,
+} from '../api/queries';
+import { destroysSomething, type GoalDeletePreview } from '../api/contracts';
 import { toApiError } from '../api/errors';
 import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
@@ -349,19 +359,23 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
 // Delete
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Counts {
-  subGoals: number;
-  tasks: number;
-  backlogItems: number;
-}
-
 /**
  * Q-5 — delete, and the acknowledgement it needs.
  *
- * A childless goal goes on the first tap. A goal with children is refused with `GOAL_HAS_CHILDREN`, and
- * that refusal carries the counts — so the confirmation sheet is rendered FROM the server's own answer
- * rather than from a client-side subtree walk that could be out of date. `GOAL_HAS_CHILDREN` is `quiet`
- * in `useCommand` for exactly this reason: it is expected flow, not an error to toast.
+ * **The bug this shape exists to close.** The API's `GOAL_HAS_CHILDREN` guard fires only when a goal has
+ * descendant GOALS, so the old flow asked for an acknowledgement in exactly the case where the refusal
+ * happened to arrive. A Monthly leaf is childless by that test — and a Monthly leaf is where all the work
+ * lives. Forty open tasks, their whole activity history and the goal's backlog went on the first tap, with
+ * nothing said. Q-5 does not say "confirm a subtree delete"; it says deletion is confirmed with the counts
+ * named. So the counts are asked for FIRST, for every goal, and the button is not offered until they land.
+ *
+ * `DELETE /goals/:id?dryRun=true` is what makes that possible: the same route, the same authorisation, no
+ * write. Nothing is derived from a client-side subtree walk — the tree in the cache does not know how many
+ * tasks hang off a leaf, and a confirmation that guesses is worse than one that waits.
+ *
+ * The `GOAL_HAS_CHILDREN` refusal is still handled, unchanged, as the fallback: against an API without the
+ * dry run the preview fails, the sheet says only what it can stand behind, and the first tap is refused
+ * with the counts exactly as before. That path is why `GOAL_HAS_CHILDREN` stays `quiet` in `useCommand`.
  *
  * There is no soft delete and no trash. Ideas and Learnings tagged into the subtree are un-tagged to
  * Unsorted rather than deleted with it (S-idea-7-1).
@@ -370,13 +384,20 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
   const S = useSkin();
   const ui = useUI();
   const goalsQ = useGoals(0);
+  const previewQ = useGoalDeletePreview(goalId);
   const remove = useDeleteGoal();
-  const [counts, setCounts] = useState<Counts | null>(null);
+  /** Counts recovered from a `GOAL_HAS_CHILDREN` refusal — the fallback when the dry run is unavailable. */
+  const [refused, setRefused] = useState<GoalDeletePreview | null>(null);
 
   const goals = goalsQ.data?.goals ?? [];
   const goal = node(goals, goalId);
   const close = () => ui.closeSheet();
   if (!goal) return null;
+
+  const counts = refused ?? previewQ.data ?? null;
+  const destroys = counts ? destroysSomething(counts) : false;
+  /** Still asking. The delete button is not offered yet — that wait IS the fix. */
+  const checking = !counts && previewQ.isPending;
 
   const finish = () => {
     close();
@@ -385,15 +406,18 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
     ui.showToast('Goal deleted');
   };
 
-  const attempt = (cascade: boolean) =>
+  const attempt = () =>
     remove.mutate(
-      { id: goal.id, ...(cascade ? { cascade: true } : {}) },
+      // `cascade` is the explicit acknowledgement, and it is sent whenever anything would go with the goal
+      // — not only when a sub-goal would. The server needs it only for sub-goals; sending it for a leaf
+      // full of tasks costs nothing and keeps "what the button said" and "what was authorised" the same.
+      { id: goal.id, ...(destroys ? { cascade: true } : {}) },
       {
         onSuccess: finish,
         onError: (e) => {
           const d = toApiError(e).details;
           if (d && typeof d.subGoals === 'number') {
-            setCounts({ subGoals: d.subGoals, tasks: Number(d.tasks ?? 0), backlogItems: Number(d.backlogItems ?? 0) });
+            setRefused({ subGoals: d.subGoals, tasks: Number(d.tasks ?? 0), backlogItems: Number(d.backlogItems ?? 0) });
           }
         },
       },
@@ -401,25 +425,32 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
 
   return (
     <Sheet label={`Delete “${goal.title}”?`} onClose={close}>
-      {counts ? (
-        <div style={{ fontSize: 13.5, color: S.body, margin: '0 0 14px 0' }}>
-          {`This removes ${plural(counts.subGoals, 'sub-goal')}, ${plural(counts.tasks, 'task')} and ${plural(
-            counts.backlogItems,
-            'backlog item',
-          )}. Ideas and learnings tagged here move to Unsorted. There is no undo.`}
-        </div>
-      ) : (
-        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 14px 0' }}>There is no trash and no undo.</div>
-      )}
+      {/*
+       * `role="status"` because the sentence is replaced under the reader once the counts arrive, and the
+       * replacement is the whole point. Polite, not an alert: this is a warning, not an alarm, and the app
+       * does not raise its voice.
+       */}
+      <div role="status" style={{ fontSize: 13.5, color: counts && destroys ? S.body : S.T.mut, margin: '0 0 14px 0' }}>
+        {checking
+          ? 'Checking what this would remove…'
+          : counts && destroys
+            ? `This removes ${plural(counts.subGoals, 'sub-goal')}, ${plural(counts.tasks, 'task')} and ${plural(
+                counts.backlogItems,
+                'backlog item',
+              )}. Ideas and learnings tagged here move to Unsorted. There is no undo.`
+            : counts
+              ? 'This goal holds nothing else. There is no trash and no undo.'
+              : 'There is no trash and no undo.'}
+      </div>
       <FieldError>{counts ? null : commandError(remove.error)}</FieldError>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button
           type="button"
           style={{ ...S.btn(true, true), width: '100%', minHeight: 46 }}
-          disabled={remove.isPending}
-          onClick={() => attempt(counts !== null)}
+          disabled={remove.isPending || checking}
+          onClick={attempt}
         >
-          {counts ? 'Delete everything' : 'Delete'}
+          {destroys ? 'Delete everything' : 'Delete'}
         </button>
         <button type="button" style={{ ...S.btn(false), width: '100%', minHeight: 46 }} onClick={close}>
           Keep it

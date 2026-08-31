@@ -206,13 +206,107 @@ describe('Goals — dormancy and the quiet signals', () => {
   });
 });
 
+/**
+ * Q-5 — "Deletion requires an explicit confirmation naming the counts (`N sub-goals, M tasks, K backlog
+ * items`)". EVERY deletion that would destroy something, not only the ones the API happens to refuse.
+ *
+ * The design review's finding, and the reason this describe was rewritten: `GOAL_HAS_CHILDREN` fires only
+ * on descendant GOALS. A Monthly leaf is childless by that test, and a Monthly leaf is exactly where the
+ * work lives — so the goal holding forty open tasks, their activity history and its backlog was the one
+ * goal that deleted on the first tap with nothing said. `?dryRun=true` is asked first, for every goal, and
+ * the button is not offered until the answer lands.
+ */
 describe('Goals — delete (Q-5)', () => {
-  it('the refusal IS the confirmation: the counts come from the server, not a local subtree walk', async () => {
+  /** The dry run answers with these counts; a real delete records that it was authorised as a cascade. */
+  const withDeletePreview = (counts: { subGoals: number; tasks: number; backlogItems: number }) => {
+    const seen: { deleted: string | null; cascade: string | null } = { deleted: null, cascade: null };
+    server.use(
+      http.delete('/api/goals/:id', ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get('dryRun') === 'true') return HttpResponse.json(counts);
+        seen.deleted = url.pathname;
+        seen.cascade = url.searchParams.get('cascade');
+        return HttpResponse.json({
+          deleted: true,
+          removed: { goals: counts.subGoals + 1, weeklyFocuses: 1, tasks: counts.tasks, taskEvents: 0, backlogItems: counts.backlogItems },
+          untagged: { ideas: 0, learnings: 0 },
+          serverNow: F.NOW,
+        });
+      }),
+    );
+    return seen;
+  };
+
+  const openDelete = async (user: ReturnType<typeof renderApp>['user'], goalTitle: string) => {
+    await user.click(screen.getByRole('button', { name: `Actions for ${goalTitle}` }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+  };
+
+  it('THE BUG: a leaf goal with no sub-goals still names the tasks and backlog items it would destroy', async () => {
+    withTree();
+    const seen = withDeletePreview({ subGoals: 0, tasks: 40, backlogItems: 6 });
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await openDelete(user, 'Lift three times a week');
+
+    // `GOAL_HAS_CHILDREN` would never have fired here: this goal has no descendant goals at all.
+    expect(await screen.findByText(/0 sub-goals, 40 tasks and 6 backlog items/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Delete everything' }));
+    await waitFor(() => expect(seen.deleted).toContain(F.M));
+    expect(seen.cascade).toBe('true');
+  });
+
+  it('the counts are the SERVER’s, and the button is not offered until they land', async () => {
+    withTree();
+    let release: (() => void) | null = null;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    server.use(
+      http.delete('/api/goals/:id', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('dryRun') !== 'true') return apiError('INTERNAL', 'should not delete');
+        await held;
+        return HttpResponse.json({ subGoals: 2, tasks: 3, backlogItems: 1 });
+      }),
+    );
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await openDelete(user, 'Rebuild the gym habit');
+
+    // The whole fix, in one assertion: nothing is destroyable while the warning is still unknown.
+    expect(await screen.findByText('Checking what this would remove…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+
+    release!();
+    expect(await screen.findByText(/2 sub-goals, 3 tasks and 1 backlog item/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete everything' })).toBeEnabled();
+  });
+
+  it('a goal that would destroy nothing is not made to sound like one that would', async () => {
+    withTree();
+    const seen = withDeletePreview({ subGoals: 0, tasks: 0, backlogItems: 0 });
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await openDelete(user, 'Lift three times a week');
+
+    expect(await screen.findByText('This goal holds nothing else. There is no trash and no undo.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(seen.deleted).toContain(F.M));
+    // Nothing was acknowledged away, so nothing was cascaded.
+    expect(seen.cascade).toBeNull();
+  });
+
+  it('and when the dry run is not there, the GOAL_HAS_CHILDREN refusal still is', async () => {
     withTree();
     let cascaded: string | null = null;
     server.use(
       http.delete('/api/goals/:id', ({ request }) => {
         const url = new URL(request.url);
+        // An API without the parameter refuses the unknown query outright — `.strict()` everywhere (Q-10).
+        if (url.searchParams.get('dryRun') === 'true') return apiError('VALIDATION_FAILED', 'unknown query parameter');
         if (url.searchParams.get('cascade') !== 'true') {
           return apiError('GOAL_HAS_CHILDREN', 'has children', { goalId: F.Q, subGoals: 2, tasks: 3, backlogItems: 1 });
         }
@@ -228,13 +322,30 @@ describe('Goals — delete (Q-5)', () => {
     const { user } = renderApp(<AppShell />);
     await openGoals(user);
 
-    await user.click(screen.getByRole('button', { name: 'Actions for Rebuild the gym habit' }));
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await openDelete(user, 'Rebuild the gym habit');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(await screen.findByText(/2 sub-goals, 3 tasks and 1 backlog item/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Delete everything' }));
     await waitFor(() => expect(cascaded).toContain(F.Q));
+  });
+
+  it('the counts are announced, not shouted: one polite status line, no alert and no name to type', async () => {
+    withTree();
+    withDeletePreview({ subGoals: 2, tasks: 3, backlogItems: 1 });
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await openDelete(user, 'Rebuild the gym habit');
+    const line = await screen.findByText(/2 sub-goals, 3 tasks and 1 backlog item/);
+
+    expect(line).toHaveAttribute('role', 'status');
+    const dialog = screen.getByRole('dialog', { name: /Delete/ });
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    // R-nav-14's spirit: the way out is a plain button, and confirming is not a typing exercise.
+    expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Keep it' })).toBeEnabled();
   });
 });
 

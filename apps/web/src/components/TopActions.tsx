@@ -3,6 +3,7 @@ import { useThemeChoice } from '../context/ThemeContext';
 import { useAuthActions } from '../auth/session';
 import { useMe } from '../api/queries';
 import { useSkin } from '../skin';
+import { AgentAccess } from './AgentAccess';
 import { Sheet } from './Sheet';
 import VerifyEmailScreen from './auth/VerifyEmailScreen';
 
@@ -65,6 +66,12 @@ function AccountSheet({ onClose, onVerify }: { onClose: () => void; onVerify: ()
             Verify this email address
           </button>
         )}
+        {/*
+         * Agent access sits ABOVE Sign out, and Sign out stays last. The order is the order you reach for
+         * them: identity, then the thing you came here to set up, then the way out. A destructive-adjacent
+         * control below the exit is a control people find by accident on their way to leaving.
+         */}
+        <AgentAccess />
         <button type="button" style={{ ...S.btn(false, true), width: '100%' }} disabled={signingOut} onClick={() => void signOut()}>
           {signingOut ? 'Signing out…' : 'Sign out'}
         </button>
