@@ -1,6 +1,9 @@
 import '@testing-library/jest-dom/vitest';
-import { afterEach } from 'vitest';
+import { afterAll, afterEach, beforeAll } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { resetRequests, server } from './msw/handlers';
+import { resetDeepLinks } from '../src/pwa/deepLink';
+import { resetServerClock } from '../src/lib/serverClock';
 
 // jsdom has no `matchMedia`; the theme toggle and `detectPlatform` only need it to answer "no".
 if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
@@ -43,8 +46,17 @@ function installMemoryStorage(name: 'localStorage' | 'sessionStorage') {
 installMemoryStorage('localStorage');
 installMemoryStorage('sessionStorage');
 
+// `onUnhandledRequest: 'error'` on purpose: a request no handler covers is a real finding — a path the
+// client got wrong, or a query nobody meant to fire — and it should fail the test rather than hang it.
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+
 afterEach(() => {
   cleanup();
+  server.resetHandlers();
+  resetRequests();
+  resetServerClock();
+  // `pwa/deepLink.ts` holds a pending link in a module-level variable as well as in sessionStorage.
+  resetDeepLinks();
   try {
     localStorage.clear();
     sessionStorage.clear();
@@ -55,6 +67,4 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-// NOTE (web agent): the MSW server belongs here — `beforeAll(() => server.listen({ onUnhandledRequest:
-// 'error' }))`, `afterEach(() => server.resetHandlers())`, `afterAll(() => server.close())` — once
-// `tests/msw/handlers.ts` exists. `msw` is already a devDependency. Nothing in the PWA tests needs a network.
+afterAll(() => server.close());
