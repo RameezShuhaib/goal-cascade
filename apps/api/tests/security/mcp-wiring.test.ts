@@ -73,7 +73,20 @@ describe('the /mcp endpoint is wired so it can actually run', () => {
     const t = createTestApp();
     for (const path of ['/sse', '/mcp/sse', '/message']) {
       const res = await t.fetch(path, { method: 'POST', json: {} });
-      expect(res.status, path).toBe(404);
+      // NOT pinned to 404. None of these paths is registered, so they fall through to the SPA
+      // not-found fallback, which hands the request to the ASSETS binding — and `wrangler.jsonc`
+      // declares that binding, so vitest has it too. The asset router answers a POST with 405, not
+      // 404, and which of the two comes back is an artefact of the binding being present rather
+      // than anything about MCP. Asserting 404 made this test fail the moment /mcp was added
+      // beside it, for a reason unrelated to what it is guarding.
+      //
+      // What actually matters is that none of these is a WORKING legacy transport: no JSON-RPC
+      // envelope, and no SSE stream. Assert exactly that, so the test keeps its meaning however
+      // the fallback happens to be wired.
+      expect(res.status, path).not.toBe(200);
+      expect(res.headers.get('Content-Type') ?? '', path).not.toMatch(/text\/event-stream/);
+      const body = await res.text();
+      expect(body, path).not.toMatch(/"jsonrpc"/);
     }
   });
 });
