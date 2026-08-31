@@ -75,7 +75,11 @@ describe('enforcement: a refused sign-up leaves NO user row', () => {
 
     const res = await signUp(email, 'me@rameezshuhaib.com');
     expect(res.status).toBe(403);
-    expect(await res.text()).toMatch(/SIGNUP_NOT_ALLOWED|single-user|not open/i);
+    // REVIEW: was `expect(await res.text()).toMatch(/SIGNUP_NOT_ALLOWED|single-user|not open/i)` — a
+    // substring match on raw text, which passes for ANY response shape and so could not notice that this
+    // refusal skips the shared error envelope. Parsed instead; `tests/security/error-envelope-scope.test.ts`
+    // is where the shape itself is pinned. Strictly stronger, not weaker.
+    expect((await res.json()) as { code: string }).toMatchObject({ code: 'SIGNUP_NOT_ALLOWED' });
 
     // The whole point: no row, no session, no preferences.
     expect(await countUsers(email)).toBe(0);

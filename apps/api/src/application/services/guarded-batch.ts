@@ -22,8 +22,8 @@ type Precondition = { label: string; expected: number; table: SQLiteTable; where
  * the same batch commit anyway. That is exactly the shape of the writes this product makes: "insert the
  * activity event AND update the task", "insert the task AND mark the backlog item converted".
  *
- * Therefore, for every UPDATE/DELETE with `expectedChanges >= 1`, `run()` derives the precondition from
- * the statement's WHERE clause and prepends
+ * Therefore, for every UPDATE/DELETE with a NUMERIC `expectedChanges` (`0` included), `run()` derives the
+ * precondition from the statement's WHERE clause and prepends
  * `INSERT INTO _guard(label) SELECT ? WHERE (SELECT count(*) FROM <table> WHERE <where>) <> ?`.
  * When the precondition is false the insert trips `_guard`'s `CHECK (0)`, D1 rolls back the ENTIRE batch,
  * and the error is mapped to `ConcurrencyError` (409). The `meta.changes` post-check remains as the
@@ -64,12 +64,12 @@ export class GuardedBatch {
     const results = all.slice(preconditions.length);
     writes.forEach((w, i) => {
       const expected = w.expectedChanges ?? 1;
-      // `expectedChanges: 0` is this port's marker for a BEST-EFFORT statement — in its own words, one
-      // that "may legitimately no-op". Such a statement may also legitimately CHANGE a row: the lazy
-      // carry-log producer (R-task-29, Q-17) is an `INSERT … ON CONFLICT DO NOTHING` that writes 1 row on
-      // the first read of a week and 0 on every re-read, and both are correct. There is therefore nothing
-      // to assert, and an exact-equality check here would turn the successful first insert into a 409.
-      if (expected === 0) return;
+      // `'any'` — and ONLY `'any'` — switches the assertion off. A numeric `0` is an assertion in its own
+      // right ("this statement must change no rows"), which is what lets the Q-5 subtree delete state a
+      // zero count and still catch a row that landed after its read. Using `0` for "best effort" instead
+      // would silently disarm every such statement; that is what `'any'` is for, and the lazy carry-log
+      // producer (R-task-29, Q-17) is its one caller.
+      if (expected === 'any') return;
       const actual = results[i]?.meta?.changes ?? 0;
       if (actual !== expected) throw new ConcurrencyError(w.label, expected, actual);
     });
@@ -79,7 +79,7 @@ export class GuardedBatch {
   /** The precondition implied by a guarded UPDATE/DELETE: exactly `expectedChanges` rows match its WHERE. */
   private preconditionOf(w: GuardedWrite): Precondition[] {
     const expected = w.expectedChanges ?? 1;
-    if (expected < 1 || w.assert === false) return [];
+    if (expected === 'any' || expected < 0 || w.assert === false) return [];
     if (!is(w.stmt, SQLiteUpdateBase) && !is(w.stmt, SQLiteDeleteBase)) return [];
     const config = (w.stmt as unknown as { config?: { table?: unknown; where?: SQL } }).config;
     if (!config || !is(config.table, SQLiteTable) || !config.where) return [];

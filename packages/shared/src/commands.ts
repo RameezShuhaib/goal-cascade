@@ -104,10 +104,38 @@ export const DeleteGoalResponse = z.object({
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** R-nav-12 — the theme is a real per-user preference, persisted across sessions (D-25). */
+/**
+ * A read that takes no query parameters at all. Named and `.strict()` rather than simply omitted, so an
+ * unknown or misremembered param (`?goalId=…` on a list that does not filter) is a 422 instead of being
+ * accepted and quietly ignored — the same rule every other list route already follows.
+ */
+export const NoQuery = z.object({}).strict();
+
 export const PatchPreferencesRequest = z
   .object({ theme: Theme.optional(), timezone: IanaTimezone.optional() })
   .strict();
 export const PreferencesResponse = z.object({ preferences: PreferencesView, ...ServerNow });
+
+/**
+ * `POST /me/change-password` — the ordinary way this account stays recoverable.
+ *
+ * This Worker has no way to deliver mail, so the usual "forgot password → check your inbox" loop cannot
+ * complete for the owner's real address (the outbox deliberately stores mail only for non-registrable
+ * test addresses, so that it can never be an account-takeover oracle). Changing the password while
+ * still signed in is therefore the path that must always work.
+ *
+ * `currentPassword` is required — a live session is not enough to re-key the account — and
+ * `revokeOtherSessions` defaults to TRUE, because the reason to change a password is usually that
+ * another session should stop working.
+ */
+export const ChangePasswordRequest = z
+  .object({
+    currentPassword: z.string().min(1).max(200),
+    newPassword: z.string().min(8).max(200),
+    revokeOtherSessions: z.boolean().default(true),
+  })
+  .strict();
+export const ChangePasswordResponse = z.object({ changed: z.literal(true), revokedOtherSessions: z.boolean(), ...ServerNow });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Goals
@@ -349,8 +377,11 @@ export type GoalFilterQuery = z.infer<typeof GoalFilterQuery>;
 export type DeleteGoalQuery = z.infer<typeof DeleteGoalQuery>;
 export type DeleteResponse = z.infer<typeof DeleteResponse>;
 export type DeleteGoalResponse = z.infer<typeof DeleteGoalResponse>;
+export type NoQuery = z.infer<typeof NoQuery>;
 export type PatchPreferencesRequest = z.infer<typeof PatchPreferencesRequest>;
 export type PreferencesResponse = z.infer<typeof PreferencesResponse>;
+export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequest>;
+export type ChangePasswordResponse = z.infer<typeof ChangePasswordResponse>;
 export type CreateGoalRequest = z.infer<typeof CreateGoalRequest>;
 export type PatchGoalRequest = z.infer<typeof PatchGoalRequest>;
 export type MoveGoalRequest = z.infer<typeof MoveGoalRequest>;

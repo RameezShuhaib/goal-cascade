@@ -247,3 +247,63 @@ agent's, and R-task-27's truncation rule applies to every interpolated value.
 - `.gitignore` — one additive line, `!.dev.vars.example`, so the committed secrets TEMPLATE survives the
   `.dev.vars.*` rule. Nothing else in the root was changed.
 - `apps/web/` was not touched.
+
+---
+
+## Review
+
+Reviewed by 07-api-review. Full findings and evidence: `docs/work/07-api-review/report.md`.
+
+**Verdict: the spine held.** The route census, the validation middleware, `ctx.userId` as the only scope,
+the ULID/clock ports and the idempotency middleware were attacked hard and none of them moved. 39
+cross-account attempts across every route and every id-bearing sub-resource returned `404 NOT_FOUND`
+indistinguishable from a ghost id (§3.5, R-auth-3); every route including reads is 401 without a session;
+36/36 empty-or-pattern allowlists refuse *everything*, the owner's own address included, which is the
+failure direction §3.7 promises. §3.1's "a week is an absolute Monday" survived a `FakeClock` driven across
+a Monday, a month end, a quarter end, a year end and two southern-hemisphere DST transitions.
+
+Four things in this document are now wrong, or were.
+
+**§3.5 / the `GuardedWrite` port — `expectedChanges: 0` had stopped meaning "must change zero rows".**
+The port says *"Use 0 for best-effort statements that may legitimately no-op"*; the tasks agent made that
+true in the post-check (correctly — the carry insert writes 1 row on the first read of a week and an
+exact check 409'd a GET), and `preconditionOf` already skipped anything below 1. The two meanings of `0`
+were merged cleanly by git and the assertion was gone. Two callers computed `expectedChanges` from a row
+count and legitimately reached 0, and both were silently disarmed — see the goals-plan and tasks reviews.
+**Fixed** as the goals agent proposed: `expectedChanges?: number | 'any'`, a number asserted exactly
+(`0` included, and now also producing a precondition), `'any'` the sole opt-out with exactly one caller.
+The port doc and `repositories.ts`'s `insertCarriedIgnoreStmt` note were corrected to match.
+
+**§3.8 — the email guarantee was ASSERTED, not enforced.** The tree is genuinely clean, but
+`tests/security/no-real-email.test.ts` was a keyword filter and stayed green through four independent
+evasions: a renamed live adapter wired behind an env var; a token-split provider name; a `.mts` file the
+glob missed; and — worst — a verbatim Resend adapter hidden between two string constants `'/*'` and `'*/'`,
+because the comment stripper was a regex that did not respect string literals and deleted the code before
+the scan ran. It also had the inverse bug, tripping on a *trailing* comment that explained the absent
+binding. **Fixed:** the file now has a name-blind TIER A that runs on RAW text — no bare `fetch(`, no
+socket, no mail binding API, no dynamic import anywhere under `src/`; the email layer must contain exactly
+its three files; the glob is checked against named anchors; and `createEmailSender`'s body is parsed and
+must contain no branch at all. Each of the four evasions was re-applied and shown red, then reverted. The
+runtime egress block in `tests/setup/no-real-email.ts` was already sound and is unchanged — it is the layer
+that catches a `send_email` binding, and it kills the whole suite when one appears.
+
+**§2 / the error envelope — the claim in `errors.ts` was false for `/api/auth/*`.** `SIGNUP_NOT_ALLOWED`
+and Better Auth's 429 come back flat, because `app.on(…, AUTH_BASE_PATH/*, …)` returns Better Auth's
+Response rather than throwing, so `errorHandler` never sees it; and `RATE_LIMITED` is therefore declared
+but unreachable. **Not** fixed by re-wrapping: `apps/web` uses the Better Auth client SDK, which parses
+that shape, and `tests/auth.test.ts` already asserts it. The claim was narrowed to the truth and both
+shapes are now pinned by `tests/security/error-envelope-scope.test.ts`.
+
+**Recovery was a trap, and is now a path.** §3.8's guarantee has a consequence this document does not
+state: with no way to send mail, hashed reset tokens and an outbox that only stores non-registrable
+addresses, a forgotten password made the account unrecoverable. Added: `POST /api/me/change-password`
+(prevention) and `POST /internal/reset-link` behind the same `X-Internal-Secret` gate (cure). The trade —
+`INTERNAL_SECRET` is now an account-takeover credential for this deployment — is spelled out at both the
+call site and in `.dev.vars.example`. `E2E_EMAIL_PATTERN` was deliberately **not** widened; that control is
+exactly as §3.8 left it.
+
+Left for the foundation owner, not done here: `GuardedWrite` has no way for an INSERT to assert that the
+goal it references still exists, so a task or item can still be written against a goal a concurrent cascade
+has just deleted (report finding 7). A `requires?: { table, where, count }` on `GuardedWrite` is the small
+general fix; foreign keys on the three `goal_id` columns is the total one, and `schema.ts` records a
+deliberate decision against FKs that may or may not transfer. Both are your call.

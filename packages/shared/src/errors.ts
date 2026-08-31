@@ -59,6 +59,17 @@ export const ERROR_STATUS = {
    */
   ALREADY_CONVERTED: 409,
   /**
+   * R-backlog-7 / D-18 / S-backlog-7-2 — more than one ACTIVE leaf at or under the item's goal qualifies
+   * to receive it, so the server refuses to pick: that id decides which focus the task belongs to for the
+   * rest of its life, and the mockup took whichever came first in array order.
+   *
+   * It is a 409 and not a 422 on purpose. The request was well formed and the input was fine — the
+   * product simply has no single answer yet — and the client needs to tell this apart from a validation
+   * failure to render a chooser rather than a field error. `details.candidates` carries
+   * `[{ id, title }]`; re-submitting with `goalId` set to one of them succeeds.
+   */
+  AMBIGUOUS_CONVERSION_TARGET: 409,
+  /**
    * R-task-17 / D-15 — Move-to-Backlog and Cancel are offered only on OPEN tasks. A task that is done or
    * has already exited refuses both (S-task-17-1).
    */
@@ -79,6 +90,14 @@ export const ERROR_STATUS = {
   WEEK_OUT_OF_RANGE: 422,
   VALIDATION_FAILED: 422,
   IDEMPOTENCY_KEY_REUSED: 422,
+  /**
+   * Reserved. Goal Cascade applies NO per-owner write budget (the orchestrator's Q-16 ruling); the only
+   * limiter in the product is Better Auth's, on the unauthenticated endpoints — and that one answers on
+   * ITS router, in ITS flat shape, so it never carries this code. Nothing on a Goal Cascade route emits
+   * `RATE_LIMITED` today. It stays in the map because `ERROR_STATUS` is also the client's status table
+   * and 429 must map somewhere, but a client cannot detect rate limiting by code: it must read the
+   * status on `/api/auth/*`.
+   */
   RATE_LIMITED: 429,
   INTERNAL: 500,
   /** Returned by handler stubs a feature agent has not implemented yet. Never a client-visible state. */
@@ -88,7 +107,17 @@ export const ERROR_STATUS = {
 export type ErrorCode = keyof typeof ERROR_STATUS;
 export const ERROR_CODES = Object.keys(ERROR_STATUS) as ErrorCode[];
 
-/** The ONE error envelope. Every non-2xx response from `/api/*` and `/internal/*` has exactly this shape. */
+/**
+ * The ONE error envelope for Goal Cascade's own routes: every non-2xx response from `/api/*` and
+ * `/internal/*` has exactly this shape.
+ *
+ * **The one documented exception — `/api/auth/*`.** That path is Better Auth's own router, mounted under
+ * `/api` and returning its own `{ code, message }` shape (flat, no `error` wrapper). It is left alone
+ * deliberately: the web client talks to it through the Better Auth CLIENT SDK, which parses that shape,
+ * so re-wrapping these responses would break sign-in error handling to satisfy a comment. A client must
+ * therefore read auth failures as `body.code`, and everything else as `body.error.code`.
+ * `tests/security/error-envelope-scope.test.ts` pins BOTH shapes so the boundary cannot drift unnoticed.
+ */
 export type ErrorEnvelope = {
   error: { code: ErrorCode; message: string; details?: Record<string, unknown> };
 };

@@ -163,9 +163,13 @@ describe('backlog → task conversion', () => {
     const item = await createItem(quarterly, 'Ambiguous target');
 
     const res = await post(E.backlogItemConvert(item.id), {});
-    expect(res.status).toBe(422);
+    // REVIEW: was `422 VALIDATION_FAILED`. The input was well formed — the product has no single answer
+    // yet — so this is a product refusal with its own 409 code, which the client branches on to render a
+    // chooser instead of a field error. The assertions this test exists to make (no silent pick, both
+    // candidates named, the item untouched, naming one resolves it) are unchanged.
+    expect(res.status).toBe(409);
     const err = (await res.json()) as { error: { code: string; details?: { candidates?: { id: string }[] } } };
-    expect(err.error.code).toBe('VALIDATION_FAILED');
+    expect(err.error.code).toBe('AMBIGUOUS_CONVERSION_TARGET');
     // The refusal carries the choice the user has to make — it is not a dead end.
     expect(err.error.details?.candidates?.map((c) => c.id).sort()).toEqual([monthlyActive, second.id].sort());
     expect((await backlogRow(f, item.id))!.status).toBe('open');

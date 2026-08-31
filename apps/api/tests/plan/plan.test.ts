@@ -199,7 +199,14 @@ describe('R-goal-28 / D-8 — a leaf that gains a child stops being a focus hold
     expect((await goalById(t, cookie, target.id)).isActive).toBe(false);
   });
 
-  it('D-8 — the focus is removed for EVERY week, so it cannot come back if the child moves away later', async () => {
+  /**
+   * REVIEW — this test previously asserted that EVERY week's row was deleted, and the resurrection half
+   * below was what it existed to prove. Deleting the past weeks was the implementation's mechanism, not
+   * the rule: it made today's create rewrite the record of a week that really did have a focus, which is
+   * the very thing D-2 made focus a per-week table to prevent. The current week and later are cleared;
+   * the past is kept; and the resurrection assertion — the point of the test — is unchanged below.
+   */
+  it('D-8 — the current week’s focus goes, the PAST weeks stay, and it cannot come back', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const { life } = await makeLine(t, cookie);
     const leaf = await createGoal(t, cookie, { title: 'Ex-leaf', horizon: 'Yearly', parentId: life.id });
@@ -207,7 +214,15 @@ describe('R-goal-28 / D-8 — a leaf that gains a child stops being a focus hold
     await savePlan(t, cookie, '2026-08-31', [{ goalId: leaf.id, sentence: 'this week' }]);
 
     const child = await createGoal(t, cookie, { title: 'child', horizon: 'Quarterly', parentId: leaf.id });
-    expect(await focusesUnder(t, userId, [leaf.id])).toHaveLength(0);
+
+    const rows = await focusesUnder(t, userId, [leaf.id]);
+    expect(rows.map((r) => [r.weekStart, r.sentence])).toEqual([['2026-08-24', 'a past week’s focus']]);
+    // D-2 — and the past week still RENDERS what it actually had.
+    expect((await planIn(t, cookie, -1)).entries.map((e) => e.sentence)).toEqual(['a past week’s focus']);
+    // …while the current week holds nothing and the ex-leaf reports itself inactive (S-goal-9-1).
+    expect((await planIn(t, cookie, 0)).entries).toHaveLength(0);
+    const now = await goalById(t, cookie, leaf.id);
+    expect([now.isLeaf, now.isActive, now.focus]).toEqual([false, false, '']);
 
     // …and once it is a leaf again it is plainly dormant, never silently re-activated (the mockup's bug).
     const other = await createGoal(t, cookie, { title: 'Elsewhere', horizon: 'Yearly', parentId: life.id });
@@ -220,5 +235,8 @@ describe('R-goal-28 / D-8 — a leaf that gains a child stops being a focus hold
     expect(moved.status).toBe(200);
     const back = await goalById(t, cookie, leaf.id);
     expect([back.isLeaf, back.isActive, back.dormant]).toEqual([true, false, true]);
+    // The surviving past row is STILL not a resurrection: it is a past week's fact, and the current
+    // week's derivation never consults it.
+    expect((await planIn(t, cookie, 0)).entries).toHaveLength(0);
   });
 });

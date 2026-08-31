@@ -160,3 +160,77 @@ test was deleted:
   The singular/plural copy (`1 task carrying · oldest 1 week`, S-goal-24-3) is the client's.
 - Nothing was changed under `apps/web/`, `packages/shared/src/`, `docs/SPEC.md`, or any other agent's
   service or route.
+
+---
+
+## Review
+
+Reviewed by 07-api-review. Full findings and evidence: `docs/work/07-api-review/report.md`.
+
+Three findings here, two of them in the two places this document is most confident about. The tree rules
+themselves, the re-plan derivation, the dormancy propagation and every aggregate were attacked and held.
+
+**§3.5 — the cascade orphaned rows it had not read. HIGH, fixed.** The promise is exact: *"a task created
+under the subtree between the read and the write rolls the whole delete back with a 409 rather than leaving
+an orphan."* It did not, because `removal()` only emitted a statement when the read found `rows > 0`. With
+zero rows there was no statement, therefore no precondition, therefore nothing to trip — and there is no FK
+on `tasks.goal_id` / `backlog_items.goal_id` / `weekly_focus.goal_id` to catch it. `0 → 1` is the ordinary
+case, not an exotic one: delete a goal with no tasks while another device creates one.
+`tests/review/cascade-race.test.ts` decorates the read to open the window deterministically; pre-fix it
+printed `{ status: 200, taskRowSurvives: true, itsGoalSurvives: false }` — the goal deleted, the row not.
+Fixed by emitting every statement with its exact count, `0` included. The negative controls in the same
+file show the guard already worked when the read found one row, so the hole was precisely the zero case;
+and two further tests assert the ordinary cascade and the all-zero delete still succeed, because a fix that
+409s honest deletes would be worse than the bug.
+
+This was downstream of §5's own observation: `expectedChanges: 0` had stopped meaning "must change zero
+rows" (see the 01-foundation review). Your proposed `'any'` was the right answer and is now implemented.
+
+**§3.4 — `PUT /plan` did not deliver the Q-3 guarantee it claims. HIGH, fixed.** *"A concurrent save from
+another device loses cleanly with 409 instead of interleaving two half-plans"* was false twice over. The
+delete targeted only the goal ids the save had **read**, so a row another device added for a goal absent
+from that list survived the whole-week replace and the stored plan became a merge of two plans — a leaf the
+saving device believed dormant stayed active. And when the week was empty the statement was skipped
+entirely, so a concurrent first save of a fresh week was clobbered silently. Fixed with a new
+`deleteByWeekStmt`: delete by **week**, `expectedChanges = <rows read>`, so the precondition reads "this
+week still holds exactly the plan I was built on" — the guarantee as written, and meaningful at 0. Proven
+red then green in `tests/review/guarded-semantics.test.ts`, with an uncontended save as the negative
+control. `deleteByGoalsAndWeekStmt` is now unused; kept rather than removed.
+
+**§3.1 — deleting EVERY week's focus was the wrong call. MEDIUM, changed.** This is the one considered
+decision the review overturned, so the reasoning is worth reading in full (report finding 5).
+
+Your argument was that a surviving row is a second representation of dormancy and D-8's silent
+resurrection. But the defence against resurrection is not deletion, it is the derivation — and the
+derivation already does it. `isActive` / `isDormant` / `subtreeActive` / `activeLeavesUnder` in
+`domain/goal-tree.ts`, your own `toView`, `TaskService.assertActiveLeaf`, `IdeaService.requireActiveLeaf`
+and `BacklogService.resolveConversionTarget` all require leaf-ness **at read time**. A surviving row cannot
+make a non-leaf active anywhere, and once the goal is a leaf again the current week's row is already gone,
+so it is plainly dormant. Meanwhile deleting the past re-introduces exactly the bug D-2 made focus a
+per-week table to prevent: adding a sub-goal today silently rewrote the record of six weeks ago, and
+`GET /plan?week=-6` went blank for a week that really did have a focus.
+
+On S-goal-9-1: its observable assertion — *"reported as not active and holds no focus"* — is satisfied
+either way. Its parenthetical *"the stale row must not exist — D-2"* cites D-2 while requiring the thing
+D-2 forbids. The spec is inconsistent there and the parenthetical is the wrong half.
+
+Now: the current week and later are deleted (`deleteByGoalsFromWeekStmt`), the past is kept. The honest
+cost, which you should know: `GoalView.isActive` for a past week uses **today's** tree, because "was a leaf
+then" is not stored — so for an ex-leaf, `GET /plan?week=-2` shows its old sentence while
+`GET /goals?week=-2` reports `isActive: false`. That divergence is new and is smaller than deleting the
+truth outright.
+
+*Per-test verdict — `tests/plan/plan.test.ts` "D-8 — the focus is removed for EVERY week": legitimately
+retired, and strengthened.* Its `toHaveLength(0)` asserted the mechanism; its resurrection assertion is the
+rule, and is unchanged. The replacement adds four assertions (the past row survives with its sentence, the
+past week still renders it, the current week is empty, the ex-leaf reports `isActive: false`) and re-runs
+the resurrection check after the move. Your other two R-goal-28 tests needed no change at all.
+
+**§5 — both proposals implemented.** `expectedChanges: 'any'` is in. `replanOptions: string[]` is on
+`GoalDetailResponse`, populated from your `replanPeriods(horizon, today, currentPeriod)` and empty for a
+Life goal; `tests/review/seams.test.ts` asserts it is the *same* list a refused no-op re-plan returns in
+`details.options`, so the two cannot drift, and that it moves with the owner's clock rather than a literal.
+`IIdeaRepo.listByGoals` was not added — still a performance nit, not a correctness one.
+
+Everything else in §3 held: §3.2's refusal of a no-op re-plan, §3.3's single definition of the period rules,
+the tree guard staying ahead of the service, and every derived aggregate.

@@ -176,3 +176,59 @@ construction. None of them was weakened; two were made stronger:
   (`N weeks · since <Mon d Mon>`) built from `carryWeeks` + `originWeekStart`; the server deliberately
   does not send a pre-rendered label for the row (only for the timeline, where the text is frozen at
   append time).
+
+---
+
+## Review
+
+Reviewed by 07-api-review. Full findings and evidence: `docs/work/07-api-review/report.md`.
+
+**Verdict: nothing in the task lifecycle was found wrong.** The week model, the three exits, the uncheck,
+the carry labels and the timeline were the primary targets of this review and they came through clean.
+
+- **§3 / D-1.** `grep -rn "offset" apps/api/src` finds no stored, cached or compared offset anywhere —
+  only `api/week.ts` (the single wire→absolute resolution) and two projection call sites. A `FakeClock`
+  driven one second past a Monday leaves `originWeekStart` untouched and re-projects `carryWeeks` 0 → 1;
+  last week's plan stops being this week's; a plan save that crossed the boundary with the screen open is
+  `409 WEEK_NOT_CURRENT` rather than a write into the wrong week. Month end, quarter end and year end
+  (`2026-12-28` → `2027-01-04`) are exact, and so are Pacific/Auckland's spring-forward — where Monday
+  00:00 local is an hour *earlier* in UTC than the week before, and a `getDay()` on the UTC instant would
+  still say Sunday — and Australia/Lord_Howe's 30-minute shift. Tests:
+  `apps/api/tests/review/week-boundaries.test.ts`.
+- **§2 / R-task-10/11.** The carry thresholds land on the correct side at **exactly** 1 (gray) and
+  **exactly** 2 (red chip), across a year end as well, and depend on the viewed week rather than today
+  (S-task-11-2) — asserted both as `carryWeeks()` unit cases and over HTTP against the same task read in
+  three different weeks.
+- **§4 — the seam with the backlog agent holds in both directions.** `tests/review/seams.test.ts` drives
+  the full round trip: task → Move-to-Backlog → convert back to a task. Exactly one exited task survives
+  with its `movedToBacklog` status, its reason and its `Moved to Backlog — …` event (D-15); one item is
+  marked converted, keeps its `fromWeekStart`, and points at the new task; one live task carries the links
+  across with `Created — pulled from Backlog`. A second conversion of the round-tripped item is still
+  `409 ALREADY_CONVERTED`, a second exit is `409 TASK_ALREADY_EXITED` with only one item ever minted, and a
+  goal deleted while a task is mid-exit gives a clean 404 with nothing written to the dead goal. Your four
+  asks in §4 were all honoured by the backlog agent; the two `Created — …` copy tables did not drift, but
+  they are still two (`activity-log.ts` and `backlog.service.ts`) — see below.
+
+**§5.2 — your `GuardedBatch` change was a real fix, and it needed a different lever.** You were right that
+the post-check was broken: `insertCarriedIgnoreStmt` writes 1 row on the first read of a week and 0 on
+every re-read, and exact equality turned the successful first insert into a 409 on a GET. But `0` was the
+wrong value to overload. `preconditionOf` already skipped anything below 1, so after your change `0` meant
+nothing in either half — and two other callers derive `expectedChanges` from a row count and legitimately
+reach 0 (`GoalService.remove`, `PlanService.save`). Both were silently disarmed, and the cascade delete
+then orphaned rows (report findings 1–3; the cascade one is HIGH).
+
+Fixed with the goals agent's proposal rather than by reverting yours: `expectedChanges?: number | 'any'`.
+A number is asserted exactly, `0` included; `'any'` is the only opt-out and `ActivityLog.ensureCarried` is
+its one caller — the line is now `expectedChanges: 'any'`, and `repositories.ts`'s
+`insertCarriedIgnoreStmt` doc says so. Your carry-log behaviour is unchanged and is re-covered end to end
+(two reads of the same week produce exactly two `carried` rows and neither read 409s).
+
+**§7 — your five vetoable calls stand.** Straight quotes, the 422 on a blank title, refusing to edit an
+exited task, refusing to re-complete a done one, and links not bumping the task's `version` were all
+reviewed and none is a defect. `carryWeeks` being computed for every status is likewise correct: it matches
+the shared schema, and R-task-12's "no label when done" is the client's rendering rule.
+
+**Left as it was, worth a follow-up:** §4.1's request that one of the two `Created — …` copy tables be
+deleted is still open — `CREATED_EVENT_TEXT` in `backlog.service.ts` and `CREATED_TEXT` in
+`activity-log.ts` are still both present and still agree. Removing one is a two-line change across two
+agents' files and was left to whoever touches that seam next.

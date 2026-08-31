@@ -483,7 +483,7 @@ export class BacklogService {
   /**
    * R-backlog-7 / R-backlog-8 / D-18 — which ACTIVE leaf receives the task.
    *
-   * Exactly one candidate → use it. Two or more → refuse and make the user choose: the mockup took
+   * Exactly one candidate → use it. Two or more → `AMBIGUOUS_CONVERSION_TARGET` and the user chooses: the mockup took
    * whichever came first in array order, and that id decides which focus the task belongs to for the
    * rest of its life. None → `BRANCH_NOT_ACTIVE`, which is what the client turns into the
    * "This branch isn't active this week" sheet — and, critically, the SERVER's answer, so a conversion
@@ -503,7 +503,10 @@ export class BacklogService {
     }
     if (requested === undefined) {
       if (candidates.length === 1) return candidates[0]!;
-      throw new DomainError('VALIDATION_FAILED', 'more than one active focus can receive this item — choose one', {
+      // R-backlog-7 / D-18 — not a validation failure: the input was fine, the product has no single
+      // answer. Its own code so the client can branch on `error.code` and render a chooser rather than a
+      // field error; `details.candidates` is what the chooser lists.
+      throw new DomainError('AMBIGUOUS_CONVERSION_TARGET', 'more than one active focus can receive this item — choose one', {
         itemId: item.id,
         candidates: candidates.map((g) => ({ id: g.id, title: g.title })),
       });

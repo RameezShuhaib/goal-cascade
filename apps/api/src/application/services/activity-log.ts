@@ -63,7 +63,8 @@ export class ActivityLog {
    * the unique index `ux_task_events_carried (user_id, task_id, week_start) WHERE kind = 'carried'`:
    * `insertCarriedIgnoreStmt` is an `INSERT … ON CONFLICT DO NOTHING`, so a re-read, a refresh, or two
    * devices opening the same new week at once add nothing the second time. Re-reads are the normal case,
-   * which is why every statement here is best-effort (`expectedChanges: 0`).
+   * which is why every statement here is best-effort (`expectedChanges: 'any'` — the ONE caller that needs
+   * it; a numeric `0` would be an assertion that the FIRST insert, which really does write a row, fails).
    *
    * `at` is the Monday of the week carried INTO, not "now": the entry describes something that happened
    * at the start of that week, and stamping today's clock onto it would push a carry from three weeks ago
@@ -98,7 +99,7 @@ export class ActivityLog {
         writes.push({
           label: 'taskEvent.carried',
           stmt: this.events.insertCarriedIgnoreStmt(event),
-          expectedChanges: 0,
+          expectedChanges: 'any',
         });
       }
     }
