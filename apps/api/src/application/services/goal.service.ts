@@ -106,6 +106,10 @@ export class GoalService {
       backlog: items.map((i) => backlogItemView(i, links)),
       backlogIsAggregate: isLife,
       learnings: lineLearnings.map(learningView),
+      // R-goal-23 / D-3 — derived here, once, from the OWNER's calendar day (R-auth-5). A Life goal is
+      // not re-plannable (R-goal-21), so it offers none. The client renders this list rather than
+      // re-deriving it: two implementations of a date rule drift on the first period boundary.
+      replanOptions: isLife ? [] : replanPeriods(goal.horizon, this.today(ctx), goal.period),
       serverNow: ctx.now,
     };
   }
@@ -259,8 +263,18 @@ export class GoalService {
     const taggedIdeas = ideaRows.filter((i) => i.goalId !== null && subtree.includes(i.goalId));
 
     const writes: GuardedWrite[] = [];
+    /**
+     * Every statement is emitted even when the read found NOTHING, and states `0` as its expected count.
+     *
+     * That zero is the whole point: `GuardedBatch` turns it into `count(*) … <> 0`, so a task, item or
+     * focus row created between the read above and this batch trips the precondition and rolls the whole
+     * delete back with a 409. Skipping the statement when `rows === 0` — which is what this did — left no
+     * precondition at all, and there is no FK on `tasks.goal_id` / `backlog_items.goal_id` /
+     * `weekly_focus.goal_id` (see `schema.ts`), so that row simply outlived its goal. A spurious 409 is
+     * acceptable here; an orphan is not.
+     */
     const removal = (label: string, stmt: GuardedWrite['stmt'], rows: number) => {
-      if (rows > 0) writes.push({ label, stmt, expectedChanges: rows });
+      writes.push({ label, stmt, expectedChanges: rows });
     };
     removal('taskEvent.deleteByTasks', this.taskEvents.deleteByTasksStmt(ctx.userId, taskIds), eventRows.length);
     removal('taskLink.deleteByTasks', this.taskLinks.deleteByTasksStmt(ctx.userId, taskIds), linkRows.length);
@@ -344,26 +358,41 @@ export class GoalService {
   /**
    * R-goal-28 / D-8 — the leaf → non-leaf transition.
    *
-   * A goal that gains a child can no longer hold a weekly focus (R-goal-9/12), so EVERY focus row it
-   * holds is deleted in the same batch as the create/move. The mockup ran nothing here: the ex-leaf kept
-   * its focus string, inert only because `isActive` also required `isLeaf` — and it silently came back
-   * to life the moment the child was moved away. Deleting only the current week's row would leave that
-   * resurrection possible for any other week, and would leave a row pointing at a goal that can never be
-   * active again, which is the second representation of dormancy D-2 exists to prevent.
+   * A goal that gains a child can no longer hold a weekly focus (R-goal-9/12), so its focus rows for the
+   * CURRENT week and any later one are deleted in the same batch as the create/move. Rows for PAST weeks
+   * are KEPT.
    *
-   * The cost is deliberate and documented: a past week no longer renders that leaf's sentence. Its open
-   * tasks are untouched — `GoalTreeGuard` refuses the whole operation while any exist, rather than
+   * **Why not every week.** The mockup ran nothing here: the ex-leaf kept its focus string, inert only
+   * because `isActive` also required `isLeaf` — and it came back to life the moment the child was moved
+   * away. The defence against that resurrection is not deletion, it is the derivation: `isActive` /
+   * `isDormant` / `subtreeActive` / `activeLeavesUnder` in `domain/goal-tree.ts`, and `toView` below, all
+   * require leaf-ness AT READ TIME, and every current-week reader (`TaskService.assertActiveLeaf`,
+   * `IdeaService.requireActiveLeaf`, `BacklogService.resolveConversionTarget`) checks it too. A row that
+   * survives therefore cannot make a non-leaf active, and once the goal is a leaf again the current
+   * week's row is already gone — so it is plainly dormant, which is what S-goal-9-1 actually asserts
+   * ("it is reported as not active and holds no focus").
+   *
+   * **Why keeping the past matters.** D-2 made focus a per-week table precisely so that "past weeks
+   * render truthfully" and "this week's plan cannot destroy last week's". Deleting every week here
+   * reintroduces exactly that: adding a sub-goal today would silently rewrite the record of six weeks
+   * ago, and `GET /plan?week=-6` — which reads the rows directly, as the Tasks screen does — would go
+   * blank for a week that really did have a focus. S-goal-9-1's parenthetical "the stale row must not
+   * exist" is the one line of the SPEC that asks for that, and it contradicts the rule it cites.
+   *
+   * The remaining cost is one week's history: the transition week's own row goes with the current week.
+   * Open tasks are untouched — `GoalTreeGuard` refuses the whole operation while any exist, rather than
    * silently re-homing someone's work.
    */
   private async exLeafWrites(ctx: RequestContext, all: readonly Goal[], parentId: string | null): Promise<GuardedWrite[]> {
     if (parentId === null || !isLeaf(all, parentId)) return [];
     const rows = await this.focuses.listByGoals(ctx.userId, [parentId]);
-    if (rows.length === 0) return [];
+    const doomed = rows.filter((r) => r.weekStart >= ctx.currentWeekStart);
+    if (doomed.length === 0) return [];
     return [
       {
         label: 'weeklyFocus.deleteExLeaf',
-        stmt: this.focuses.deleteByGoalsStmt(ctx.userId, [parentId]),
-        expectedChanges: rows.length,
+        stmt: this.focuses.deleteByGoalsFromWeekStmt(ctx.userId, [parentId], ctx.currentWeekStart),
+        expectedChanges: doomed.length,
       },
     ];
   }

@@ -67,7 +67,8 @@ export interface IWeeklyFocusRepo {
   listByWeek(userId: string, weekStart: string): Promise<WeeklyFocus[]>;
   /**
    * R-goal-28 / Q-5 — every week's rows for a set of goals. The delete phase needs the exact row count
-   * it is about to remove, because `GuardedBatch` asserts `expectedChanges` exactly.
+   * it is about to remove, because `GuardedBatch` asserts `expectedChanges` exactly — `0` included, which
+   * is what catches a row created between the read and the batch.
    */
   listByGoals(userId: string, goalIds: readonly string[]): Promise<WeeklyFocus[]>;
   findByGoalAndWeek(userId: string, goalId: string, weekStart: string): Promise<WeeklyFocus | null>;
@@ -78,7 +79,22 @@ export interface IWeeklyFocusRepo {
    * never be stored (§1 WeeklyFocus), so "active" stays exactly "a row exists".
    */
   deleteByGoalsAndWeekStmt(userId: string, goalIds: readonly string[], weekStart: string): WriteStmt;
-  /** R-goal-28 / Q-5 — used when a leaf gains a child, and by the subtree cascade. */
+  /**
+   * R-plan-7 / Q-3 — the whole-week replace deletes by WEEK, not by the goal ids it happened to read.
+   * Paired with `expectedChanges = <rows read for that week>` it asserts that the week still holds
+   * exactly the plan this save was built on, so a concurrent save on another device loses cleanly with a
+   * 409 instead of the two plans merging. Deleting only the goals this save read cannot do that: a row
+   * the other device added for a goal not in that list would survive the replace.
+   */
+  deleteByWeekStmt(userId: string, weekStart: string): WriteStmt;
+  /**
+   * R-goal-28 / D-8 — a leaf that gains a child loses its focus for the CURRENT week and any later one,
+   * and KEEPS its past weeks. A past row cannot resurrect anything (`isActive` requires leaf-ness at read
+   * time, `domain/goal-tree.ts#isActive`), and destroying it would make this week's operation rewrite
+   * last week's record — the exact bug D-2 exists to prevent.
+   */
+  deleteByGoalsFromWeekStmt(userId: string, goalIds: readonly string[], fromWeekStart: string): WriteStmt;
+  /** Q-5 — the subtree cascade: every week, because the goal itself is going away. */
   deleteByGoalsStmt(userId: string, goalIds: readonly string[]): WriteStmt;
 }
 export const IWeeklyFocusRepo = Symbol.for('goal-cascade.IWeeklyFocusRepo');
@@ -131,7 +147,8 @@ export interface ITaskEventRepo {
    * R-task-29 / Q-17 — the lazy carry-log producer. `carried` rows carry the week they were produced
    * for, and the table has a UNIQUE index on `(user_id, task_id, week_start)` where `kind = 'carried'`,
    * so this insert is a no-op on a re-read and a week can never be logged twice. Use
-   * `expectedChanges: 0` in the guarded batch — a duplicate is the normal case, not a failure.
+   * `expectedChanges: 'any'` in the guarded batch — a duplicate is the normal case, not a failure, and a
+   * numeric `0` would instead ASSERT that the first (real) insert never happens.
    */
   insertCarriedIgnoreStmt(event: TaskEvent & { weekStart: string }): WriteStmt;
   deleteByTasksStmt(userId: string, taskIds: readonly string[]): WriteStmt;

@@ -97,21 +97,22 @@ export class PlanService {
     const writes: GuardedWrite[] = [];
 
     // The replace is delete-then-insert rather than a per-row diff, because that is what makes it
-    // atomic AND race-safe with one precondition: `GuardedBatch` asserts that exactly the rows this
-    // save read are still there, so a concurrent save on another device loses cleanly with a 409
+    // atomic AND race-safe with one precondition: `GuardedBatch` asserts that the week still holds
+    // exactly the rows this save read, so a concurrent save on another device loses cleanly with a 409
     // instead of interleaving two half-plans (Q-3). Ids and `createdAt` are carried over for a leaf
     // that keeps its focus, so the row keeps its identity across an edit.
-    if (existing.length > 0) {
-      writes.push({
-        label: 'weeklyFocus.replaceWeek',
-        stmt: this.focuses.deleteByGoalsAndWeekStmt(
-          ctx.userId,
-          existing.map((f) => f.goalId),
-          input.weekStart,
-        ),
-        expectedChanges: existing.length,
-      });
-    }
+    //
+    // Two things this deliberately does NOT do, because either would silently drop the guarantee above:
+    //  - it does not delete "the goals I read" — a row the other device added for a goal absent from
+    //    that list would survive the replace, and the saved plan would be a MERGE of two plans;
+    //  - it does not skip the statement when the week was empty — `expectedChanges: 0` is a real
+    //    assertion ("this week still holds nothing"), and omitting it lets a concurrent first-save of a
+    //    fresh week be clobbered without a word.
+    writes.push({
+      label: 'weeklyFocus.replaceWeek',
+      stmt: this.focuses.deleteByWeekStmt(ctx.userId, input.weekStart),
+      expectedChanges: existing.length,
+    });
 
     const previous = new Map(existing.map((f) => [f.goalId, f]));
     const entries: WeeklyFocus[] = [];

@@ -14,7 +14,13 @@
 #   openssl rand -base64 32
 BETTER_AUTH_SECRET="replace-me-with-openssl-rand-base64-32"
 
-# Guards `/internal/*` (the e2e outbox reader). When UNSET, those routes 404 entirely — which is the
-# right posture for a deployment that does not need them.
+# Guards `/internal/*` — the e2e outbox reader AND `POST /internal/reset-link`, the break-glass account
+# recovery path. When UNSET, those routes 404 entirely.
+#
+# BE AWARE: because `/internal/reset-link` mints a real password-reset token, this secret is an
+# ACCOUNT-TAKEOVER CREDENTIAL for this deployment. That is an accepted trade for a single-user app whose
+# owner is the sole holder of the secret and the sole account — and it is what stops the account being
+# permanently unrecoverable, since this Worker cannot send mail. Do not copy the pattern into a
+# multi-user product. See `docs/work/07-api-review/report.md` → "Account recovery".
 #   openssl rand -hex 24
 INTERNAL_SECRET="replace-me-with-openssl-rand-hex-24"

@@ -5,6 +5,7 @@ import {
   IdeaView,
   Iso,
   LearningView,
+  Period,
   PlanEntryView,
   PreferencesView,
   TaskDetailView,
@@ -81,6 +82,16 @@ export const GoalDetailResponse = z.object({
   backlogIsAggregate: z.boolean(),
   /** R-learning-5 — the learnings tagged to this goal's LIFE ROOT, i.e. the whole line. */
   learnings: z.array(LearningView),
+  /**
+   * R-goal-23 / D-3 — the contextual re-plan options for THIS goal, derived server-side from the owner's
+   * calendar day and the goal's horizon, strictly after the period it is already in. Empty for a Life
+   * goal, which is not re-plannable (R-goal-21).
+   *
+   * It is on the wire so the re-plan sheet renders the server's own derivation. The mockup's frozen 2026
+   * literals are D-3, and a client that re-derives the list from `serverNow` would be a second
+   * implementation of the same rule — two implementations of a date rule drift on the first boundary.
+   */
+  replanOptions: z.array(Period),
   serverNow: Iso,
 });
 

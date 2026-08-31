@@ -17,13 +17,31 @@ import { createTestApp, signedInOwner } from './helpers/app';
 const t = createTestApp({ now: '2026-08-31T10:00:00.000Z' });
 const ULID = '01J9ZQ8V2M7K3PQRSTVWXY0123';
 
-type Row = { method: string; path: string; json?: unknown; command?: boolean };
+type Row = {
+  method: string;
+  path: string;
+  json?: unknown;
+  command?: boolean;
+  /** Override the accepted statuses for a row whose valid body cannot be sent inside this loop. */
+  allow?: number[];
+};
 
 /** Every endpoint in the ENDPOINTS map, with a body that PASSES its schema. */
 const ROUTES: Row[] = [
   { method: 'GET', path: ENDPOINTS.me },
   { method: 'GET', path: ENDPOINTS.mePreferences },
   { method: 'PATCH', path: ENDPOINTS.mePreferences, json: { theme: 'dark' } },
+  {
+    method: 'POST',
+    path: ENDPOINTS.meChangePassword,
+    // A deliberately WRONG current password. A correct one would rotate this loop's session cookie and
+    // 401 every row after it, so the refusal is the only body this census can send — and 422 is what a
+    // registered, validated, session-gated route answers to it. `tests/account-recovery.test.ts` is
+    // where the happy path is proved.
+    json: { currentPassword: 'x', newPassword: 'not the real password' },
+    command: true,
+    allow: [422],
+  },
   { method: 'GET', path: ENDPOINTS.bootstrap },
 
   { method: 'GET', path: ENDPOINTS.goals },
@@ -83,7 +101,7 @@ describe('the route surface', () => {
       // referenced entity does not exist (these use a syntactically valid but unused ULID) answers
       // `goal not found` etc. — that is the guard doing its job, not a missing route.
       expect(body?.error.message, `${r.method} ${r.path} is not registered`).not.toBe('route not found');
-      expect([200, 201, 204, 404, 409, 501], `${r.method} ${r.path} → ${res.status}`).toContain(res.status);
+      expect(r.allow ?? [200, 201, 204, 404, 409, 501], `${r.method} ${r.path} → ${res.status}`).toContain(res.status);
     }
   });
 

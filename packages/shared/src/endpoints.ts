@@ -9,6 +9,11 @@ export const ENDPOINTS = {
   health: '/health',
   me: '/me',
   mePreferences: '/me/preferences',
+  /**
+   * The lockout guard. This deployment cannot SEND mail (see `apps/api/src/infrastructure/email/`), so
+   * "forgot password" is not a recovery path here: changing the password while still signed in is.
+   */
+  meChangePassword: '/me/change-password',
 
   // ── cold open ──
   /** Everything the app needs on cold open, in one request (the mockup's `fetchAll`). */

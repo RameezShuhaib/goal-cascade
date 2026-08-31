@@ -262,3 +262,57 @@ Two deliberate departures worth knowing about:
   asserting each reader is called exactly once, so the lazy `Carried to week of …` producer inside
   `TaskService.list` (R-task-29, Q-17) fires on a cold open exactly as it does on a Tasks-screen fetch.
   When those services land, delete `installReaderFakes` and the assertions should still hold.
+
+---
+
+## Review
+
+Reviewed by 07-api-review. Full findings and evidence: `docs/work/07-api-review/report.md`.
+
+**Verdict: no defect found in this work.** §2's three layers against double conversion, §3's seam
+discipline, the atomic idea flows and the ordering rules were all attacked directly and none of them moved.
+
+- **§2, all three layers, confirmed.** A replay with the same `Idempotency-Key` returns the **original**
+  task; a genuinely second attempt is `409 ALREADY_CONVERTED` naming the task the item became; and the
+  racing pair is arbitrated by `markConvertedGuardedStmt` inside the one batch. The round-trip case the
+  review invented — a task moved to backlog, converted back, then converted **again** — is also refused,
+  with exactly two tasks and one item in the database: the exit does not reset the item's status. Your
+  claim that layer 3 makes this structural rather than hopeful is accurate.
+- **§3.2, the seam with the tasks agent, holds in both directions.** `tests/review/seams.test.ts` walks
+  task → Move-to-Backlog → convert. `fromWeekStart` is the week the task was live in and survives the
+  conversion; the item is marked, not deleted; `convertedToTaskId` and `movedToBacklogItemId` point the
+  right ways; the links are copied by value; and the exited task keeps its row, its reason and its final
+  event. All four of your asks in the tasks agent's §4 were honoured, in both directions.
+- **§3.3, the seam with the goals agent.** `GoalDetailResponse.backlog` / `.backlogIsAggregate` come from
+  your `listForGoal` and the Life roll-up excludes the root by construction, as documented.
+- **The cascade.** Deleting a goal now removes both sides of a round trip and a whole-table sweep finds no
+  item, task or focus naming a goal that no longer exists. (That sweep found a real bug — but in the goals
+  agent's `remove`, not here; see report finding 2.)
+- **Ordering, strictness and scoping.** `newestFirst()` is the single implementation and is total and
+  stable. 562 request-strictness probes across 23 write endpoints all answer 422 with an
+  `unrecognized_keys` issue naming the exact key. Every referenced id is ownership-checked, not just the
+  target: moving your own item onto another account's goal, and attaching your own idea to their goal, are
+  both plain 404s.
+- **§4 — `splitCapture()` was right.** Keeping the full idea text in the description rather than truncating
+  a parked thought is the same class of care as D-22, and it round-trips through the response schema.
+
+**§6 — your orchestrator question is answered, and implemented.** `AMBIGUOUS_CONVERSION_TARGET: 409` is now
+in `packages/shared/src/errors.ts`, and `resolveConversionTarget` raises it. Your reading was exactly
+right: the input was well formed, the product simply has no single answer, and a client that has to branch
+on `details.candidates` rather than `error.code` will get it wrong. `details.candidates` is unchanged, so
+the chooser has what it needs and re-submitting with `goalId` still resolves it. Declining to edit a shared
+file unilaterally was the correct call, and this is the change you would have made.
+
+*Per-test verdict — `tests/backlog/convert.test.ts` S-backlog-7-2: legitimately retired.* Only the status
+and code assertions moved, and only because the contract moved. Every behavioural assertion the test exists
+to make — no silent pick, both candidates named, the item still `open`, naming one of them succeeds and
+lands the task exactly there — is untouched.
+
+**§5, still open, not done here.** The Q-12 owner-level caps and pagination remain unenforced; nothing in
+the product can reach them today and both need a contract or a port method, so they stay follow-ups.
+
+**One LOW finding, fixed.** `GET /ideas` and `GET /learnings` were the only list routes with no query
+schema, so `?__x=1` returned 200 — and, more to the point, `GET /ideas?goalId=…` silently returned the
+unfiltered list while `GET /backlog?goalId=…` filters. Both now validate against a strict empty `NoQuery`
+and answer 422. Not a breach of any `.strict()` schema (none was declared); an asymmetry a client gets
+wrong once and never sees.

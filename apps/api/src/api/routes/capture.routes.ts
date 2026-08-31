@@ -6,6 +6,7 @@ import {
   CreateLearningRequest,
   ENDPOINTS as E,
   IdParams,
+  NoQuery,
   PatchLearningRequest,
   WeekQuery,
 } from '@goal-cascade/shared';
@@ -25,7 +26,10 @@ import { resolveWeek } from '../week';
  * it permanently in the one feature whose promise is "capture it and get back to work".
  */
 export const ideasRoutes = new Hono<AppBindings>()
-  .get(E.ideas, async (c) => c.json(await c.get('container').resolve(IdeaService).list(ctx(c))))
+  // `NoQuery` rather than nothing: every other list route validates its query, so `?goalId=…` here was
+  // silently ACCEPTED and silently ignored — the shape of mistake a client makes once and never sees.
+  // `GET /backlog?goalId=` filters; this list does not, and now says so.
+  .get(E.ideas, zQuery(NoQuery), async (c) => c.json(await c.get('container').resolve(IdeaService).list(ctx(c))))
 
   .post(E.ideas, idempotent, zJson(CreateIdeaRequest), async (c) =>
     c.json(await c.get('container').resolve(IdeaService).create(ctx(c), body(c, CreateIdeaRequest)), 201),
@@ -48,7 +52,7 @@ export const ideasRoutes = new Hono<AppBindings>()
  * that might change the plan, not work (R-learning-1). The only two actions are re-tag and discard.
  */
 export const learningsRoutes = new Hono<AppBindings>()
-  .get(E.learnings, async (c) => c.json(await c.get('container').resolve(LearningService).list(ctx(c))))
+  .get(E.learnings, zQuery(NoQuery), async (c) => c.json(await c.get('container').resolve(LearningService).list(ctx(c))))
 
   .post(E.learnings, idempotent, zJson(CreateLearningRequest), async (c) =>
     c.json(await c.get('container').resolve(LearningService).create(ctx(c), body(c, CreateLearningRequest)), 201),
