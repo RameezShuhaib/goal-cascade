@@ -9,10 +9,9 @@ import {
   taskEvents,
   taskLinks,
   tasks as taskTable,
-  weeklyFocus,
 } from '../../src/infrastructure/persistence/schema';
 import { createTestApp, env, signedInOwner } from '../helpers/app';
-import { createGoal, makeLine, savePlan } from '../goals/fixtures';
+import { createGoal, makeLine } from '../goals/fixtures';
 
 /**
  * REVIEW — attack 1: the seams between three services written by agents who could not see each other.
@@ -28,23 +27,23 @@ const WEEK = '2026-08-31';
 async function fixture() {
   const t = createTestApp({ now });
   const { cookie, userId } = await signedInOwner(t);
-  const { life, quarterly, monthly } = await makeLine(t, cookie);
-  await savePlan(t, cookie, WEEK, [{ goalId: monthly.id, sentence: 'live branch' }]);
+  // A2 - `makeLine` now ends in a WEEKLY goal, which is the only kind that holds a task (R-goal-39).
+  const { life, quarterly, monthly, weekly } = await makeLine(t, cookie);
   const post = (path: string, json: unknown) =>
     t.fetch(path, { method: 'POST', cookie, idempotencyKey: crypto.randomUUID(), json });
   const createTask = async (title: string) => {
     const res = await post('/api/tasks', {
-      goalId: monthly.id,
+      goalId: weekly.id,
       title,
       cond: 'when it ships',
       description: 'the notes',
       links: ['https://www.example.com/a'],
-      source: 'planning',
+      source: 'goal',
     });
     expect(res.status).toBe(201);
     return ((await res.json()) as { task: { id: string } }).task;
   };
-  return { t, cookie, userId, life, quarterly, monthly, post, createTask };
+  return { t, cookie, userId, life, quarterly, monthly, weekly, post, createTask };
 }
 
 describe('REVIEW / attack 1 — task → backlog → task, across two agents’ services', () => {
@@ -55,6 +54,8 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
     const moved = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0, reason: 'not this week' });
     expect(moved.status).toBe(200);
     const item = ((await moved.json()) as { item: { id: string; fromWeekStart: string; goalId: string } }).item;
+    // A2 (R-backlog-29) - the item lands ABOVE the week, on the monthly parent, because a weekly goal
+    // may hold no backlog items and "move to backlog" means the work must LEAVE the week.
     expect(item).toMatchObject({ goalId: f.monthly.id, fromWeekStart: WEEK });
 
     const back = await f.post(`/api/backlog/${item.id}/convert-to-task`, {});
@@ -94,7 +95,7 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
     const again = await f.post(`/api/backlog/${item.id}/convert-to-task`, {});
     expect(again.status).toBe(409);
     expect(((await again.json()) as { error: { code: string } }).error.code).toBe('ALREADY_CONVERTED');
-    expect(await db.select().from(taskTable).where(eq(taskTable.goalId, f.monthly.id)).all()).toHaveLength(2);
+    expect(await db.select().from(taskTable).where(eq(taskTable.goalId, f.weekly.id)).all()).toHaveLength(2);
   });
 
   it('a task cannot exit twice, and a done task cannot exit at all (R-task-17)', async () => {
@@ -120,7 +121,7 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
     const res = await f.t.fetch(`/api/goals/${f.life.id}?cascade=true`, { method: 'DELETE', cookie: f.cookie });
     expect(res.status).toBe(200);
     expect((await res.json()) as unknown).toMatchObject({
-      removed: { goals: 5, tasks: 2, backlogItems: 1 },
+      removed: { goals: 6, weeklyGoals: 1, tasks: 2, backlogItems: 1 },
     });
 
     // The real assertion: NO row anywhere still names a goal that no longer exists.
@@ -133,13 +134,10 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
         .from(backlogItems)
         .where(orphanFilter ? orphanFilter(backlogItems.goalId, live) : undefined)
         .all(),
-      focuses: await db
-        .select()
-        .from(weeklyFocus)
-        .where(orphanFilter ? orphanFilter(weeklyFocus.goalId, live) : undefined)
-        .all(),
     };
-    expect(orphans).toEqual({ tasks: [], items: [], focuses: [] });
+    // A2 (R-rm-2) - the `focuses` arm is gone with the table. The two that remain are the two that can
+    // still be orphaned, and neither has an FK: the cascade being transactional is the whole guarantee.
+    expect(orphans).toEqual({ tasks: [], items: [] });
 
     // …and the child rows keyed by the deleted tasks and items went with them.
     expect(await db.select().from(taskEvents).where(inArray(taskEvents.taskId, [task.id])).all()).toEqual([]);
@@ -152,7 +150,9 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
     const task = await f.createTask('Draft the thing');
 
     // The goal (and with it the task) is deleted first; the exit arrives afterwards.
-    expect((await f.t.fetch(`/api/goals/${f.monthly.id}`, { method: 'DELETE', cookie: f.cookie })).status).toBe(200);
+    expect(
+      (await f.t.fetch(`/api/goals/${f.weekly.id}`, { method: 'DELETE', cookie: f.cookie })).status,
+    ).toBe(200);
 
     const exit = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0 });
     expect(exit.status).toBe(404); // R-auth-3 — a vanished task is indistinguishable from one that never was
@@ -170,22 +170,28 @@ describe('REVIEW — the two contract gaps closed', () => {
     const detail = async (id: string) =>
       (await (await t.fetch(`/api/goals/${id}`, { cookie })).json()) as GoalDetailResponse;
 
-    expect((await detail(monthly.id)).replanOptions).toEqual(['Sep 2026', 'Oct 2026']);
-    expect((await detail(quarterly.id)).replanOptions).toEqual(['Q4 2026', 'Q1 2027']);
-    expect((await detail(yearly.id)).replanOptions).toEqual(['2027']);
-    // R-goal-21 — a Life goal is not re-plannable, so it offers nothing.
+    // A2 (R-goal-33/40) - the options are canonical KEYS with their rendered labels alongside.
+    const keys = async (id: string) => (await detail(id)).replanOptions.map((p) => p.periodKey);
+    expect(await keys(monthly.id)).toEqual(['2026-09', '2026-10']);
+    expect((await detail(monthly.id)).replanOptions.map((p) => p.label)).toEqual(['Sep 2026', 'Oct 2026']);
+    expect(await keys(quarterly.id)).toEqual(['2026-Q4', '2027-Q1']);
+    expect(await keys(yearly.id)).toEqual(['2027']);
+    // R-goal-21 - a Life goal is not re-plannable, so it offers nothing. A2 (R-goal-40) - and neither
+    // is a WEEKLY goal, for the opposite reason: it IS a week.
     expect((await detail(life.id)).replanOptions).toEqual([]);
+    const { weekly } = await makeLine(t, cookie);
+    expect((await detail(weekly.id)).replanOptions).toEqual([]);
 
     // …and it is the SAME list the server refuses a no-op re-plan with, so the two cannot drift.
     const noop = await t.fetch(`/api/goals/${monthly.id}/replan`, {
       method: 'POST',
       cookie,
       idempotencyKey: crypto.randomUUID(),
-      json: { period: monthly.period },
+      json: { periodKey: monthly.periodKey },
     });
     expect(noop.status).toBe(422);
     const details = ((await noop.json()) as { error: { details: { options: string[] } } }).error.details;
-    expect(details.options).toEqual((await detail(monthly.id)).replanOptions);
+    expect(details.options).toEqual(await keys(monthly.id));
   });
 
   it('`replanOptions` moves with the owner’s calendar, not with a literal', async () => {
@@ -195,19 +201,18 @@ describe('REVIEW — the two contract gaps closed', () => {
     const detail = async (id: string) =>
       ((await (await t.fetch(`/api/goals/${id}`, { cookie })).json()) as GoalDetailResponse).replanOptions;
 
-    expect(await detail(monthly.id)).toEqual(['Jan 2027', 'Feb 2027']);
-    expect(await detail(quarterly.id)).toEqual(['Q1 2027', 'Q2 2027']);
+    expect((await detail(monthly.id)).map((p) => p.periodKey)).toEqual(['2027-01', '2027-02']);
+    expect((await detail(quarterly.id)).map((p) => p.periodKey)).toEqual(['2027-Q1', '2027-Q2']);
   });
 
   it('an ambiguous conversion answers 409 AMBIGUOUS_CONVERSION_TARGET, with the candidates to choose from', async () => {
     const t = createTestApp({ now });
     const { cookie } = await signedInOwner(t);
-    const { quarterly, monthly } = await makeLine(t, cookie);
-    const second = await createGoal(t, cookie, { title: 'Speed work', horizon: 'Monthly', parentId: quarterly.id });
-    await savePlan(t, cookie, WEEK, [
-      { goalId: monthly.id, sentence: 'one' },
-      { goalId: second.id, sentence: 'two' },
-    ]);
+    const { quarterly, monthly, weekly } = await makeLine(t, cookie);
+    // A2 (R-backlog-26) - the candidates are WEEKLY goals for the target week, not active leaves. Two
+    // under one quarterly line is the ordinary shape now: it is how a week holds several intentions.
+    const otherMonthly = await createGoal(t, cookie, { title: 'Speed work', horizon: 'Monthly', parentId: quarterly.id });
+    const second = await createGoal(t, cookie, { title: 'intervals', horizon: 'Weekly', parentId: otherMonthly.id });
     const item = ((await (
       await t.fetch('/api/backlog', {
         method: 'POST',
@@ -226,7 +231,7 @@ describe('REVIEW — the two contract gaps closed', () => {
     expect(res.status).toBe(409);
     const err = (await res.json()) as { error: { code: string; details: { candidates: { id: string; title: string }[] } } };
     expect(err.error.code).toBe('AMBIGUOUS_CONVERSION_TARGET');
-    expect(err.error.details.candidates.map((c) => c.id).sort()).toEqual([monthly.id, second.id].sort());
+    expect(err.error.details.candidates.map((c) => c.id).sort()).toEqual([weekly.id, second.id].sort());
     // It is a product refusal, not a validation failure: the item is untouched and re-submitting works.
     expect((await db.select().from(backlogItems).where(eq(backlogItems.id, item.id)).get())?.status).toBe('open');
   });

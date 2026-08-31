@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { DB } from '../../src/application/services/guarded-batch';
 import type { Db } from '../../src/infrastructure/persistence/db';
-import { backlogItems, goals, learnings, tasks, user, weeklyFocus } from '../../src/infrastructure/persistence/schema';
+import { backlogItems, goals, learnings, tasks, user } from '../../src/infrastructure/persistence/schema';
 import { createTestApp, ids, signedInOwner } from '../helpers/app';
 import { callTool, mintToken, ok } from './helpers';
 
@@ -31,6 +31,7 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     userId: `user-b-${crypto.randomUUID()}`,
     lifeGoal: ids.ulid(),
     monthlyGoal: ids.ulid(),
+    weeklyGoal: ids.ulid(),
     task: ids.ulid(),
     item: ids.ulid(),
     learning: ids.ulid(),
@@ -55,11 +56,12 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
       image: null,
     });
     await db.insert(goals).values([
-      { id: B.lifeGoal, userId: B.userId, parentId: null, horizon: 'Life', title: "B's life goal", why: '', pulse: 'On track', period: '', createdAt: NOW, updatedAt: NOW, version: 1 },
-      { id: B.monthlyGoal, userId: B.userId, parentId: B.lifeGoal, horizon: 'Monthly', title: "B's month", why: '', pulse: 'On track', period: 'Sep 2026', createdAt: NOW, updatedAt: NOW, version: 1 },
+      { id: B.lifeGoal, userId: B.userId, parentId: null, horizon: 'Life', title: "B's life goal", why: '', pulse: 'On track', periodKey: '', period: '', createdAt: NOW, updatedAt: NOW, version: 1 },
+      { id: B.monthlyGoal, userId: B.userId, parentId: B.lifeGoal, horizon: 'Monthly', title: "B's month", why: '', pulse: 'On track', periodKey: '2026-08', period: 'Aug 2026', createdAt: NOW, updatedAt: NOW, version: 1 },
+      // A2 - a task hangs off a WEEKLY goal (R-goal-39), so B's secret work needs one.
+      { id: B.weeklyGoal, userId: B.userId, parentId: B.monthlyGoal, horizon: 'Weekly', title: "B's private week", why: '', pulse: 'On track', periodKey: WEEK, period: 'Week of 31 Aug', createdAt: NOW, updatedAt: NOW, version: 1 },
     ]);
-    await db.insert(weeklyFocus).values({ id: ids.ulid(), userId: B.userId, goalId: B.monthlyGoal, weekStart: WEEK, sentence: "B's private focus", createdAt: NOW, updatedAt: NOW });
-    await db.insert(tasks).values({ id: B.task, userId: B.userId, goalId: B.monthlyGoal, title: "B's secret task", cond: '', description: '', status: 'open', originWeekStart: WEEK, doneWeekStart: null, doneAt: null, exitReason: null, exitedAt: null, movedToBacklogItemId: null, createdAt: NOW, updatedAt: NOW, version: 1 });
+    await db.insert(tasks).values({ id: B.task, userId: B.userId, goalId: B.weeklyGoal, title: "B's secret task", cond: '', description: '', status: 'open', originWeekStart: WEEK, doneWeekStart: null, doneAt: null, exitReason: null, exitedAt: null, movedToBacklogItemId: null, createdAt: NOW, updatedAt: NOW, version: 1 });
     await db.insert(backlogItems).values({ id: B.item, userId: B.userId, goalId: B.monthlyGoal, title: "B's parked item", description: '', capturedAt: NOW, fromWeekStart: null, status: 'open', convertedToTaskId: null, convertedAt: null, createdAt: NOW, updatedAt: NOW, version: 1 });
     await db.insert(learnings).values({ id: B.learning, userId: B.userId, goalId: B.lifeGoal, text: "B's private learning", applied: false, capturedAt: NOW, createdAt: NOW, updatedAt: NOW });
   });
@@ -75,23 +77,23 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     ['get_goal', { goal_id: B.monthlyGoal }],
     ['preview_goal_deletion', { goal_id: B.monthlyGoal }],
     ['get_task', { task_id: B.task }],
-    ['list_goals', { under_goal_id: B.monthlyGoal }],
-    ['list_tasks', { goal_id: B.monthlyGoal }],
-    ['list_tasks', { under_goal_id: B.monthlyGoal }],
     ['list_backlog', { goal_id: B.monthlyGoal }],
-    ['list_backlog', { under_goal_id: B.monthlyGoal }],
     // goals (write)
     ['create_goal', { title: 'A goal under B', horizon: 'Monthly', parent_id: B.lifeGoal }],
     ['update_goal', { goal_id: B.monthlyGoal, title: 'renamed by A' }],
     ['move_goal', { goal_id: B.monthlyGoal, new_parent_id: B.lifeGoal }],
-    ['replan_goal', { goal_id: B.monthlyGoal, period: 'Oct 2026' }],
+    ['replan_goal', { goal_id: B.monthlyGoal, period_key: '2026-10' }],
     ['delete_goal', { goal_id: B.monthlyGoal, cascade: true }],
-    // plan
-    ['set_goal_focus', { goal_id: B.monthlyGoal, sentence: 'A writing into B' }],
-    ['clear_goal_focus', { goal_id: B.monthlyGoal }],
-    ['save_weekly_plan', { week_start: WEEK, entries: [{ goal_id: B.monthlyGoal, sentence: 'A writing into B' }] }],
+    // A2, new tools that take an id (R-goal-46, R-task-48).
+    ['repeat_last_week', { life_goal_id: B.lifeGoal, week_start: WEEK }],
+    /*
+     * RETIRED - `set_goal_focus`, `clear_goal_focus` and `save_weekly_plan` are deleted with the entity
+     * (R-rm-2, R-rm-3). Their scoping coverage is not lost: writing into another owner's week now goes
+     * through `create_goal(horizon: 'Weekly')` and `create_task`, both of which are exercised here.
+     */
     // tasks
-    ['create_task', { goal_id: B.monthlyGoal, title: 'A task on B branch' }],
+    ['create_task', { goal_id: B.weeklyGoal, title: 'A task on B week' }],
+    ['create_task', { new_weekly_goal: { parent_id: B.monthlyGoal, title: 'A week under B' }, title: 'A task' }],
     ['update_task', { task_id: B.task, title: 'renamed by A' }],
     ['complete_task', { task_id: B.task }],
     ['uncheck_task', { task_id: B.task }],
@@ -132,41 +134,44 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
   });
 
   it("B's data never appears in any list, tree, resource or search A can reach", async () => {
-    const secrets = ["B's life goal", "B's month", "B's secret task", "B's parked item", "B's private learning", "B's private focus", B.userId];
+    const secrets = ["B's life goal", "B's month", "B's private week", "B's secret task", "B's parked item", "B's private learning", B.userId];
 
     const payloads = [
       await ok(t, tokenA, 'get_overview'),
-      await ok(t, tokenA, 'list_goals'),
+      // A2 - `list_goals` and `get_weekly_plan` are gone; `list_lens` is the read that replaced them,
+      // and it is exercised at EVERY horizon, because each is its own indexed query (R-lens-16).
+      await ok(t, tokenA, 'list_lens', { lens: 'Life' }),
+      await ok(t, tokenA, 'list_lens', { lens: 'Monthly' }),
+      await ok(t, tokenA, 'list_lens', { lens: 'Weekly' }),
+      await ok(t, tokenA, 'get_period'),
       await ok(t, tokenA, 'list_tasks'),
       await ok(t, tokenA, 'list_backlog'),
       await ok(t, tokenA, 'list_learnings'),
-      await ok(t, tokenA, 'get_weekly_plan'),
       await ok(t, tokenA, 'get_account'),
       // The fuzzy search is the one place a title could match across accounts, so it gets B's own words.
-      await ok(t, tokenA, 'find_goal', { query: 'life goal' }),
-      await ok(t, tokenA, 'find_goal', { query: "B's month" }),
+      await ok(t, tokenA, 'find_goal', { query: 'life goal', lens: 'Life' }),
+      await ok(t, tokenA, 'find_goal', { query: "B's month", lens: 'Monthly' }),
     ];
 
     const haystack = JSON.stringify(payloads);
     for (const secret of secrets) {
       expect(haystack.includes(secret), `"${secret}" leaked into a list A can read`).toBe(false);
     }
-    // …and A's tree really is empty, so the assertion above is not vacuous for the wrong reason.
-    expect((payloads[1] as { goals: unknown[] }).goals).toEqual([]);
+    // ...and A's account really is empty, so the assertion above is not vacuous for the wrong reason.
+    expect((payloads[1] as { items: unknown[] }).items).toEqual([]);
   });
 
   it("B's rows are untouched afterwards — nothing above half-applied a write", async () => {
     const db = t.container().resolve<Db>(DB);
-    const [g, tk, it_, ln, wf] = await Promise.all([
+    const [g, tk, it_, ln] = await Promise.all([
       db.select().from(goals),
       db.select().from(tasks),
       db.select().from(backlogItems),
       db.select().from(learnings),
-      db.select().from(weeklyFocus),
     ]);
     const mine = <T extends { userId: string }>(rows: T[]) => rows.filter((r) => r.userId === B.userId);
 
-    expect(mine(g).map((r) => r.title).sort()).toEqual(["B's life goal", "B's month"]);
+    expect(mine(g).map((r) => r.title).sort()).toEqual(["B's life goal", "B's month", "B's private week"]);
     expect(mine(tk)).toHaveLength(1);
     expect(mine(tk)[0]!.status, "B's task was exited by A").toBe('open');
     expect(mine(tk)[0]!.title).toBe("B's secret task");
@@ -174,8 +179,8 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     expect(mine(it_)[0]!.status, "B's backlog item was converted by A").toBe('open');
     expect(mine(ln)).toHaveLength(1);
     expect(mine(ln)[0]!.text).toBe("B's private learning");
-    expect(mine(wf), "B's weekly focus was rewritten by A").toHaveLength(1);
-    expect(mine(wf)[0]!.sentence).toBe("B's private focus");
+    // A2 (R-rm-2) - the `weekly_focus` arm is gone with the table. B's weekly INTENTION is a goal now,
+    // and it is covered by the goal assertion above.
   });
 
   it('the census: every tool with an id-shaped input is exercised above', async () => {

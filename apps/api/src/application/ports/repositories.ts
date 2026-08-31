@@ -11,7 +11,6 @@ import type {
   Task,
   TaskEvent,
   TaskLink,
-  WeeklyFocus,
 } from '../../domain/entities';
 import type { WriteStmt } from './statement';
 
@@ -41,14 +40,74 @@ export interface IPreferencesRepo {
 }
 export const IPreferencesRepo = Symbol.for('goal-cascade.IPreferencesRepo');
 
+/** One lens's coordinates: a horizon and a period. `periodKey` is `''` for the Life lens. */
+export type LensKey = { horizon: Goal['horizon']; periodKey: string };
+/** One page of a lens read, plus the cursor for the next one (Q-12's page cap, R-lens-16). */
+export type GoalPage = { items: Goal[]; nextCursor: string | null };
+/** R-lens-22 — one row of the Zoom sheet's single grouped count query. */
+export type LensCount = LensKey & { count: number };
+/** R-goal-47 — one Weekly goal in a Monthly page's range read, reduced to the two fields the line needs. */
+export type WeeklyUnderParent = { parentId: string; periodKey: string };
+
+/**
+ * ⚠ **A2 (R-lens-27) — `listAll` is DELETED, not left unused.**
+ *
+ * It was `SELECT * FROM goals WHERE user_id = ?` with no limit, no cursor and no filter, and it was the
+ * single door every goal row came through: `GET /goals`, `GET /goals/:id`, every goal mutation's
+ * response, both guards, `POST /tasks`, two backlog reads and every MCP tool. `POST /goals` and
+ * `POST /goals/:id/move` each ran it THREE times per request; `GET /bootstrap` twice.
+ *
+ * **No request may call a repository method that returns every goal.** It is removed rather than
+ * deprecated because an unused whole-table read is one refactor away from being a used one — the same
+ * R-rm-* discipline that deletes rather than hides. What replaced it:
+ *
+ * | Need | Method | Cost |
+ * |---|---|---|
+ * | a lens page | `listByLens` | one indexed seek on `ix_goals_lens` |
+ * | grouping, the Life-root walk, parent lines | `listInterior` | one read of `horizon <> 'Weekly'` |
+ * | the Life lens | `listLifeGoals` | bounded by the number of Life lines |
+ * | the carried band's goals | `listByIds` | chunked, bounded by open work |
+ * | the move/delete guards | `subtreeIds` | one recursive CTE; **zero rows for a Weekly goal** |
+ * | the create guard | `findById` | **one row** — it compares two ranks |
+ * | the Zoom sheet | `countByLens` | ONE grouped query, never five lens reads |
+ */
 export interface IGoalRepo {
-  /**
-   * The owner's ENTIRE tree. Every tree rule is derived in memory from this one list
-   * (`domain/goal-tree.ts`) — at most 500 nodes, 4 levels deep (Q-12, R-goal-7) — so there is no
-   * recursive SQL anywhere and no second, drifting implementation of "descendant".
-   */
-  listAll(userId: string): Promise<Goal[]>;
   findById(userId: string, id: string): Promise<Goal | null>;
+  /** R-lens-16 — one horizon, one period, paginated. The read that replaced the whole-tree one. */
+  listByLens(userId: string, key: LensKey, page: { limit: number; cursor?: string }): Promise<GoalPage>;
+  /** R-lens-27 — every goal whose horizon is not `Weekly`. Grows with the plan, not with use. */
+  listInterior(userId: string): Promise<Goal[]>;
+  /** R-lens-2 — every Life goal. The one list guaranteed complete, and the one lens with no period. */
+  listLifeGoals(userId: string): Promise<Goal[]>;
+  /** R-lens-12 — the goals behind a week's open tasks, for the carried band. Chunked. */
+  listByIds(userId: string, ids: readonly string[]): Promise<Goal[]>;
+  /**
+   * R-goal-41 / R-goal-37 — one goal's direct children, in sibling order. `children` is the ONLY source
+   * of "has children" on the wire now that `isLeaf` is retired, so it is a read rather than a derivation.
+   * One seek on `ix_goals_owner_parent`.
+   */
+  listChildren(userId: string, parentId: string): Promise<Goal[]>;
+  /** R-goal-18 / Q-5 — one subtree, inclusive of the root, as a recursive CTE. */
+  subtreeIds(userId: string, rootId: string): Promise<string[]>;
+  /** R-backlog-26 — the Weekly goals at or under one goal for one week: the conversion targets. */
+  weeklyUnderForWeek(userId: string, rootId: string, weekStart: string): Promise<Goal[]>;
+  /** R-goal-47 — one `period_key BETWEEN` range scan per Monthly page. */
+  weeklyUnderParents(
+    userId: string,
+    parentIds: readonly string[],
+    fromKey: string,
+    toKey: string,
+  ): Promise<WeeklyUnderParent[]>;
+  /** R-lens-22 — the Zoom sheet's counts, as ONE grouped query. It must never fetch rows to count them. */
+  countByLens(userId: string, keys: readonly LensKey[]): Promise<LensCount[]>;
+  /** R-lens-26 — does any later period at this horizon hold a goal? A `>` probe, `LIMIT 1`, no count. */
+  hasLaterPeriod(userId: string, horizon: Goal['horizon'], afterKey: string): Promise<boolean>;
+  /** Q-12 — the interior-goal cap, checked on create. */
+  countInterior(userId: string): Promise<number>;
+  /** Q-12 — the per-week Weekly-goal cap, checked on create. */
+  countWeeklyInWeek(userId: string, weekStart: string): Promise<number>;
+  /** R-goal-46 — one week's Weekly goals, for `Repeat last week`. */
+  listWeeklyInWeek(userId: string, weekStart: string): Promise<Goal[]>;
   insertStmt(goal: Goal): WriteStmt;
   /** Guarded on `version = expectedVersion`; the patch MUST bump `version` and set `updatedAt`. */
   updateGuardedStmt(
@@ -57,47 +116,21 @@ export interface IGoalRepo {
     expectedVersion: number,
     patch: Partial<Omit<Goal, 'id' | 'userId'>> & { updatedAt: string; version: number },
   ): WriteStmt;
-  /** Q-5 — subtree delete. `ids` is the full set from `descendantIds`, computed in the read phase. */
+  /**
+   * Q-5 — subtree delete. `ids` is the full set from `subtreeIds`, and deleting a Life goal legitimately
+   * takes the whole line, so this is the one id list that stays large — the CALLER chunks it
+   * (`chunkIds`, `ports/statement.ts`) and every chunk is a statement in the same `GuardedBatch`.
+   */
   deleteManyStmt(userId: string, ids: readonly string[]): WriteStmt;
 }
 export const IGoalRepo = Symbol.for('goal-cascade.IGoalRepo');
 
-export interface IWeeklyFocusRepo {
-  /** D-2 — the focus rows for ONE week. Their goal ids ARE the set of active leaves for that week. */
-  listByWeek(userId: string, weekStart: string): Promise<WeeklyFocus[]>;
-  /**
-   * R-goal-28 / Q-5 — every week's rows for a set of goals. The delete phase needs the exact row count
-   * it is about to remove, because `GuardedBatch` asserts `expectedChanges` exactly — `0` included, which
-   * is what catches a row created between the read and the batch.
-   */
-  listByGoals(userId: string, goalIds: readonly string[]): Promise<WeeklyFocus[]>;
-  findByGoalAndWeek(userId: string, goalId: string, weekStart: string): Promise<WeeklyFocus | null>;
-  insertStmt(focus: WeeklyFocus): WriteStmt;
-  updateStmt(userId: string, goalId: string, weekStart: string, patch: { sentence: string; updatedAt: string }): WriteStmt;
-  /**
-   * R-plan-7 — the whole-week replace. Deleting rows is how a leaf goes dormant: a blank sentence must
-   * never be stored (§1 WeeklyFocus), so "active" stays exactly "a row exists".
-   */
-  deleteByGoalsAndWeekStmt(userId: string, goalIds: readonly string[], weekStart: string): WriteStmt;
-  /**
-   * R-plan-7 / Q-3 — the whole-week replace deletes by WEEK, not by the goal ids it happened to read.
-   * Paired with `expectedChanges = <rows read for that week>` it asserts that the week still holds
-   * exactly the plan this save was built on, so a concurrent save on another device loses cleanly with a
-   * 409 instead of the two plans merging. Deleting only the goals this save read cannot do that: a row
-   * the other device added for a goal not in that list would survive the replace.
-   */
-  deleteByWeekStmt(userId: string, weekStart: string): WriteStmt;
-  /**
-   * R-goal-28 / D-8 — a leaf that gains a child loses its focus for the CURRENT week and any later one,
-   * and KEEPS its past weeks. A past row cannot resurrect anything (`isActive` requires leaf-ness at read
-   * time, `domain/goal-tree.ts#isActive`), and destroying it would make this week's operation rewrite
-   * last week's record — the exact bug D-2 exists to prevent.
-   */
-  deleteByGoalsFromWeekStmt(userId: string, goalIds: readonly string[], fromWeekStart: string): WriteStmt;
-  /** Q-5 — the subtree cascade: every week, because the goal itself is going away. */
-  deleteByGoalsStmt(userId: string, goalIds: readonly string[]): WriteStmt;
-}
-export const IWeeklyFocusRepo = Symbol.for('goal-cascade.IWeeklyFocusRepo');
+/*
+ * ⚠ **A2 (R-rm-2)** — `IWeeklyFocusRepo` and its DI symbol are DELETED, with all nine methods
+ * (`listByWeek`, `listByGoals`, `findByGoalAndWeek`, `insertStmt`, `updateStmt`,
+ * `deleteByGoalsAndWeekStmt`, `deleteByWeekStmt`, `deleteByGoalsFromWeekStmt`, `deleteByGoalsStmt`) and
+ * `D1WeeklyFocusRepo`. A weekly intent is now an ordinary goal with `horizon = 'Weekly'`.
+ */
 
 export interface ITaskRepo {
   findById(userId: string, id: string): Promise<Task | null>;
@@ -106,9 +139,30 @@ export interface ITaskRepo {
    * `origin_week_start <= weekStart`, plus DONE tasks with `done_week_start = weekStart`. Exited tasks
    * are excluded here, not filtered by the caller, so no read model can leak one.
    */
-  listVisibleInWeek(userId: string, weekStart: string): Promise<Task[]>;
-  /** R-goal-24 / R-goal-28 — open tasks under a set of goals, for the carry signal and the D-8 guard. */
+  listVisibleInWeek(userId: string, weekStart: string, limit?: number): Promise<Task[]>;
+  /** R-goal-24 — open tasks under a set of goals, for the Life-goal carry signal. **Chunked.** */
   listOpenByGoals(userId: string, goalIds: readonly string[]): Promise<Task[]>;
+  /**
+   * ⚠ **A2, new (R-lens-4)** — **the group-header counts, as ONE grouped query**:
+   * `SELECT goal_id, COUNT(*) FROM tasks WHERE user_id=? AND status='open' AND origin_week_start<=?
+   *  GROUP BY goal_id`, served by `ix_tasks_open_week`. One row per goal holding open work.
+   *
+   * It is bounded by the account's OPEN WORK, which the owner controls, rather than by its history — and
+   * it is only affordable because R-lens-4 anchors the count to ONE week. The UX plan's period-spanning
+   * definition would have needed a per-period scan AND been untruthful in both directions: a past month's
+   * header would count work open today, and every future month would show the identical number, which is
+   * a count firing on work whose period has not arrived (R-lens-11 forbids it outright). A rare case where
+   * the cheap answer and the honest one are the same.
+   */
+  countOpenVisibleByGoal(userId: string, weekStart: string): Promise<{ goalId: string; open: number }[]>;
+  /**
+   * R-goal-24 — the Life-goal carry signal, as ONE grouped query over open work that originated BEFORE
+   * `beforeWeekStart`: `COUNT(*)` and `MIN(origin_week_start)` per goal. A future origin can never
+   * satisfy `<`, so the rule needs no future guard and R-task-38 holds automatically.
+   */
+  carryingByGoal(userId: string, beforeWeekStart: string): Promise<{ goalId: string; open: number; oldestOrigin: string }[]>;
+  /** R-lens-26 — does any task originate in a week after this one? The Weekly lens's forward dot. */
+  hasOriginAfter(userId: string, weekStart: string): Promise<boolean>;
   /**
    * Q-5 — EVERY task under a set of goals, whatever its status. The subtree delete needs the ids (to
    * remove their links and events, which are keyed by task) and the exact count for `expectedChanges`;
@@ -123,7 +177,12 @@ export interface ITaskRepo {
     expectedVersion: number,
     patch: Partial<Omit<Task, 'id' | 'userId'>> & { updatedAt: string; version: number },
   ): WriteStmt;
-  /** Q-5 — cascade only. A task is NEVER deleted by an exit; it keeps its row and its log (D-15). */
+  /**
+   * Q-5 — cascade only. A task is NEVER deleted by an exit; it keeps its row and its log (D-15).
+   *
+   * The CALLER chunks the id list (`chunkIds`, `ports/statement.ts`) because each chunk is a separate
+   * statement needing its own `expectedChanges`, and only the caller knows the rows it read.
+   */
   deleteByGoalsStmt(userId: string, goalIds: readonly string[]): WriteStmt;
 }
 export const ITaskRepo = Symbol.for('goal-cascade.ITaskRepo');
@@ -158,7 +217,7 @@ export const ITaskEventRepo = Symbol.for('goal-cascade.ITaskEventRepo');
 export interface IBacklogRepo {
   findById(userId: string, id: string): Promise<BacklogItem | null>;
   /** R-backlog-6 — `status = 'open'` only. A converted item never appears in a backlog list again. */
-  listOpen(userId: string): Promise<BacklogItem[]>;
+  listOpen(userId: string, limit?: number): Promise<BacklogItem[]>;
   listOpenByGoals(userId: string, goalIds: readonly string[]): Promise<BacklogItem[]>;
   /**
    * Q-5 — every item under a set of goals, converted ones included: a converted item still owns link

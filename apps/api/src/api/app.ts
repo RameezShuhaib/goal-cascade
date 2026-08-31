@@ -17,7 +17,7 @@ import { goalsRoutes } from './routes/goals.routes';
 import { internalRoutes } from './routes/internal.routes';
 import { mcpRoutes } from './routes/mcp.routes';
 import { meRoutes } from './routes/me.routes';
-import { planRoutes } from './routes/plan.routes';
+
 import { tasksRoutes } from './routes/tasks.routes';
 import type { AppBindings } from './types';
 
@@ -107,7 +107,7 @@ export function createApp(options: AppOptions = {}) {
   // ── R-auth-4: everything else under /api needs a session. Including every read. ──
   app.use(`${API_BASE}/*`, checkOrigin, requireSession, resolveTimezone);
 
-  for (const r of [meRoutes, bootstrapRoutes, goalsRoutes, planRoutes, tasksRoutes, backlogRoutes, learningsRoutes]) {
+  for (const r of [meRoutes, bootstrapRoutes, goalsRoutes, tasksRoutes, backlogRoutes, learningsRoutes]) {
     app.route(API_BASE, r);
   }
 

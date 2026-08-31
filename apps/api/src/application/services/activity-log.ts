@@ -1,5 +1,4 @@
 import type { TaskEventView } from '@goal-cascade/shared';
-import { WEEK_HISTORY_WEEKS } from '@goal-cascade/shared';
 import { inject, injectable } from 'tsyringe';
 import type { Task, TaskEvent } from '../../domain/entities';
 import { TASK_EVENT_GLYPHS, type TaskEventKind, type TaskSource } from '../../domain/enums';
@@ -7,6 +6,16 @@ import { addWeeks, weeksBetween } from '../../domain/weeks';
 import type { RequestContext } from '../context';
 import { IIdGenerator, ITaskEventRepo, type GuardedWrite } from '../ports';
 import { GuardedBatch } from './guarded-batch';
+
+/**
+ * How many weeks of `Carried to week of …` a single read may backfill.
+ *
+ * ⚠ **A2 (R-rm-3)** — this used to be `WEEK_HISTORY_WEEKS`, which is retired as a BOUND. It is not a
+ * product rule and must never be read as one: it is the fan-out limit on one lazy write batch, so a read
+ * of a task that has carried for three years does not emit 150 statements. Every week a read actually
+ * visits still gets its line, because the window slides forward with the week being read.
+ */
+const CARRY_BACKFILL_WEEKS = 8;
 
 /**
  * R-task-30/31 — the activity timeline: the ONE place a task's history is written.
@@ -70,20 +79,30 @@ export class ActivityLog {
    * at the start of that week, and stamping today's clock onto it would push a carry from three weeks ago
    * above a `Completed` from last week in a newest-first timeline. That is D-4's mistake in a new place.
    *
-   * The backfill window is bounded to the addressable history (`WEEK_HISTORY_WEEKS`) so a single read
-   * cannot fan out into an unbounded batch for a very old task. Every week the owner can actually reach
-   * is filled by any read of it, and the window slides forward with the current week.
+   * ⚠ **A2 (R-task-38, R-task-46) — the producer is CLAMPED AT THE CURRENT WEEK, and that clamp is far
+   * more reachable than it was.** A `Carried to week of …` entry is logged once per week CROSSED, and a
+   * week that has not arrived has not been crossed. Viewing week `+3` must write nothing to any task's
+   * timeline (S-task-38-2). Before A2 no screen could address a future week at all, so this was
+   * theoretical; now the lens scrolls forward without bound (R-lens-7), so it is the ordinary case.
+   *
+   * The backfill window is bounded to `CARRY_BACKFILL_WEEKS` so a single read cannot fan out into an
+   * unbounded batch for a very old task. It is a **batch-size bound, not a product rule** — it replaces
+   * the old `WEEK_HISTORY_WEEKS`, which was retired as a bound (R-rm-3) and must not be mistaken for one
+   * here either. The window slides forward with the current week, so every week a read actually visits
+   * gets its line.
    *
    * Failures are swallowed: this is a cosmetic log line produced during a READ, and a task list must not
    * 500 because a log entry raced with another device that had just written it.
    */
   async ensureCarried(ctx: RequestContext, tasks: readonly Task[], viewedWeekStart: string): Promise<void> {
     const writes: GuardedWrite[] = [];
+    // R-task-38 — never log a carry into a week that has not arrived, however far ahead a lens looks.
+    const upTo = viewedWeekStart < ctx.currentWeekStart ? viewedWeekStart : ctx.currentWeekStart;
     for (const task of tasks) {
       // R-task-7/12 — only an OPEN task carries, and only into weeks strictly after its origin.
       if (task.status !== 'open') continue;
-      const age = weeksBetween(task.originWeekStart, viewedWeekStart);
-      for (let n = Math.max(1, age - (WEEK_HISTORY_WEEKS - 1)); n <= age; n++) {
+      const age = weeksBetween(task.originWeekStart, upTo);
+      for (let n = Math.max(1, age - (CARRY_BACKFILL_WEEKS - 1)); n <= age; n++) {
         const weekStart = addWeeks(task.originWeekStart, n);
         const event: TaskEvent & { weekStart: string } = {
           id: this.ids.ulid(),
@@ -153,9 +172,15 @@ export function weekLabel(weekStart: string): string {
   return `Mon ${Number(day)} ${MONTHS[Number(month) - 1]}`;
 }
 
-/** R-task-2/30 — the three creation sources, each with its own line. */
+/**
+ * R-task-41/46 — the three creation sources, each with its own line.
+ *
+ * ⚠ **A2** — R-task-30's table changes in exactly two rows and no other way: `Created — weekly planning`
+ * is **renamed** `Created — added to a goal` (there is no planning screen), and `Created — from an Idea`
+ * is **retired** with the entity (S-task-46-1).
+ */
 const CREATED_TEXT: Record<TaskSource, string> = {
-  planning: 'Created — weekly planning',
+  goal: 'Created — added to a goal',
   backlog: 'Created — pulled from Backlog',
   drawer: 'Created — added to this week',
 };

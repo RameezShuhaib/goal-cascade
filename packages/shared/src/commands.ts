@@ -9,14 +9,13 @@ import {
   LearningView,
   LongText,
   MAX_LINKS,
-  MAX_PLAN_ENTRIES,
+  MAX_PAGE,
   OneLiner,
-  Period,
-  PlanEntryView,
+  PeriodKey,
+  PeriodKeyParam,
   PreferencesView,
   Pulse,
   Reason,
-  Sentence,
   TaskDetailView,
   TaskSource,
   Theme,
@@ -26,7 +25,7 @@ import {
   WeekOffset,
   WeekOffsetParam,
   WeekStart,
-  WeekView,
+  isPeriodKeyFor,
 } from './common';
 
 /**
@@ -35,6 +34,9 @@ import {
  * Conventions, all load-bearing:
  *  - **`.strict()` on every request schema.** An unknown key is a bug — a typo, a stale client, or an
  *    attempt to write a server-owned field (SPEC §1 `[srv]`, Q-10) — not something to silently drop.
+ *    ⚠ **A2** — this is what makes `period` server-owned by construction (S-goal-33-3) and what refuses a
+ *    `week` on task create (S-task-40-3): neither field exists on any request schema, so sending one is a
+ *    422 rather than a value quietly ignored.
  *  - **Lengths and caps live here** (Q-11, Q-12), so both sides enforce the same bounds.
  *  - **`version` is the optimistic-concurrency guard** (Q-2). Where a request accepts it, sending the
  *    `version` from the corresponding view makes the write conditional: if another device changed the row
@@ -53,33 +55,66 @@ export const IdParams = z.object({ id: Ulid }).strict();
 export const TaskLinkParams = z.object({ id: Ulid, linkId: Ulid }).strict();
 
 /**
- * `?week=` on every week-scoped read. Absent = the current week. A positive offset is refused, not
- * clamped: no screen in this product can select a future week (R-nav-3, S-nav-3-1).
+ * `?week=` on every week-scoped read. Absent = the current week.
+ *
+ * ⚠ **A2 (R-lens-7)** — a POSITIVE offset is now ordinary: a future week is reachable and writable, and
+ * the forward chevron is never disabled. `WeekOffset`'s bound is the absolute storage range, not a
+ * product rule.
  */
 export const WeekQuery = z.object({ week: WeekOffsetParam.optional() }).strict();
 
-/** `?week=` + `?goalId=` — the Tasks screen (week switcher + goal filter pills, R-nav-7). */
-export const TasksQuery = z.object({ week: WeekOffsetParam.optional(), goalId: Ulid.optional() }).strict();
-
-/** `?goalId=` narrows the backlog to one goal. */
-export const GoalFilterQuery = z.object({ goalId: Ulid.optional() }).strict();
+/**
+ * `?week=` on the Weekly lens's task read. ⚠ **A2 (R-rm-4)** — the `goalId` filter is GONE: there are no
+ * filter pills, no `All` chip and no goal filter of any kind in any lens (R-lens-15). Grouping by Life
+ * goal is the whole answer, and it is the server's job (R-lens-3).
+ */
+export const TasksQuery = z.object({ week: WeekOffsetParam.optional(), limit: z.coerce.number().int().min(1).max(MAX_PAGE).optional() }).strict();
 
 /**
- * Q-5 — deletion cascades the WHOLE subtree (focuses, tasks, task events, backlog items) in one
- * transaction; Learning tags pointing into it null out to Unsorted rather than cascading. There is
- * no soft-delete and no trash.
+ * ⚠ **A2, new (R-lens-16, R-lens-27)** — the scoped lens read that replaces the whole-tree `GET /goals`.
+ *
+ * One horizon and one period, paginated. `period` is omitted for the **Life** lens, which has no period
+ * dimension and is bounded by the number of Life goals; for every other lens an absent or unparseable
+ * period falls back to the CURRENT one rather than erroring (R-lens-14, S-lens-14-1).
+ *
+ * `cursor` is the opaque `<createdAt>|<id>` of the last row of the previous page — the same total order
+ * every sibling list uses (Q-7), served straight off `ix_goals_lens` with no filesort.
+ */
+export const LensQuery = z
+  .object({
+    lens: Horizon.default('Weekly'),
+    period: PeriodKeyParam.optional(),
+    cursor: z.string().max(64).optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_PAGE).optional(),
+  })
+  .strict();
+
+/** `?anchor=` on the Zoom sheet's count read (R-lens-22). Absent = the server's today. */
+export const ZoomQuery = z.object({ anchor: z.iso.date().optional() }).strict();
+
+/** `?goalId=` narrows the backlog to one goal; `?limit=` pages it (`MAX_PAGE`). */
+export const BacklogQuery = z
+  .object({ goalId: Ulid.optional(), limit: z.coerce.number().int().min(1).max(MAX_PAGE).optional() })
+  .strict();
+
+/**
+ * Q-5 — deletion cascades the WHOLE subtree (tasks, task events, backlog items) in one transaction;
+ * Learning tags pointing into it null out to Unsorted rather than cascading. There is no soft-delete and
+ * no trash.
  *
  * `cascade` is the explicit acknowledgement of that: without it, deleting a goal that has children is
  * refused with `409 GOAL_HAS_CHILDREN` whose `details` carry the counts, which is exactly what the
- * client needs to render the required "N sub-goals, M tasks, K backlog items" confirmation. A leaf goal
- * needs no acknowledgement.
- */
-/**
+ * client needs to render the required "N sub-goals, M tasks, K backlog items" confirmation. A childless
+ * goal needs no acknowledgement.
+ *
+ * ⚠ **A2 (R-task-47)** — the cascade already covered the new level, because it is defined over the
+ * subtree and not over a fixed depth; what changed is that deleting a Monthly goal now takes its Weekly
+ * children and all of their tasks, so the counts can be large and the confirmation matters more.
+ *
  * `dryRun=true` computes exactly what the delete WOULD remove and writes nothing, answering with the
  * same `DeleteGoalResponse` shape and `deleted: false`. It ignores `cascade` — a preview is never
- * refused — and, unlike the live delete's `GOAL_HAS_CHILDREN` guard, it emits counts for LEAF goals too.
- * That is the whole point: a leaf carrying forty open tasks and a full backlog is the delete with no
- * warning, so it is the one that most needs a preview.
+ * refused — and, unlike the live delete's `GOAL_HAS_CHILDREN` guard, it emits counts for childless goals
+ * too. That is the whole point: a Weekly goal carrying forty open tasks is the delete with no warning.
  */
 export const DeleteGoalQuery = z.object({ cascade: z.stringbool().optional(), dryRun: z.stringbool().optional() }).strict();
 
@@ -90,12 +125,19 @@ const ServerNow = { serverNow: Iso };
 
 export const DeleteResponse = z.object({ deleted: z.boolean(), ...ServerNow });
 
-/** Q-5 — the counts the cascade actually removed, so the client can confirm what happened. */
+/**
+ * Q-5 — the counts the cascade actually removed, so the client can confirm what happened.
+ *
+ * ⚠ **A2** — `weeklyFocuses` is gone with the entity (R-rm-2) and `weeklyGoals` replaces it: the number
+ * that now matters is how many WEEKS of intention a delete takes with it (R-task-47, R-goal-46). It is a
+ * summary and must never become a list.
+ */
 export const DeleteGoalResponse = z.object({
   deleted: z.boolean(),
   removed: z.object({
     goals: z.int().nonnegative(),
-    weeklyFocuses: z.int().nonnegative(),
+    /** Of `goals`, how many were Weekly. Reported separately because it is the number that can be large. */
+    weeklyGoals: z.int().nonnegative(),
     tasks: z.int().nonnegative(),
     taskEvents: z.int().nonnegative(),
     backlogItems: z.int().nonnegative(),
@@ -109,7 +151,6 @@ export const DeleteGoalResponse = z.object({
 // Preferences — the only thing a brand-new account has (R-auth-6)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** R-nav-12 — the theme is a real per-user preference, persisted across sessions (D-25). */
 /**
  * A read that takes no query parameters at all. Named and `.strict()` rather than simply omitted, so an
  * unknown or misremembered param (`?goalId=…` on a list that does not filter) is a 422 instead of being
@@ -117,6 +158,7 @@ export const DeleteGoalResponse = z.object({
  */
 export const NoQuery = z.object({}).strict();
 
+/** R-nav-12 — the theme is a real per-user preference, persisted across sessions (D-25). */
 export const PatchPreferencesRequest = z
   .object({ theme: Theme.optional(), timezone: IanaTimezone.optional() })
   .strict();
@@ -195,32 +237,71 @@ export const RevokeApiTokenResponse = z.object({ revoked: z.literal(true), ...Se
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * R-goal-1/3/4/5/6 — title is the only required content field. `parentId` is null ONLY for a Life goal;
- * every other horizon needs a parent whose horizon is strictly longer, and a Monthly parent is refused
- * outright (`HORIZON_CONFLICT`). `period` defaults from the horizon and TODAY when omitted (R-goal-13,
- * D-3), and is always `''` for a Life goal.
+ * R-goal-33 — a `periodKey` is refused unless it is the canonical shape for the horizon it is being
+ * written against: `2026-Q5`, `2026-13` and a Weekly key that is not a Monday are validation failures
+ * (S-goal-33-2). The refinement lives here rather than in a handler so both sides enforce it.
  */
-export const CreateGoalRequest = z
-  .object({
-    title: Title,
-    why: OneLiner.default(''),
-    horizon: Horizon,
-    parentId: Ulid.nullable().default(null),
-    period: Period.optional(),
-    pulse: Pulse.default('On track'),
-  })
-  .strict();
+function refinePeriodKey<T extends { horizon?: Horizon; periodKey?: string }>(
+  schema: z.ZodType<T>,
+  horizonOf: (v: T) => Horizon | undefined,
+): z.ZodType<T> {
+  return schema.superRefine((v, ctx) => {
+    const horizon = horizonOf(v);
+    if (v.periodKey === undefined || horizon === undefined) return;
+    if (!isPeriodKeyFor(horizon, v.periodKey)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['periodKey'],
+        message: `not a valid periodKey for a ${horizon} goal`,
+      });
+    }
+  }) as unknown as z.ZodType<T>;
+}
 
 /**
- * R-goal-14 — editing changes `title`, `why`, `period` and `pulse` ONLY. `horizon` and `parentId` are
- * immutable through edit (S-goal-14-2); re-parenting is `POST /goals/:id/move` and re-scheduling is
- * `POST /goals/:id/replan`, each with its own rules. `.strict()` is what refuses them.
+ * R-goal-1/3/4/5/30/31/32/33/36 — title is the only required content field.
+ *
+ * `parentId` is null ONLY for a Life goal; every other horizon needs a parent whose horizon is strictly
+ * longer. ⚠ **A2** — the terminal horizon moved: a **Weekly** parent is now refused outright
+ * (`HORIZON_CONFLICT`), and a **Monthly** parent is legal, which is the exact request the old rule
+ * required to be refused (S-goal-31-2). Levels may be skipped, so a Weekly goal may hang off a Life,
+ * Yearly, Quarterly or Monthly goal (R-goal-32, S-goal-32-1).
+ *
+ * `periodKey` defaults from the horizon and the owner's TODAY when omitted (R-goal-33, D-3), and is
+ * always `''` for a Life goal. A key naming a period earlier than the current one for its horizon is
+ * refused with `PERIOD_IN_PAST` (R-goal-36); there is **no forward bound at any horizon**.
+ *
+ * There is no `period` field. It is server-derived (R-goal-33) and `.strict()` is what says so.
+ */
+export const CreateGoalRequest = refinePeriodKey(
+  z
+    .object({
+      title: Title,
+      why: OneLiner.default(''),
+      horizon: Horizon,
+      parentId: Ulid.nullable().default(null),
+      periodKey: PeriodKey.optional(),
+      pulse: Pulse.default('On track'),
+    })
+    .strict(),
+  (v) => v.horizon,
+);
+
+/**
+ * R-goal-14 / R-goal-36 / R-goal-40 — editing changes `title`, `why`, `periodKey` and `pulse` ONLY.
+ * `horizon` and `parentId` are immutable through edit (S-goal-14-2); re-parenting is
+ * `POST /goals/:id/move` and re-scheduling is `POST /goals/:id/replan`. `.strict()` is what refuses them.
+ *
+ * ⚠ **A2 (R-goal-40) — a `periodKey` patch on a WEEKLY goal is refused outright.** A Weekly goal *is* a
+ * week; moving it would silently restate what a past week contained, which is D-2, the defect that made
+ * focus per-week in the first place. The refusal is in the SERVICE and not here, because this schema does
+ * not know the target's horizon — see `GoalService.patch` (S-goal-40-2).
  */
 export const PatchGoalRequest = z
   .object({
     title: Title.optional(),
     why: OneLiner.optional(),
-    period: Period.optional(),
+    periodKey: PeriodKey.optional(),
     pulse: Pulse.optional(),
     version: OptionalVersion,
   })
@@ -231,68 +312,89 @@ export const PatchGoalRequest = z
  * descendant moves with it. The target must not be the goal itself or a descendant
  * (`WOULD_CREATE_CYCLE`, checked FIRST per R-goal-19) and must have a strictly longer horizon
  * (`HORIZON_CONFLICT`). A Life goal cannot be moved at all (`LIFE_GOAL_IMMUTABLE`, R-goal-21).
+ *
+ * ⚠ **A2 (R-goal-40, SPEC Q-24)** — Move REMAINS available on a Weekly goal, and it may never change
+ * that goal's `periodKey`. There is no `periodKey` field on this request and the service does not write
+ * one; see the guard in `GoalService.move` for why crossing weeks breaks nothing in the data and
+ * everything in the lens.
  */
 export const MoveGoalRequest = z.object({ parentId: Ulid, version: OptionalVersion }).strict();
 
 /**
- * R-goal-22/23 — Re-plan sets `period` to a contextual next period and takes an OPTIONAL one-line
- * reason. Nothing is mandatory but the period. Life goals are not re-plannable (R-goal-21).
+ * R-goal-40 — Re-plan sets `periodKey` to a contextual next period of the goal's OWN horizon and takes an
+ * OPTIONAL one-line reason. Nothing is mandatory but the period.
+ *
+ * Neither a **Life** goal (R-goal-21) nor a **Weekly** goal (R-goal-40) is re-plannable, for opposite
+ * reasons: a Life goal has no period at all, and a Weekly goal's period is immutable after creation.
  */
-export const ReplanGoalRequest = z.object({ period: Period, reason: Reason.optional(), version: OptionalVersion }).strict();
-
-export const GoalResponse = z.object({ goal: GoalView, ...ServerNow });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The weekly plan
-// ─────────────────────────────────────────────────────────────────────────────
+export const ReplanGoalRequest = z.object({ periodKey: PeriodKey, reason: Reason.optional(), version: OptionalVersion }).strict();
 
 /**
- * R-plan-7 — the whole week's focus set, saved atomically. This is `savePlan`, not a per-leaf toggle:
- * every non-Life leaf named with a non-empty sentence gets/keeps a focus, and EVERY other non-Life leaf's
- * focus for that week is removed. An entry with a blank sentence is therefore a clear (R-plan-5), and a
- * leaf absent from `entries` is cleared too.
+ * ⚠ **A2, new (R-goal-46)** — `Repeat last week`: copies the previous week's Weekly goals **for one Life
+ * line** into `weekStart` as ORDINARY new goals — `title`, `why` and `parentId` carried over, `pulse`
+ * reset to `On track`, `periodKey` set to the target week, new ids, **no tasks copied**, and nothing
+ * linking a copy to its source.
  *
- * `weekStart` is required and must be the CURRENT week (R-plan-2): a save naming any other week is
- * refused wholesale with `409 WEEK_NOT_CURRENT`, never partially applied (S-plan-2-1, Q-3). Sending it
- * explicitly rather than defaulting to "now" is what makes a save that crossed a Monday boundary fail
- * loudly instead of writing into the wrong week.
+ * This is deliberately not a recurrence feature: no template entity, no series id, no materialisation
+ * job, and no edit-this-one-versus-all-future decision. A repeating intention costs one tap per week and
+ * produces ordinary rows.
+ *
+ * Per Life line, not account-wide (Q-22): account-wide creates twenty goals in one tap with no review.
+ * It is offered only on the current week or a later one — a past week is `PERIOD_IN_PAST` (R-goal-36).
  */
-export const SavePlanRequest = z
-  .object({
-    weekStart: WeekStart,
-    entries: z.array(z.object({ goalId: Ulid, sentence: Sentence }).strict()).max(MAX_PLAN_ENTRIES),
-  })
-  .strict();
+export const RepeatWeekRequest = z.object({ lifeGoalId: Ulid, weekStart: WeekStart }).strict();
 
-export const PlanResponse = z.object({
-  week: WeekView,
-  entries: z.array(PlanEntryView),
-  ...ServerNow,
-});
+export const GoalResponse = z.object({ goal: GoalView, ...ServerNow });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tasks
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * R-task-1/3/5/6 — a task is always created in the CURRENT week (there is no back-dating, and
- * `originWeekStart` is server-assigned and immutable) under an ACTIVE non-Life leaf. The three entry
- * points (planning, a backlog pull, the + drawer) differ only in `source`, which is recorded on the
- * `created` event. `cond` (the done-condition) is optional by design.
+ * ⚠ **A2, new (R-task-48)** — the inline weekly-goal half of a one-step create.
  *
- * A `goalId` that is not an active non-Life leaf is refused: `NOT_A_LEAF` if it has children or is a Life
- * goal, `BRANCH_NOT_ACTIVE` if it holds no focus this week (R-task-4, D-10 — there is no fallback goal).
+ * Creating a task presupposes a Weekly goal, and the common case is "I need to do this, this week".
+ * Structurally that is two creates; made literal it is the worst flow in the product. So the task-create
+ * sheet, when no Weekly goal exists for the target week under the chosen parent, creates one in the SAME
+ * sheet and the save writes both rows **in one transaction** — a failure creates neither (S-task-48-2).
+ *
+ * `title` is PRE-FILLED from the chosen parent and the sheet states what will happen before you save
+ * (R-task-49): nothing may be created invisibly.
+ */
+export const NewWeeklyGoalInput = z.object({ parentId: Ulid, title: Title }).strict();
+
+/**
+ * R-task-3/39/40/41/48 — a task is created **under a Weekly goal**, and under nothing else.
+ *
+ * ⚠ **A2 — there is NO week field on this request, at all.** `originWeekStart` is seeded once from the
+ * Weekly parent's `periodKey` and is immutable thereafter (R-task-40); a request carrying `week`,
+ * `weekOffset` or `originWeek` is refused as an unknown key by `.strict()` (S-task-40-3). Nothing derives
+ * a task's week by reading its goal at read time either — deleting the goal row from a query result must
+ * not change any task's week.
+ *
+ * Exactly ONE of `goalId` (an existing Weekly goal) or `newWeeklyGoal` must be given; both, or neither,
+ * is refused (S-task-48-3). There is no goal-less task, no implicit inbox and no nullable `goalId`.
+ *
+ * A `goalId` naming any non-Weekly goal — including a **Monthly goal with no children**, which is a leaf
+ * by the structural definition and is precisely the trap — is refused with `NOT_A_WEEKLY_GOAL`
+ * (R-goal-39, S-goal-37-1). A Weekly goal whose week is in the PAST is refused with `PERIOD_IN_PAST`
+ * (R-task-41): there is no back-dating. Creating forward is unbounded.
  */
 export const CreateTaskRequest = z
   .object({
-    goalId: Ulid,
+    goalId: Ulid.optional(),
+    newWeeklyGoal: NewWeeklyGoalInput.optional(),
     title: Title,
     cond: OneLiner.default(''),
     description: LongText.default(''),
     links: z.array(Url).max(MAX_LINKS).default([]),
-    source: TaskSource.default('planning'),
+    source: TaskSource.default('goal'),
   })
-  .strict();
+  .strict()
+  .refine(
+    (v) => (v.goalId === undefined) !== (v.newWeeklyGoal === undefined),
+    'exactly one of goalId or newWeeklyGoal is required',
+  );
 
 /** R-task-23/26 — done tasks remain editable; only the exits are withdrawn. */
 export const PatchTaskRequest = z
@@ -305,11 +407,19 @@ export const PatchTaskRequest = z
   .strict();
 
 /**
- * R-task-14 — exit 1 of 3. Any viewed week is completable, including past ones (past weeks stay fully
- * interactive), so the week is explicit. A week before the task's origin, or a future week, is refused
- * with `422 WEEK_OUT_OF_RANGE` (S-task-14-2).
+ * R-task-14/44 — exit 1 of 3. Any week that has BEGUN is completable, including past ones (past weeks
+ * stay fully interactive), so the week is explicit.
+ *
+ * ⚠ **A2 (R-rm-3, R-task-44) — the `.max(0)` on this line is NEW and load-bearing.** It used to be
+ * inherited from `WeekOffset`, which no longer carries one; widening that schema would have removed this
+ * guard **with no diff on this line at all**. You cannot finish work in a week that has not happened, and
+ * the bound is now reachable at any distance because there is no forward cap anywhere else.
+ *
+ * A week before the task's own origin is refused with `422 WEEK_OUT_OF_RANGE` (S-task-14-2). A task under
+ * a FUTURE Weekly goal therefore cannot be completed at all until that week arrives — no week satisfies
+ * both bounds — and its row renders no checkbox (S-task-44-1).
  */
-export const CompleteTaskRequest = z.object({ week: WeekOffset.default(0), version: OptionalVersion }).strict();
+export const CompleteTaskRequest = z.object({ week: WeekOffset.max(0).default(0), version: OptionalVersion }).strict();
 
 /**
  * R-task-19/21 — unchecking clears `doneWeekStart` and `doneAt`, keeps `originWeekStart`, logs
@@ -320,9 +430,17 @@ export const CompleteTaskRequest = z.object({ week: WeekOffset.default(0), versi
 export const UncheckTaskRequest = z.object({ cond: OneLiner.optional(), version: OptionalVersion }).strict();
 
 /**
- * R-task-15 — exit 2 of 3. The task keeps its row with `status: 'movedToBacklog'` (D-15) and becomes a
- * backlog item on its OWN goal carrying title, description and links, with `fromWeekStart` = the week it
- * was live in (D-12). The reason is optional (R-task-18) and is retained on the record.
+ * R-task-15/36 / R-backlog-29 — exit 2 of 3. The task keeps its row with `status: 'movedToBacklog'`
+ * (D-15) and becomes a backlog item carrying title, description and links, with `fromWeekStart` = the
+ * week it was live in (D-12). The reason is optional (R-task-18) and is retained on the record.
+ *
+ * ⚠ **A2 (R-backlog-29) — the item does NOT land on the task's own goal any more.** That goal is now a
+ * Weekly goal, which may hold no backlog items (R-backlog-2): "move to backlog" means *not this week*, so
+ * the item must leave the week, and a Weekly goal IS a week. It lands on the nearest **non-Weekly
+ * ancestor**, normally the Monthly parent. A Weekly goal whose only ancestor is a Life goal has no legal
+ * target and the exit is refused with `LIFE_GOAL_NO_BACKLOG` (S-backlog-29-2).
+ *
+ * The week may be a future one (R-task-36): changing your mind about next week is not a fourth exit.
  */
 export const MoveTaskToBacklogRequest = z
   .object({ week: WeekOffset.default(0), reason: Reason.optional(), version: OptionalVersion })
@@ -335,6 +453,12 @@ export const CancelTaskRequest = z.object({ reason: Reason.optional(), version: 
 export const AddTaskLinkRequest = z.object({ url: Url }).strict();
 
 export const TaskResponse = z.object({ task: TaskDetailView, ...ServerNow });
+/**
+ * The created task plus the Weekly goal that was created for it, when one was (R-task-48). `goal` is
+ * null on the ordinary path; when it is not, the client must say so — nothing may be created invisibly
+ * (R-task-49) — and move the Weekly lens to that week (R-task-41, S-task-41-3).
+ */
+export const CreateTaskResponse = z.object({ task: TaskDetailView, goal: GoalView.nullable(), ...ServerNow });
 /** The task's terminal state plus the backlog item it became, so the client can patch both caches. */
 export const MoveTaskToBacklogResponse = z.object({ task: TaskDetailView, item: BacklogItemView, ...ServerNow });
 
@@ -342,7 +466,11 @@ export const MoveTaskToBacklogResponse = z.object({ task: TaskDetailView, item: 
 // Backlog
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** R-backlog-2 — `goalId` must be a Yearly/Quarterly/Monthly goal; a Life goal is refused. */
+/**
+ * R-backlog-2/26 — `goalId` must be a Yearly/Quarterly/Monthly goal. A **Life** goal is refused
+ * (`LIFE_GOAL_NO_BACKLOG`) and so is a **Weekly** goal: a backlog item is deferred work with no week, and
+ * a Weekly goal would give it one (S-backlog-26-4).
+ */
 export const CreateBacklogItemRequest = z
   .object({
     goalId: Ulid,
@@ -361,25 +489,44 @@ export const PatchBacklogItemRequest = z
   })
   .strict();
 
-/** R-backlog-10 — move to any other non-Life goal. `capturedAt` and `fromWeekStart` are unchanged. */
+/** R-backlog-10 — move to any other non-Life, non-Weekly goal. `capturedAt`/`fromWeekStart` unchanged. */
 export const MoveBacklogItemRequest = z.object({ goalId: Ulid, version: OptionalVersion }).strict();
 
 /**
- * R-backlog-6/7/8/9 — "Add to this week", the ONLY way backlog becomes work. One atomic operation: the
- * item is marked converted with a pointer to the task it became (never deleted, never duplicated — D-19),
- * and the task logs `Created — pulled from Backlog`.
+ * R-backlog-6/9/26, Q-4, D-18, D-19 — "Add to this week", the ONLY way backlog becomes work. One atomic
+ * operation: the item is marked converted with a pointer to the task it became (never deleted, never
+ * duplicated — D-19), and the task logs `Created — pulled from Backlog`.
  *
- * `goalId` is the ACTIVE leaf at or under the item's goal that receives the task. It is required when
- * more than one such leaf exists: the server must not pick silently (D-18, S-backlog-7-2). With no active
- * leaf under the item's goal the call is refused with `BRANCH_NOT_ACTIVE`; a second conversion of the
- * same item is refused with `ALREADY_CONVERTED`.
+ * ⚠ **A2 (R-backlog-26)** — the receiving goal is the **Weekly goal at or under the item's goal whose
+ * `periodKey` is the target week**, not an "active leaf". `week` names that target and may not be in the
+ * past (R-goal-36); it defaults to the current week.
+ *
+ * Exactly one candidate → used silently. Two or more → `AMBIGUOUS_CONVERSION_TARGET` with
+ * `details.candidates`, and the owner chooses: the server refuses to pick, because that id decides which
+ * week the task belongs to for the rest of its life and array order is not a decision. **None** →
+ * `NO_WEEKLY_GOAL`, and the client offers `newWeeklyGoal` rather than sending the owner away (R-task-48).
+ * A second conversion of the same item is refused with `ALREADY_CONVERTED`.
  */
 export const ConvertBacklogItemRequest = z
-  .object({ goalId: Ulid.optional(), title: Title.optional(), cond: OneLiner.default(''), version: OptionalVersion })
-  .strict();
+  .object({
+    goalId: Ulid.optional(),
+    newWeeklyGoal: NewWeeklyGoalInput.optional(),
+    week: WeekOffset.min(0).default(0),
+    title: Title.optional(),
+    cond: OneLiner.default(''),
+    version: OptionalVersion,
+  })
+  .strict()
+  .refine((v) => !(v.goalId !== undefined && v.newWeeklyGoal !== undefined), 'goalId and newWeeklyGoal are mutually exclusive');
 
 export const BacklogItemResponse = z.object({ item: BacklogItemView, ...ServerNow });
-export const ConvertBacklogItemResponse = z.object({ task: TaskDetailView, item: BacklogItemView, ...ServerNow });
+export const ConvertBacklogItemResponse = z.object({
+  task: TaskDetailView,
+  item: BacklogItemView,
+  /** The Weekly goal created for this conversion, when one was (R-task-48). Null on the ordinary path. */
+  goal: GoalView.nullable(),
+  ...ServerNow,
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Learnings — an insight that might change the plan. Never converted into work.
@@ -403,7 +550,9 @@ export type IdParams = z.infer<typeof IdParams>;
 export type TaskLinkParams = z.infer<typeof TaskLinkParams>;
 export type WeekQuery = z.infer<typeof WeekQuery>;
 export type TasksQuery = z.infer<typeof TasksQuery>;
-export type GoalFilterQuery = z.infer<typeof GoalFilterQuery>;
+export type LensQuery = z.infer<typeof LensQuery>;
+export type ZoomQuery = z.infer<typeof ZoomQuery>;
+export type BacklogQuery = z.infer<typeof BacklogQuery>;
 export type DeleteGoalQuery = z.infer<typeof DeleteGoalQuery>;
 export type DeleteResponse = z.infer<typeof DeleteResponse>;
 export type DeleteGoalResponse = z.infer<typeof DeleteGoalResponse>;
@@ -421,9 +570,9 @@ export type CreateGoalRequest = z.infer<typeof CreateGoalRequest>;
 export type PatchGoalRequest = z.infer<typeof PatchGoalRequest>;
 export type MoveGoalRequest = z.infer<typeof MoveGoalRequest>;
 export type ReplanGoalRequest = z.infer<typeof ReplanGoalRequest>;
+export type RepeatWeekRequest = z.infer<typeof RepeatWeekRequest>;
 export type GoalResponse = z.infer<typeof GoalResponse>;
-export type SavePlanRequest = z.infer<typeof SavePlanRequest>;
-export type PlanResponse = z.infer<typeof PlanResponse>;
+export type NewWeeklyGoalInput = z.infer<typeof NewWeeklyGoalInput>;
 export type CreateTaskRequest = z.infer<typeof CreateTaskRequest>;
 export type PatchTaskRequest = z.infer<typeof PatchTaskRequest>;
 export type CompleteTaskRequest = z.infer<typeof CompleteTaskRequest>;
@@ -432,6 +581,7 @@ export type MoveTaskToBacklogRequest = z.infer<typeof MoveTaskToBacklogRequest>;
 export type CancelTaskRequest = z.infer<typeof CancelTaskRequest>;
 export type AddTaskLinkRequest = z.infer<typeof AddTaskLinkRequest>;
 export type TaskResponse = z.infer<typeof TaskResponse>;
+export type CreateTaskResponse = z.infer<typeof CreateTaskResponse>;
 export type MoveTaskToBacklogResponse = z.infer<typeof MoveTaskToBacklogResponse>;
 export type CreateBacklogItemRequest = z.infer<typeof CreateBacklogItemRequest>;
 export type PatchBacklogItemRequest = z.infer<typeof PatchBacklogItemRequest>;

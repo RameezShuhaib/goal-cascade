@@ -1,7 +1,7 @@
 import { TaskDetailResponse, TaskResponse, TasksResponse } from '@goal-cascade/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, signedInOwner } from '../helpers/app';
-import { activate, codeOf, command, createTask, detail, key, kinds, listWeek, makeLine, seedTask, texts } from './helpers';
+import { codeOf, command, createTask, detail, key, kinds, listWeek, makeLine, seedTask, texts } from './helpers';
 
 /**
  * The activity timeline — R-task-22..31, D-13, D-14.
@@ -19,12 +19,14 @@ beforeEach(() => at(MON.aug31));
 
 async function openTask(originWeek: string = MON.aug31, body: Record<string, unknown> = {}) {
   const { cookie, userId } = await signedInOwner(t);
-  const { leaf } = await makeLine(t, userId);
   at(originWeek);
-  await activate(t, userId, leaf.id, originWeek);
+  // ⚠ **A2** — a task hangs off a WEEKLY goal (R-goal-39), and takes ITS week (R-task-40). There is
+  // nothing to "activate": a week's intention IS a goal, so the arrange step is a Weekly goal for
+  // `originWeek`, created at that week's clock because a past week refuses new tasks (R-task-41).
+  const { life, monthly, weekly: leaf } = await makeLine(t, userId, originWeek);
   const task = await seedTask(t, cookie, { goalId: leaf.id, title: 'ship the thing', ...body });
   at(MON.aug31);
-  return { cookie, userId, leaf, task };
+  return { cookie, userId, life, monthly, leaf, task };
 }
 
 describe('R-task-29 / D-14 / Q-17 — the carry log is produced lazily and cannot duplicate', () => {
@@ -82,14 +84,19 @@ describe('R-task-29 / D-14 / Q-17 — the carry log is produced lazily and canno
   });
 });
 
-describe('R-task-2/30 — Created carries its source', () => {
-  it('S-task-31-1 — each of the three creation sources logs its own line', async () => {
+describe('R-task-41/46 — Created carries its source', () => {
+  /**
+   * SUPERSEDED — the old table read `['planning', 'Created — weekly planning']`. R-task-46 changes
+   * R-task-30's table in exactly two rows and no other way: `Created — weekly planning` is **renamed**
+   * `Created — added to a goal` (there is no planning screen), and `Created — from an Idea` is retired
+   * with the entity. Every other entry, glyph and trigger is unchanged (S-task-46-1).
+   */
+  it('S-task-46-1 — each of the three creation sources logs its own line', async () => {
     const { cookie, userId } = await signedInOwner(t);
-    const { leaf } = await makeLine(t, userId);
-    await activate(t, userId, leaf.id, MON.aug31);
+    const { weekly: leaf } = await makeLine(t, userId, MON.aug31);
 
     for (const [source, text] of [
-      ['planning', 'Created — weekly planning'],
+      ['goal', 'Created — added to a goal'],
       ['backlog', 'Created — pulled from Backlog'],
       ['drawer', 'Created — added to this week'],
     ] as const) {
@@ -108,8 +115,7 @@ describe('R-task-2/30 — Created carries its source', () => {
 
   it('S-task-3-2 — a whitespace-only title is refused', async () => {
     const { cookie, userId } = await signedInOwner(t);
-    const { leaf } = await makeLine(t, userId);
-    await activate(t, userId, leaf.id, MON.aug31);
+    const { weekly: leaf } = await makeLine(t, userId, MON.aug31);
     const res = await createTask(t, cookie, { goalId: leaf.id, title: '   ' });
     expect(res.status).toBe(422);
   });
@@ -131,7 +137,7 @@ describe('R-task-23/26/27 — editing the task', () => {
       'Description updated',
       'Done-condition edited: "merged" → "deployed"',
       'Renamed: "ship the thing" → "ship the other thing"',
-      'Created — weekly planning',
+      'Created — added to a goal',
     ]);
     expect(d.task.title).toBe('ship the other thing');
     expect(d.task.version).toBe(2);

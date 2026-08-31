@@ -16,6 +16,10 @@ export default defineConfig({
           // `tests/security/no-real-email.test.ts` fails if either ever reappears.
           bindings: {
             TEST_MIGRATIONS: migrations,
+            // `tests/perf/lens-scale.test.ts` seeds a 30-year account when this is `heavy`. It is
+            // threaded through a BINDING because the miniflare pool has no `process.env`: the config
+            // runs in Node, the test does not.
+            SCALE: process.env.SCALE ?? '',
             BETTER_AUTH_SECRET: 'test-secret-test-secret-test-secret-1234',
             INTERNAL_SECRET: 'test-internal-secret',
             // The whole suite signs up as `<something>@test.goal-cascade.local` (helpers/app.ts `uniqueEmail`).

@@ -94,27 +94,49 @@ export function weeksBetween(from: string, to: string): number {
 
 /**
  * The wire projection: how many weeks `weekStart` is from the current week. 0 = this week, negative =
- * past. Positive is only ever produced by bad data — no screen can address a future week (R-nav-3).
+ * past, **positive = future**.
+ *
+ * ⚠ **A2 (R-lens-7)** — a positive value is now ordinary. The old doc block here said "positive is only
+ * ever produced by bad data", which is false: any future period is reachable and writable at every
+ * horizon (R-goal-36), and the forward chevron is never disabled.
  */
 export function offsetOf(weekStart: string, currentWeekStart: string): number {
   return weeksBetween(currentWeekStart, weekStart);
 }
 
-/** Resolve a wire offset (<= 0) against the current week. The inverse of `offsetOf`. */
+/** Resolve a wire offset against the current week, in either direction. The inverse of `offsetOf`. */
 export function weekStartFromOffset(currentWeekStart: string, offset: number): string {
   return addWeeks(currentWeekStart, offset);
 }
 
 /**
- * R-task-10/11/12 — the carry age of a task in the week being viewed: how many whole weeks the open task
- * has been carrying. 0 → no label; 1 → the gray "since <Monday>"; >= 2 → the red "N weeks · since …"
- * chip, the only escalation in the product.
+ * R-task-43 — the **signed** carry age of a task in the week being viewed:
+ * `weeksBetween(origin, min(viewedWeek, currentWeek))`.
  *
- * It depends on the VIEWED week, not on today (S-task-11-2): a task with origin two weeks ago, viewed in
- * the week after its origin, is one week old there and shows the gray label.
+ * Labels: `<= 0` → none; `= 1` → the gray "since Mon 24 Aug"; `>= 2` → the red "N weeks · since 10 Aug"
+ * chip, the only escalation in the product. The 1-week and 2-week thresholds are unchanged from
+ * R-task-10/11/12.
+ *
+ * **Two terms, and each answers a different way of being wrong.**
+ *
+ *  1. It is measured against the **VIEWED** week, not today (S-task-11-2): a task with origin two weeks
+ *     ago, viewed in the week after its origin, is one week old THERE and shows the gray label. A past
+ *     week must read as it read then.
+ *  2. `min(…, currentWeek)` is what keeps a **plan** from ageing. A task planned for `+1` and viewed at
+ *     `+3` is age `−1`, not 2 — the naive `viewed − origin` would read 2 and fire the product's only
+ *     escalation at work nobody is late with, which R-lens-11 forbids outright.
+ *
+ * ⚠ **A2 supersedes R-task-37's outer `max(0, …)` clamp.** Dropping it changes nothing that renders —
+ * no label fires below 1 either way — and leaves ONE guard instead of two, carried in the sign. A
+ * negative age is the honest reading of "not due yet". **`TaskView.carryWeeks` therefore stops being
+ * `nonnegative`: it is a silent wire break, and anything summing these values is now wrong.**
+ *
+ * An already-late open task (origin in the past) projected into a future week keeps the age it has
+ * TODAY: it is late now and still open then, so the chip is correct there (S-task-43-2).
  */
-export function carryWeeks(originWeekStart: string, viewedWeekStart: string): number {
-  return Math.max(0, weeksBetween(originWeekStart, viewedWeekStart));
+export function carryWeeks(originWeekStart: string, viewedWeekStart: string, currentWeekStart: string): number {
+  const measuredAt = viewedWeekStart < currentWeekStart ? viewedWeekStart : currentWeekStart;
+  return weeksBetween(originWeekStart, measuredAt);
 }
 
 /**
@@ -134,13 +156,17 @@ export function isVisibleInWeek(
   return false;
 }
 
-/**
- * R-nav-3 / R-nav-4 / D-24 — the weeks the switcher may address, newest first: the current week and the
- * previous `history - 1`. ONE bound for both the chevrons and the picker; the mockup had two that
- * disagreed, so weeks −6..−8 were reachable by one control and invisible to the other.
+/*
+ * ⚠ **A2 (R-lens-7, R-rm-3)** — `selectableWeeks` is DELETED, not left unused.
+ *
+ * It computed "the weeks the switcher may address": the current week and the previous
+ * `WEEK_HISTORY_WEEKS - 1`. Both halves of that are retired. There is no picker to enumerate (the lens
+ * title opens the Zoom sheet instead — R-lens-17), no forward bound (R-goal-36) and no backward bound
+ * either: greying out the back chevron at the account's first period would cost a `MIN(period_key)`
+ * probe on every render to disable one control, and a bound in one direction only rebuilds D-24's
+ * asymmetry. D-24's rule is now satisfied by CONSTRUCTION — one control per dimension, so no two
+ * controls can disagree about a range.
+ *
+ * The function is removed rather than deprecated because an unused range helper is one refactor away
+ * from being a used one (the R-rm-* discipline).
  */
-export function selectableWeeks(currentWeekStart: string, history: number): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < Math.max(1, history); i++) out.push(addWeeks(currentWeekStart, -i));
-  return out;
-}

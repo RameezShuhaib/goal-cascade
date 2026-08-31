@@ -118,7 +118,6 @@ describe('idempotency middleware', () => {
       ['POST', '/api/goals', { title: 'x', horizon: 'Life' }],
       ['POST', `/api/goals/${id}/move`, { parentId: id }],
       ['POST', `/api/goals/${id}/replan`, { period: '2027' }],
-      ['PUT', '/api/plan', { weekStart: '2026-08-31', entries: [] }],
       ['POST', '/api/tasks', { goalId: id, title: 'x' }],
       ['POST', `/api/tasks/${id}/complete`, {}],
       ['POST', `/api/tasks/${id}/uncheck`, {}],

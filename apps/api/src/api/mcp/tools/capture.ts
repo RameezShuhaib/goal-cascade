@@ -3,21 +3,23 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { GoalService, LearningService } from '../../../application/services';
 import { guard } from '../errors';
-import { ok, pathIndex, stampIdempotencyKey, week, type McpDeps } from '../shapes';
+import { ok, stampIdempotencyKey, type McpDeps } from '../shapes';
 
 /**
  * Learnings — the capture surface.
  *
  * A learning's TAG must be a LIFE goal (or null), and a learning is never converted into work: there is
  * deliberately no tool here that turns one into a task or a backlog item.
+ *
+ * ⚠ **A2 (R-lens-16, R-lens-27)** — the tag titles come from the **Life lens**, which is bounded by the
+ * number of Life lines. It used to read the whole goal tree to build a path index, for a label.
  */
 export function registerCaptureTools(server: McpServer, deps: McpDeps): void {
   const { dc, ctx } = deps;
 
   const lifeTitles = async () => {
-    const tree = await dc.resolve(GoalService).list(ctx, week(ctx, 0));
-    const paths = pathIndex(tree.goals);
-    return new Map(tree.goals.map((g) => [g.id, { title: g.title, path: paths.get(g.id) }]));
+    const life = await dc.resolve(GoalService).lens(ctx, { lens: 'Life' });
+    return new Map(life.items.map((g) => [g.id, { title: g.title }]));
   };
 
   // ── Learnings ──────────────────────────────────────────────────────────────────────────────────

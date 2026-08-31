@@ -1,3 +1,4 @@
+import { MAX_PAGE } from '@goal-cascade/shared';
 import type {
   BacklogItemResponse,
   BacklogItemView,
@@ -9,6 +10,7 @@ import type {
   ExternalLinkView,
   MoveBacklogItemRequest,
   PatchBacklogItemRequest,
+  GoalView,
   TaskDetailView,
   TaskEventView,
 } from '@goal-cascade/shared';
@@ -17,17 +19,19 @@ import type { RequestContext } from '../context';
 import type { BacklogItem, BacklogLink, Goal, Task, TaskEvent, TaskLink } from '../../domain/entities';
 import { TASK_EVENT_GLYPHS, type TaskSource } from '../../domain/enums';
 import { DomainError, notFound } from '../../domain/errors';
-import { activeLeavesUnder, descendantIds, isLifeHorizon } from '../../domain/goal-tree';
+import { indexTree, isLifeHorizon, lifeRootIn } from '../../domain/goal-tree';
+import { isPastPeriod, labelOf } from '../../domain/periods';
+import { dateInTimezone, weekStartFromOffset } from '../../domain/weeks';
 import type { GuardedWrite } from '../ports';
 import {
   IBacklogLinkRepo,
   IBacklogRepo,
+  IClock,
   IGoalRepo,
   IIdGenerator,
   ITaskEventRepo,
   ITaskLinkRepo,
   ITaskRepo,
-  IWeeklyFocusRepo,
 } from '../ports';
 import { GuardedBatch } from './guarded-batch';
 
@@ -72,9 +76,15 @@ export function toBacklogItemView(item: BacklogItem, links: readonly BacklogLink
   };
 }
 
-/** R-task-30 — the `Created — …` line each of the three sources logs. */
+/**
+ * R-task-30 / R-task-46 — the `Created — …` line each of the three sources logs.
+ *
+ * ⚠ **A2** — the table changes in exactly two rows and no other way: `Created — weekly planning` is
+ * **renamed** `Created — added to a goal` (there is no planning screen), and `Created — from an Idea` is
+ * **retired** with the entity. Every other entry, glyph and trigger is unchanged (S-task-46-1).
+ */
 export const CREATED_EVENT_TEXT: Record<TaskSource, string> = {
-  planning: 'Created — weekly planning',
+  goal: 'Created — added to a goal',
   backlog: 'Created — pulled from Backlog',
   drawer: 'Created — added to this week',
 };
@@ -87,6 +97,11 @@ export type NewTaskDraft = {
   description: string;
   links: readonly string[];
   source: TaskSource;
+  /**
+   * ⚠ **A2 (R-task-40)** — the task's own stored week, taken from the **Weekly goal** receiving it. There
+   * is no target-week parameter anywhere in the product: at creation the two are equal by construction.
+   */
+  originWeekStart: string;
   /** Structured provenance for the `created` event (`{ backlogItemId }`). */
   detail: Record<string, unknown>;
 };
@@ -102,7 +117,10 @@ export type TaskWrites = { task: Task; links: TaskLink[]; event: TaskEvent; writ
  * `TaskService` owns everything a task does AFTER it exists; this is the narrow seam where a conversion
  * mints one. See `docs/work/05-backlog-capture/build.md`.
  *
- * R-task-5/6 — `originWeekStart` is the CURRENT week, never the week being viewed and never back-dated.
+ * ⚠ **A2 (R-task-40)** — `originWeekStart` comes from the **Weekly goal** the conversion resolved, not
+ * from "the current week": the receiving goal names the target week (R-backlog-26), and the task's week
+ * is seeded from it once and then immutable. No back-dating survives that, because the resolution itself
+ * refuses a past week.
  */
 export function buildTaskWrites(
   ctx: RequestContext,
@@ -117,7 +135,7 @@ export function buildTaskWrites(
     cond: draft.cond,
     description: draft.description,
     status: 'open',
-    originWeekStart: ctx.currentWeekStart,
+    originWeekStart: draft.originWeekStart,
     doneWeekStart: null,
     doneAt: null,
     exitReason: null,
@@ -158,6 +176,35 @@ export function buildTaskWrites(
   };
 }
 
+/**
+ * R-task-48/49 — the Weekly goal a conversion minted, shaped for the toast and the live region.
+ *
+ * It is a brand-new goal for the target week, so the three derived fields are known without a read:
+ * nothing is in its backlog, it carries nothing (that is a Life-goal signal), and it is not stale — it
+ * was written for the week it is in (R-goal-43). `lifeRootId` is deliberately null: the client already
+ * knows the parent it named, and resolving a Life root here would cost a tree read for a toast.
+ */
+function toGoalView(goal: Goal): GoalView {
+  return {
+    id: goal.id,
+    parentId: goal.parentId,
+    horizon: goal.horizon,
+    title: goal.title,
+    why: goal.why,
+    pulse: goal.pulse,
+    periodKey: goal.periodKey,
+    period: goal.period,
+    lifeRootId: null,
+    backlogCount: 0,
+    carrying: null,
+    plannedAgeWeeks: 0,
+    weeklyBreakdown: null,
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+    version: goal.version,
+  };
+}
+
 export function toTaskEventView(e: TaskEvent): TaskEventView {
   return {
     id: e.id,
@@ -169,8 +216,15 @@ export function toTaskEventView(e: TaskEvent): TaskEventView {
   };
 }
 
-/** The freshly created task, with the one event it has. `carryWeeks` is 0: it was born in this week. */
-export function toNewTaskDetailView(w: TaskWrites): TaskDetailView {
+/**
+ * The freshly created task, with the one event it has.
+ *
+ * `carryWeeks` is 0 by construction: at creation a task's own week and the week it is being viewed in are
+ * the same (R-task-40), so there is nothing for R-task-43's signed age to measure. `completable` is
+ * false for a FUTURE week — a task under a Weekly goal that has not arrived cannot be completed at all
+ * until it does (R-task-44).
+ */
+export function toNewTaskDetailView(w: TaskWrites, currentWeekStart: string): TaskDetailView {
   return {
     id: w.task.id,
     goalId: w.task.goalId,
@@ -186,6 +240,7 @@ export function toNewTaskDetailView(w: TaskWrites): TaskDetailView {
     exitReason: null,
     exitedAt: null,
     carryWeeks: 0,
+    completable: w.task.originWeekStart <= currentWeekStart,
     createdAt: w.task.createdAt,
     updatedAt: w.task.updatedAt,
     version: w.task.version,
@@ -194,14 +249,23 @@ export function toNewTaskDetailView(w: TaskWrites): TaskDetailView {
 }
 
 /**
- * R-backlog-2 — a backlog item attaches to a Yearly/Quarterly/Monthly goal. Never a Life goal (whose
- * detail screen shows a READ-ONLY roll-up of its descendants' items instead, R-backlog-12) and never a
- * week. Enforced on create and on move — every goal picker in every backlog flow.
+ * R-backlog-2 / R-backlog-26 — a backlog item attaches to a **Yearly, Quarterly or Monthly** goal.
+ *
+ * Never a **Life** goal (whose detail page shows a READ-ONLY roll-up of its descendants' items instead,
+ * R-backlog-12) and ⚠ **A2** never a **Weekly** goal: the whole point of a backlog item is that it has no
+ * week (R-backlog-1/3), and a Weekly goal would give it one. Enforced on create and on move — every goal
+ * picker in every backlog flow (S-backlog-26-4).
  */
 export function assertCanHoldBacklog(goal: Goal): void {
   if (isLifeHorizon(goal.horizon)) {
     throw new DomainError('LIFE_GOAL_NO_BACKLOG', 'a Life goal holds no backlog items; choose a sub-goal', {
       goalId: goal.id,
+    });
+  }
+  if (goal.horizon === 'Weekly') {
+    throw new DomainError('LIFE_GOAL_NO_BACKLOG', 'a weekly goal is a week; a backlog item has none', {
+      goalId: goal.id,
+      horizon: goal.horizon,
     });
   }
 }
@@ -252,11 +316,11 @@ export class BacklogService {
     @inject(IBacklogRepo) private readonly items: IBacklogRepo,
     @inject(IBacklogLinkRepo) private readonly links: IBacklogLinkRepo,
     @inject(IGoalRepo) private readonly goals: IGoalRepo,
-    @inject(IWeeklyFocusRepo) private readonly focuses: IWeeklyFocusRepo,
     @inject(ITaskRepo) private readonly tasks: ITaskRepo,
     @inject(ITaskLinkRepo) private readonly taskLinks: ITaskLinkRepo,
     @inject(ITaskEventRepo) private readonly taskEvents: ITaskEventRepo,
     @inject(IIdGenerator) private readonly ids: IIdGenerator,
+    @inject(IClock) private readonly clock: IClock,
     @inject(GuardedBatch) private readonly batch: GuardedBatch,
   ) {}
 
@@ -267,33 +331,45 @@ export class BacklogService {
    * `?goalId=` narrows to one goal — and on a LIFE goal that means the read-only aggregate (R-backlog-12),
    * because a Life goal never holds items itself. See `listForGoal`.
    */
-  async list(ctx: RequestContext, queryInput: { goalId?: string }): Promise<BacklogResponse> {
+  async list(ctx: RequestContext, queryInput: { goalId?: string; limit?: number }): Promise<BacklogResponse> {
+    const limit = Math.min(queryInput.limit ?? MAX_PAGE, MAX_PAGE);
     if (queryInput.goalId !== undefined) {
       const { items } = await this.listForGoal(ctx, queryInput.goalId);
-      return { items, serverNow: ctx.now };
+      return { items: items.slice(0, limit), nextCursor: null, serverNow: ctx.now };
     }
-    return { items: await this.viewsOf(ctx, await this.items.listOpen(ctx.userId)), serverNow: ctx.now };
+    // Q-12 / R-lens-16 — `MAX_PAGE`, wired. It existed and was referenced nowhere.
+    const rows = await this.items.listOpen(ctx.userId, limit + 1);
+    const page = rows.slice(0, limit);
+    return {
+      items: await this.viewsOf(ctx, page),
+      nextCursor: rows.length > limit ? (page[page.length - 1]?.id ?? null) : null,
+      serverNow: ctx.now,
+    };
   }
 
   /**
-   * R-backlog-11/12 — the backlog block on ONE goal's detail screen, and the shared seam the goals agent
+   * R-backlog-11/12 — the backlog block on ONE goal's detail page, and the shared seam the goals reader
    * calls for `GoalDetailResponse.backlog` / `.backlogIsAggregate`.
    *
-   *   non-Life goal → that goal's OWN items; the client offers the three per-item actions (D-20).
-   *   Life goal     → `isAggregate: true`: a READ-ONLY roll-up of every open item on any DESCENDANT,
-   *                   each row carrying its own `goalId` so the client can label it with its owning goal.
-   *                   A Life goal never holds items itself (R-backlog-2), so there is nothing to act on
-   *                   here and no per-item action is offered — only `Open Backlog →`.
+   *   Yearly/Quarterly/Monthly → that goal's OWN items; the client offers the three per-item actions (D-20).
+   *   Life goal                → `isAggregate: true`: a READ-ONLY roll-up of every open item on any
+   *                              DESCENDANT, each row carrying its own `goalId`. A Life goal never holds
+   *                              items itself (R-backlog-2), so no per-item action is offered.
+   *   ⚠ **A2 — Weekly**        → **nothing**. A Weekly goal holds no backlog items at all (R-backlog-2,
+   *                              amended); its page shows the ancestors' PULL LIST instead (R-backlog-28).
+   *
+   * ⚠ **A2 (R-lens-27)** — the Life roll-up's scope is now ONE recursive CTE rather than `descendantIds`
+   * over the whole goal table.
    */
   async listForGoal(ctx: RequestContext, goalId: string): Promise<{ items: BacklogItemView[]; isAggregate: boolean }> {
-    const all = await this.goals.listAll(ctx.userId);
-    const goal = all.find((g) => g.id === goalId);
+    const goal = await this.goals.findById(ctx.userId, goalId);
     if (!goal) throw notFound('goal');
+    if (goal.horizon === 'Weekly') return { items: [], isAggregate: false };
 
     const isAggregate = isLifeHorizon(goal.horizon);
     // The Life roll-up asks for the descendants only — including the root would be meaningless (it can
     // hold nothing) and would hide a data problem rather than surfacing it.
-    const scope = isAggregate ? [...descendantIds(all, goalId)] : [goalId];
+    const scope = isAggregate ? (await this.goals.subtreeIds(ctx.userId, goalId)).filter((id) => id !== goalId) : [goalId];
     const rows = scope.length === 0 ? [] : await this.items.listOpenByGoals(ctx.userId, scope);
     return { items: await this.viewsOf(ctx, rows), isAggregate };
   }
@@ -430,19 +506,25 @@ export class BacklogService {
       });
     }
 
-    const target = await this.resolveConversionTarget(ctx, item, input.goalId);
+    // R-backlog-26 — the conversion names a TARGET WEEK, and the receiving goal is the Weekly goal at or
+    // under the item's goal whose `periodKey` is that week. `week` may not be in the past (the schema
+    // pins `>= 0`, and R-goal-36 is the reason).
+    const weekStart = weekStartFromOffset(ctx.currentWeekStart, input.week);
+    const resolved = await this.resolveConversionTarget(ctx, item, weekStart, input.goalId, input.newWeeklyGoal);
     const itemLinks = await this.links.listByItems(ctx.userId, [item.id]);
 
     const built = buildTaskWrites(
       ctx,
       { ids: this.ids, tasks: this.tasks, taskLinks: this.taskLinks, taskEvents: this.taskEvents },
       {
-        goalId: target.id,
+        goalId: resolved.goal.id,
         title: input.title ?? item.title,
         cond: input.cond,
         description: item.description,
         links: itemLinks.map((l) => l.url),
         source: 'backlog',
+        // R-task-40 — from the receiving Weekly goal's own week, never from "today".
+        originWeekStart: resolved.goal.periodKey,
         detail: { backlogItemId: item.id },
       },
     );
@@ -456,9 +538,11 @@ export class BacklogService {
       version: item.version + 1,
     };
 
-    // ONE batch: the task, its links, its `created` event, and the item's conversion. Either all of it
-    // happened or none of it did — there is no state in which a task exists and the item is still open.
+    // ONE batch: the Weekly goal when the sheet created one (R-task-48), the task, its links, its
+    // `created` event, and the item's conversion. Either all of it happened or none of it did — there is
+    // no state in which a task exists and the item is still open.
     await this.batch.run([
+      ...(resolved.created ? [{ label: 'goal.insertForConversion', stmt: this.goals.insertStmt(resolved.created) }] : []),
       ...built.writes,
       {
         label: 'backlogItem.markConverted',
@@ -472,54 +556,118 @@ export class BacklogService {
     ]);
 
     return {
-      task: toNewTaskDetailView(built),
+      task: toNewTaskDetailView(built, ctx.currentWeekStart),
       item: toBacklogItemView(converted, itemLinks),
+      goal: resolved.created ? toGoalView(resolved.created) : null,
       serverNow: ctx.now,
     };
   }
 
   /**
-   * R-backlog-7 / R-backlog-8 / D-18 — which ACTIVE leaf receives the task.
+   * ⚠ **A2 (R-backlog-26)** — **which WEEKLY GOAL receives the task.**
    *
-   * Exactly one candidate → use it. Two or more → `AMBIGUOUS_CONVERSION_TARGET` and the user chooses: the mockup took
-   * whichever came first in array order, and that id decides which focus the task belongs to for the
-   * rest of its life. None → `BRANCH_NOT_ACTIVE`, which is what the client turns into the
-   * "This branch isn't active this week" sheet — and, critically, the SERVER's answer, so a conversion
-   * submitted directly is refused too (S-backlog-8-3).
+   * The rule kept its shape and changed its subject: it used to resolve "the ACTIVE LEAF at or under the
+   * item's goal", read against a `weekly_focus` row for today. It now resolves the **Weekly goal at or
+   * under the item's goal whose `periodKey` is the TARGET WEEK** — one recursive descent bounded by that
+   * goal's subtree, rather than `activeLeavesUnder` over the whole goal table (R-lens-27).
+   *
+   *  - **exactly one** → used silently.
+   *  - **two or more** → `AMBIGUOUS_CONVERSION_TARGET` with `details.candidates`, and the owner chooses.
+   *    D-18's ruling is untouched: the mockup took whichever came first in array order, and that id
+   *    decides which week the task belongs to for the rest of its life. **Array order is not a decision.**
+   *  - **none** → `NO_WEEKLY_GOAL` (replacing `BRANCH_NOT_ACTIVE`), unless the caller supplied
+   *    `newWeeklyGoal`, in which case one is created in the SAME transaction (R-task-48). That is what
+   *    retires the `This branch isn't active this week` dead end entirely: there is no longer a state in
+   *    which a backlog item cannot become work, because the thing it needed to hang off is created for it.
+   *
+   * The refusal is the SERVER's, so a conversion submitted directly is refused too — the client prompt is
+   * never the only guard (S-backlog-26-2).
    */
-  private async resolveConversionTarget(ctx: RequestContext, item: BacklogItem, requested?: string): Promise<Goal> {
-    const all = await this.goals.listAll(ctx.userId);
-    const focused = new Set((await this.focuses.listByWeek(ctx.userId, ctx.currentWeekStart)).map((f) => f.goalId));
-    const candidates = activeLeavesUnder(all, item.goalId, focused);
+  private async resolveConversionTarget(
+    ctx: RequestContext,
+    item: BacklogItem,
+    weekStart: string,
+    requested?: string,
+    inline?: { parentId: string; title: string },
+  ): Promise<{ goal: Goal; created: Goal | null }> {
+    const candidates = await this.goals.weeklyUnderForWeek(ctx.userId, item.goalId, weekStart);
 
-    if (candidates.length === 0) {
-      throw new DomainError('BRANCH_NOT_ACTIVE', `"${item.title}" can only become a task under an active weekly focus`, {
+    if (requested !== undefined) {
+      const chosen = candidates.find((g) => g.id === requested);
+      if (chosen) return { goal: chosen, created: null };
+      // R-auth-3 — a goal that is not the caller's is indistinguishable from one that does not exist.
+      const goal = await this.goals.findById(ctx.userId, requested);
+      if (!goal) throw notFound('goal');
+      throw new DomainError('NO_WEEKLY_GOAL', 'that goal is not a weekly goal at or under this item for that week', {
         itemId: item.id,
-        goalId: item.goalId,
-        weekStart: ctx.currentWeekStart,
-      });
-    }
-    if (requested === undefined) {
-      if (candidates.length === 1) return candidates[0]!;
-      // R-backlog-7 / D-18 — not a validation failure: the input was fine, the product has no single
-      // answer. Its own code so the client can branch on `error.code` and render a chooser rather than a
-      // field error; `details.candidates` is what the chooser lists.
-      throw new DomainError('AMBIGUOUS_CONVERSION_TARGET', 'more than one active focus can receive this item — choose one', {
-        itemId: item.id,
+        goalId: requested,
+        weekStart,
         candidates: candidates.map((g) => ({ id: g.id, title: g.title })),
       });
     }
 
-    const chosen = candidates.find((g) => g.id === requested);
-    if (chosen) return chosen;
-    // R-auth-3 — a goal that is not the caller's is indistinguishable from one that does not exist.
-    const goal = all.find((g) => g.id === requested);
-    if (!goal) throw notFound('goal');
-    throw new DomainError('BRANCH_NOT_ACTIVE', 'that goal is not an active weekly focus at or under this item', {
-      itemId: item.id,
-      goalId: requested,
-      candidates: candidates.map((g) => ({ id: g.id, title: g.title })),
-    });
+    if (candidates.length === 1) return { goal: candidates[0]!, created: null };
+    if (candidates.length > 1) {
+      // Not a validation failure: the input was fine, the product has no single answer. Its own code so
+      // the client can branch on `error.code` and render a chooser rather than a field error.
+      throw new DomainError('AMBIGUOUS_CONVERSION_TARGET', 'more than one weekly goal can receive this item — choose one', {
+        itemId: item.id,
+        weekStart,
+        candidates: candidates.map((g) => ({ id: g.id, title: g.title })),
+      });
+    }
+
+    if (!inline) {
+      throw new DomainError('NO_WEEKLY_GOAL', `"${item.title}" becomes a task under a weekly goal, and there is none for that week`, {
+        itemId: item.id,
+        goalId: item.goalId,
+        weekStart,
+      });
+    }
+    // Minted ONCE: `goal` and `created` are the same row. It is returned twice so the caller can both
+    // hang the task off it and tell the owner it was created — nothing may be created invisibly
+    // (R-task-49) — without minting a second id.
+    const created = await this.mintWeeklyGoal(ctx, inline, weekStart);
+    return { goal: created, created };
+  }
+
+  /**
+   * R-task-48 — the inline `New weekly goal` the refusal sheet offers instead of sending the owner away.
+   *
+   * The parent must be able to hold a Weekly child (R-goal-31/32) and the week must not be past
+   * (R-goal-36): this path may not be a way around a rule the ordinary create enforces.
+   */
+  private async mintWeeklyGoal(
+    ctx: RequestContext,
+    input: { parentId: string; title: string },
+    weekStart: string,
+  ): Promise<Goal> {
+    const parent = await this.goals.findById(ctx.userId, input.parentId);
+    if (!parent) throw notFound('goal');
+    if (parent.horizon === 'Weekly') {
+      throw new DomainError('HORIZON_CONFLICT', 'a weekly goal cannot sit under a weekly goal', {
+        parentHorizon: parent.horizon,
+        childHorizon: 'Weekly',
+      });
+    }
+    if (isPastPeriod('Weekly', weekStart, dateInTimezone(ctx.now, ctx.tz))) {
+      throw new DomainError('PERIOD_IN_PAST', 'a weekly goal cannot be created into a week that has passed', { weekStart });
+    }
+    const now = this.clock.nowIso();
+    return {
+      id: this.ids.ulid(),
+      userId: ctx.userId,
+      parentId: parent.id,
+      horizon: 'Weekly',
+      title: input.title,
+      why: '',
+      pulse: 'On track',
+      periodKey: weekStart,
+      period: labelOf('Weekly', weekStart),
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
   }
 
   private async requireGoal(ctx: RequestContext, id: string): Promise<Goal> {

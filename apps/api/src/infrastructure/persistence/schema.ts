@@ -120,9 +120,13 @@ export const preferences = sqliteTable('preferences', {
 });
 
 /**
- * R-goal-1 — the goal tree as an ADJACENCY LIST. No materialised path, no closure table: the tree is at
- * most 500 nodes and 4 levels deep (Q-12, R-goal-7), so `domain/goal-tree.ts` derives every relationship
- * in memory from one `listAll`. That keeps "descendant" defined in exactly one place.
+ * R-goal-1 — the goal tree as an ADJACENCY LIST. No materialised path, no closure table.
+ *
+ * ⚠ **A2 (R-lens-27)** — the old comment here said the tree is "at most 500 nodes and 4 levels deep, so
+ * `domain/goal-tree.ts` derives every relationship in memory from one `listAll`". That premise was
+ * measured and found false, and `listAll` is now DELETED. Reads are period-scoped (`ix_goals_lens`), the
+ * walk that remains reads only the INTERIOR tree, and the guards read one row or one recursive-CTE
+ * subtree.
  *
  * `parent_id` has no FK to itself on purpose: D1 applies FKs per statement, and the subtree cascade
  * (Q-5) deletes parents and children in one batched DELETE. Referential integrity is held by the
@@ -136,11 +140,27 @@ export const goals = sqliteTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     parentId: text('parent_id'),
+    /**
+     * ⚠ **A2 (R-goal-30)** — five members now. Drizzle's `enum` is TypeScript-only: SQLite stores it as
+     * TEXT with no CHECK constraint, so adding `'Weekly'` needs **no DDL** (verified against the
+     * generated snapshot). The migration therefore adds a column and an index and drops a table, and
+     * touches this column not at all.
+     */
     horizon: text('horizon', { enum: HORIZONS }).notNull(),
     title: text('title').notNull(),
     why: text('why').notNull().default(''),
     pulse: text('pulse', { enum: PULSES }).notNull().default('On track'),
-    /** R-goal-13 — always `''` for a Life goal. */
+    /**
+     * ⚠ **A2, new (R-goal-33)** — the canonical period key every lens filters on:
+     * `2026` / `2026-Q3` / `2026-09` / a Monday `2026-09-07`, and `''` for a Life goal.
+     *
+     * It replaces free-text `period` as the identity of a period, because a lens must PARTITION a
+     * horizon's goals and free text partitions nothing. Its lexicographic order is chronological, which
+     * is what makes R-goal-47's `BETWEEN` range read and R-lens-26's `>` probe index seeks rather than
+     * scans.
+     */
+    periodKey: text('period_key').notNull().default(''),
+    /** ⚠ **A2 (R-goal-33)** — now the derived LABEL of `period_key`. `''` for a Life goal. */
     period: text('period').notNull().default(''),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
@@ -148,44 +168,45 @@ export const goals = sqliteTable(
     version: integer('version').notNull().default(1),
   },
   (t) => [
-    // Q-7 — the stable sibling order (`created_at`, then `id`) is served straight off this index.
+    // Q-7 — the stable sibling order (`created_at`, then `id`) is served straight off this index. It
+    // still serves the interior walk's `parent_id` lookups; it CANNOT serve a lens read, because
+    // `parent_id` sits between the equality column and the sort keys.
     index('ix_goals_owner_parent').on(t.userId, t.parentId, t.createdAt, t.id),
+    /**
+     * ⚠ **A2, new (R-lens-27)** — **the index the whole read strategy turns on.**
+     *
+     * `(user_id, horizon, period_key, created_at, id)` serves, as an exact-prefix match with the sort
+     * keys already in place and no filesort:
+     *   - every lens read (R-lens-16) — one seek, `LIMIT 201`;
+     *   - the Zoom sheet's five counts (R-lens-22) — four seeks, ONE grouped query, never five reads;
+     *   - R-goal-47's planned-ness scope — a `period_key BETWEEN <first Monday> AND <last Monday>` range
+     *     scan about five weeks wide;
+     *   - R-lens-26's "does any later period hold a goal" — a `period_key > ?` probe, `LIMIT 1`;
+     *   - the interior tree read — four horizon seeks;
+     *   - the per-week Weekly-goal cap (Q-12) — a `COUNT(*)` on the exact prefix.
+     *
+     * **`period_key` before `created_at` is what makes the ordering free.** Reordering these columns
+     * turns every read above into a scan.
+     */
+    index('ix_goals_lens').on(t.userId, t.horizon, t.periodKey, t.createdAt, t.id),
   ],
 );
 
-/**
- * D-2 — one focus sentence per non-Life leaf per WEEK. The mockup kept a mutable string on the goal,
- * which has no week dimension: this week's plan destroyed last week's, and a past week could never be
- * rendered truthfully.
+/*
+ * ⚠ **A2 (R-rm-2)** — the `weekly_focus` table is **DROPPED**, with `ux_weekly_focus_goal_week` and
+ * `ix_weekly_focus_week`. A weekly intent is now an ordinary goal with `horizon = 'Weekly'`, and several
+ * under one parent is how a week holds several intentions.
  *
- * A row exists ONLY while the leaf is active in that week. Unchecking DELETES the row rather than
- * storing `''` (§1 WeeklyFocus), so "active" is exactly "a row exists" (R-goal-9) and there is no
- * second, contradictory representation of dormancy.
+ * **Rows are not converted into Weekly goals, and this is the one decision that cannot be undone.**
+ * Converting them would manufacture history — goals claiming to have existed in past weeks, which
+ * R-lens-10 forbids on principle. Past weeks therefore lose their focus sentences and render their tasks
+ * (owner decision, spec-delta §4 Q-2). The single exception is the migration itself, which READS a
+ * sentence to TITLE the Weekly goal it must mint to keep an existing task legal — the sentence is read to
+ * keep *work* legal, not to reconstruct a plan.
  */
-export const weeklyFocus = sqliteTable(
-  'weekly_focus',
-  {
-    id: text('id').primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    goalId: text('goal_id').notNull(),
-    /** ISO date of the week's Monday. */
-    weekStart: text('week_start').notNull(),
-    sentence: text('sentence').notNull(),
-    createdAt: text('created_at').notNull(),
-    updatedAt: text('updated_at').notNull(),
-  },
-  (t) => [
-    // §1 — unique on (owner, goal, week). Two focuses for one leaf in one week is not a state.
-    uniqueIndex('ux_weekly_focus_goal_week').on(t.userId, t.goalId, t.weekStart),
-    // The plan read for one week, and the active-leaf set that read produces.
-    index('ix_weekly_focus_week').on(t.userId, t.weekStart),
-  ],
-);
 
 /**
- * R-task-1 — a task under an active leaf's weekly focus.
+ * ⚠ **A2 (R-task-39)** — a task under a **Weekly goal**, and under nothing else.
  *
  * `status` is what makes D-15 work: Move-to-Backlog and Cancel set a terminal status and keep the row,
  * because the `Moved to Backlog` / `Canceled` timeline entries the ruleset requires — and the optional
@@ -207,7 +228,12 @@ export const tasks = sqliteTable(
     cond: text('cond').notNull().default(''),
     description: text('description').notNull().default(''),
     status: text('status', { enum: TASK_STATUSES }).notNull().default('open'),
-    /** R-task-5 — the current week at creation. Immutable for the life of the task. */
+    /**
+     * ⚠ **A2 (R-task-40)** — the task's OWN week, seeded once from its Weekly parent's `period_key` and
+     * immutable for the life of the task. It is never re-derived from the parent: a week that is looked
+     * up rather than recorded changes meaning without a write (D-1). No join to `goals` is needed by any
+     * week-scoped read, which is why `ix_tasks_open_week` still serves them all.
+     */
     originWeekStart: text('origin_week_start').notNull(),
     /** R-task-14/19 — set on complete, cleared on uncheck. `done` is derived from it, never stored. */
     doneWeekStart: text('done_week_start'),
@@ -464,7 +490,6 @@ export const schema = {
   accountRelations,
   preferences,
   goals,
-  weeklyFocus,
   tasks,
   taskLinks,
   taskEvents,

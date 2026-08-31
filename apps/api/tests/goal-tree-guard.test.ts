@@ -28,6 +28,7 @@ async function makeGoal(userId: string, horizon: Horizon, parentId: string | nul
     title: `${horizon} goal`,
     why: '',
     pulse: 'On track',
+    periodKey: '',
     period: '',
     createdAt: now,
     updatedAt: now,
@@ -174,40 +175,53 @@ describe('R-goal-17/18/21 — move is guarded on the server', () => {
   });
 });
 
-describe('R-goal-28 / D-8 — a leaf carrying open tasks cannot silently become a parent', () => {
-  it('creating a sub-goal under it → 409 GOAL_HAS_OPEN_TASKS, with the count in details', async () => {
+/**
+ * RETIRED - "a leaf carrying open tasks cannot silently become a parent" (R-goal-28, D-8), refused with
+ * `GOAL_HAS_OPEN_TASKS`.
+ *
+ * **R-goal-42 makes the whole transition UNREACHABLE**, so the guard is deleted rather than left in
+ * place doing nothing: only WEEKLY goals hold tasks (R-goal-39), and a Weekly goal can never gain a
+ * child (R-goal-31, it is terminal). Adding a child to a goal, or moving a goal under it, now moves
+ * nothing, deletes nothing and refuses nothing - "the one place the redesign removes a class of defect
+ * outright rather than relocating it".
+ *
+ * The code is gone from `ERROR_STATUS` too (S-rm-2-1), so this asserts the SUCCESS that used to be a
+ * refusal - the strongest form the retirement can take.
+ */
+describe('S-goal-42-1 - the leaf-to-parent refusal is unreachable, and the code does not exist', () => {
+  it('a goal carrying open tasks... cannot exist unless it is Weekly, and Weekly cannot gain a child', async () => {
     const { cookie, userId } = await signedInOwner(t);
-    const { quarterly } = await makeLine(userId);
-    const leaf = await makeGoal(userId, 'Monthly', quarterly.id);
-    await makeOpenTask(userId, leaf.id);
+    const { monthly } = await makeLine(userId);
+    const weekly = await makeGoal(userId, 'Weekly', monthly.id);
+    await makeOpenTask(userId, weekly.id);
 
-    // Monthly is terminal, so use a Quarterly leaf for the create case.
-    const q2 = await makeGoal(userId, 'Quarterly', (await makeGoal(userId, 'Yearly', (await makeGoal(userId, 'Life', null)).id)).id);
-    await makeOpenTask(userId, q2.id);
-
-    const res = await create(cookie, { title: 'child', horizon: 'Monthly', parentId: q2.id });
+    // The only goal that can hold work is terminal, so the transition has no representable input.
+    const res = await create(cookie, { title: 'child', horizon: 'Weekly', parentId: weekly.id });
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: { code: string; details?: { openTasks?: number } } };
-    expect(body.error.code).toBe('GOAL_HAS_OPEN_TASKS');
-    expect(body.error.details?.openTasks).toBe(1);
+    expect(await codeOf(res)).toBe('HORIZON_CONFLICT');
   });
 
-  it('moving a goal under it is refused the same way', async () => {
+  it('giving a goal its FIRST child succeeds even while work is open below it', async () => {
     const { cookie, userId } = await signedInOwner(t);
-    const life = await makeGoal(userId, 'Life', null);
-    const targetLeaf = await makeGoal(userId, 'Yearly', life.id);
-    await makeOpenTask(userId, targetLeaf.id);
-    const other = await makeLine(userId);
+    const { monthly, quarterly } = await makeLine(userId);
+    const weekly = await makeGoal(userId, 'Weekly', monthly.id);
+    await makeOpenTask(userId, weekly.id);
 
-    const res = await move(cookie, other.quarterly.id, targetLeaf.id);
-    expect(res.status).toBe(409);
-    expect(await codeOf(res)).toBe('GOAL_HAS_OPEN_TASKS');
-  });
-
-  it('a goal that ALREADY has children is unaffected — the rule is about the leaf → non-leaf transition', async () => {
-    const { cookie, userId } = await signedInOwner(t);
-    const { quarterly, monthly } = await makeLine(userId);
-    await makeOpenTask(userId, monthly.id); // the task is on the leaf, not on the parent
+    // The old rule fired here. Nothing is re-homed, nothing is deleted, nothing is refused.
     expect((await create(cookie, { title: 'sibling', horizon: 'Monthly', parentId: quarterly.id })).status).toBe(201);
+    const fresh = await makeGoal(userId, 'Monthly', quarterly.id);
+    expect((await create(cookie, { title: 'first child', horizon: 'Weekly', parentId: fresh.id })).status).toBe(201);
+  });
+
+  it('S-rm-2-1 - and a MOVE under a goal with open work below it is not refused either', async () => {
+    const { cookie, userId } = await signedInOwner(t);
+    const a = await makeLine(userId);
+    const aWeekly = await makeGoal(userId, 'Weekly', a.monthly.id);
+    await makeOpenTask(userId, aWeekly.id);
+    const b = await makeLine(userId);
+
+    expect((await move(cookie, b.quarterly.id, a.yearly.id)).status).toBe(200);
+    const { ERROR_CODES } = await import('@goal-cascade/shared');
+    expect(ERROR_CODES as readonly string[]).not.toContain('GOAL_HAS_OPEN_TASKS');
   });
 });

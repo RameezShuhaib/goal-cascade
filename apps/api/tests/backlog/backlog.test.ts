@@ -22,10 +22,10 @@ beforeAll(async () => {
   const owner = await signedInOwner(t);
   f = { t, userId: owner.userId, cookie: owner.cookie };
   life = (await seedGoal(f, { parentId: null, horizon: 'Life', title: 'Health' })).id;
-  yearly = (await seedGoal(f, { parentId: life, horizon: 'Yearly', title: 'Run a marathon', period: '2026' })).id;
-  quarterly = (await seedGoal(f, { parentId: yearly, horizon: 'Quarterly', title: 'Base miles', period: 'Q3 2026' })).id;
-  monthly = (await seedGoal(f, { parentId: quarterly, horizon: 'Monthly', title: 'Long runs', period: 'Aug 2026' })).id;
-  otherMonthly = (await seedGoal(f, { parentId: quarterly, horizon: 'Monthly', title: 'Strength', period: 'Aug 2026' })).id;
+  yearly = (await seedGoal(f, { parentId: life, horizon: 'Yearly', title: 'Run a marathon', periodKey: '2026' })).id;
+  quarterly = (await seedGoal(f, { parentId: yearly, horizon: 'Quarterly', title: 'Base miles', periodKey: '2026-Q3' })).id;
+  monthly = (await seedGoal(f, { parentId: quarterly, horizon: 'Monthly', title: 'Long runs', periodKey: '2026-08' })).id;
+  otherMonthly = (await seedGoal(f, { parentId: quarterly, horizon: 'Monthly', title: 'Strength', periodKey: '2026-08' })).id;
 });
 
 const post = (path: string, json: unknown) =>
@@ -163,7 +163,7 @@ describe('backlog capture and listing', () => {
 
   it('S-backlog-12-2 — a Life line with no items anywhere below it aggregates to nothing', async () => {
     const emptyLife = await seedGoal(f, { parentId: null, horizon: 'Life', title: 'Craft' });
-    await seedGoal(f, { parentId: emptyLife.id, horizon: 'Yearly', title: 'Learn woodworking', period: '2026' });
+    await seedGoal(f, { parentId: emptyLife.id, horizon: 'Yearly', title: 'Learn woodworking', periodKey: '2026' });
     expect((await listBacklog(emptyLife.id)).items).toEqual([]);
   });
 

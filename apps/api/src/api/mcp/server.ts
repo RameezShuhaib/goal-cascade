@@ -7,7 +7,6 @@ import { registerAccountTools } from './tools/account';
 import { registerBacklogTools } from './tools/backlog';
 import { registerCaptureTools } from './tools/capture';
 import { registerGoalTools } from './tools/goals';
-import { registerPlanTools } from './tools/plan';
 import { registerTaskTools } from './tools/tasks';
 
 export const MCP_SERVER_NAME = 'goal-cascade';
@@ -40,13 +39,13 @@ export function createMcpServer(deps: McpDeps): McpServer {
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
     {
       // The single highest-leverage string in this feature: it is what teaches a connecting agent the
-      // horizon hierarchy, the leaf/active/dormant model, the week model and the three task exits.
+      // five horizons, that only Weekly goals hold tasks, the period and week models, carrying, and the
+      // three task exits. ⚠ A2 rewrote it in full — see `instructions.ts` for what became false.
       instructions: SERVER_INSTRUCTIONS,
     },
   );
 
   registerGoalTools(server, deps);
-  registerPlanTools(server, deps);
   registerTaskTools(server, deps);
   registerBacklogTools(server, deps);
   registerCaptureTools(server, deps);

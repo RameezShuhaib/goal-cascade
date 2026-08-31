@@ -87,11 +87,22 @@ describe('zQuery — query params', () => {
     expect(((await res.json()) as { week: { offset: number } }).week.offset).toBe(-2);
   });
 
-  it('R-nav-3 / S-nav-3-1 — a FUTURE week is refused, by the schema, before any handler runs', async () => {
+  /**
+   * SUPERSEDED - "a FUTURE week is refused, by the schema, before any handler runs" encoded R-nav-3.
+   * R-lens-7 supersedes it: any future period is reachable and writable, and the forward chevron is
+   * never disabled. It is INVERTED rather than deleted, because the widening is a SILENT break - the
+   * guard that actually mattered (you cannot COMPLETE work in a week that has not happened) is now
+   * explicit on `CompleteTaskRequest.week`, and this is where its absence would have gone unnoticed.
+   */
+  it('S-lens-7-3 / S-rm-3-1 - a FUTURE week is an ordinary read, in either direction', async () => {
     const { cookie } = await signedInOwner(t);
-    const res = await t.fetch('/api/tasks?week=1', { cookie });
-    expect(res.status).toBe(422);
-    expect((await err(res)).error.code).toBe('VALIDATION_FAILED');
+    for (const week of [1, 20, 400]) {
+      const res = await t.fetch(`/api/tasks?week=${week}`, { cookie });
+      expect(res.status, `week=${week}`).toBe(200);
+      expect(((await res.json()) as { week: { offset: number } }).week.offset).toBe(week);
+    }
+    // What remains is the absolute storage range, which is not a product rule.
+    expect((await t.fetch('/api/tasks?week=600', { cookie })).status).toBe(422);
   });
 
   it('a non-numeric week is refused rather than silently becoming 0', async () => {
@@ -104,13 +115,19 @@ describe('zQuery — query params', () => {
     expect((await t.fetch('/api/tasks?week=0&sneaky=1', { cookie })).status).toBe(422);
   });
 
-  it('R-nav-4 / D-24 — reaching past the switcher’s bound is WEEK_OUT_OF_RANGE, not an empty week', async () => {
+  /**
+   * SUPERSEDED - the 8-week history window was D-24's shared bound for two controls. R-rm-3 retires
+   * `WEEK_HISTORY_WEEKS` as a bound and R-lens-7 removes the backward clamp entirely: there is no picker
+   * to enumerate (R-lens-17), greying out one chevron would cost a `MIN(period_key)` probe per render,
+   * and a bound in ONE direction rebuilds exactly the asymmetry D-24 was about. D-24 is now satisfied by
+   * construction - one control per dimension, so no two controls can disagree about a range.
+   */
+  it('S-lens-7-3 - reaching further back than the old window is an ordinary read', async () => {
     const { cookie } = await signedInOwner(t);
-    const res = await t.fetch('/api/tasks?week=-9', { cookie });
-    expect(res.status).toBe(422);
-    expect((await err(res)).error.code).toBe('WEEK_OUT_OF_RANGE');
-    // the last week INSIDE the bound is fine (200 now that `TaskService` answers; it was 501 as a stub)
-    expect((await t.fetch('/api/tasks?week=-7', { cookie })).status).toBe(200);
+    for (const week of [-8, -9, -52, -400]) {
+      expect((await t.fetch(`/api/tasks?week=${week}`, { cookie })).status, `week=${week}`).toBe(200);
+    }
+    expect((await t.fetch('/api/tasks?week=-600', { cookie })).status).toBe(422);
   });
 });
 

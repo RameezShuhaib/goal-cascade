@@ -2,7 +2,7 @@ import type { MoveTaskToBacklogResponse, TaskResponse } from '@goal-cascade/shar
 import { beforeEach, describe, expect, it } from 'vitest';
 import { IBacklogLinkRepo, IBacklogRepo, ITaskRepo } from '../../src/application/ports';
 import { createTestApp, signedInOwner } from '../helpers/app';
-import { activate, codeOf, command, detail, kinds, listWeek, makeLine, seedTask, texts } from './helpers';
+import { codeOf, command, detail, kinds, listWeek, makeLine, seedTask, texts } from './helpers';
 
 /**
  * The three exits and the uncheck — R-task-13..21, D-15.
@@ -21,12 +21,14 @@ beforeEach(() => at(MON.aug31));
 
 async function openTask(originWeek: string = MON.aug31, body: Record<string, unknown> = {}) {
   const { cookie, userId } = await signedInOwner(t);
-  const { leaf } = await makeLine(t, userId);
   at(originWeek);
-  await activate(t, userId, leaf.id, originWeek);
+  // ⚠ **A2** — a task hangs off a WEEKLY goal (R-goal-39), and takes ITS week (R-task-40). There is
+  // nothing to "activate": a week's intention IS a goal, so the arrange step is a Weekly goal for
+  // `originWeek`, created at that week's clock because a past week refuses new tasks (R-task-41).
+  const { life, monthly, weekly: leaf } = await makeLine(t, userId, originWeek);
   const task = await seedTask(t, cookie, { goalId: leaf.id, title: 'ship the thing', ...body });
   at(MON.aug31);
-  return { cookie, userId, leaf, task };
+  return { cookie, userId, life, monthly, leaf, task };
 }
 
 describe('R-task-14 — exit 1 of 3: complete', () => {
@@ -62,8 +64,18 @@ describe('R-task-14 — exit 1 of 3: complete', () => {
 });
 
 describe('R-task-15 — exit 2 of 3: move to backlog', () => {
-  it('S-task-15-1 — the item lands on the task’s own goal with title, description, links and fromWeek', async () => {
-    const { cookie, userId, leaf, task } = await openTask(MON.aug24, {
+  /**
+   * SUPERSEDED — the old title read "the item lands on the task's OWN goal". ⚠ **A2 (R-backlog-29)**
+   * that goal is now a **Weekly** goal, which may hold no backlog items (R-backlog-2), so the item lands
+   * on its nearest **non-Weekly ancestor** — normally the Monthly parent.
+   *
+   * This was a direct contradiction between R-task-15 and R-backlog-2 introduced by the redesign, and it
+   * is the kind a review does not catch because both rules read fine alone. It is also the semantic
+   * answer rather than merely the legal one: "move to backlog" means *not this week*, so the item must
+   * LEAVE the week — landing it on the week it is escaping would be a no-op wearing an exit's clothes.
+   */
+  it('S-backlog-29-1 — the item lands on the nearest NON-WEEKLY ancestor, with everything carried over', async () => {
+    const { cookie, userId, monthly, leaf, task } = await openTask(MON.aug24, {
       description: 'the long version',
       links: ['https://www.github.com/acme/pr/1'],
     });
@@ -72,7 +84,8 @@ describe('R-task-15 — exit 2 of 3: move to backlog', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as MoveTaskToBacklogResponse;
 
-    expect(body.item.goalId).toBe(leaf.id);
+    expect(body.item.goalId).toBe(monthly.id);
+    expect(body.item.goalId).not.toBe(leaf.id);
     expect(body.item.title).toBe('ship the thing');
     expect(body.item.description).toBe('the long version');
     expect(body.item.links.map((l) => l.url)).toEqual(['https://www.github.com/acme/pr/1']);
@@ -167,8 +180,7 @@ describe('R-task-19/20/21 — uncheck', () => {
     // origin −4, completed in week −3, unchecked while viewing week −3 (the mockup's exact scenario).
     at(MON.aug10);
     const { cookie, userId } = await signedInOwner(t);
-    const { leaf } = await makeLine(t, userId);
-    await activate(t, userId, leaf.id, MON.aug10);
+    const { weekly: leaf } = await makeLine(t, userId, MON.aug10);
     const task = await seedTask(t, cookie, { goalId: leaf.id, title: 'four weeks old' });
     at(MON.aug17);
     await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: 0 });

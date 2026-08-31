@@ -16,8 +16,8 @@ beforeAll(async () => {
   f = { t, userId: owner.userId, cookie: owner.cookie };
   lineA = (await seedGoal(f, { parentId: null, horizon: 'Life', title: 'Health' })).id;
   lineB = (await seedGoal(f, { parentId: null, horizon: 'Life', title: 'Craft' })).id;
-  const yearly = (await seedGoal(f, { parentId: lineA, horizon: 'Yearly', title: 'Marathon', period: '2026' })).id;
-  monthly = (await seedGoal(f, { parentId: yearly, horizon: 'Monthly', title: 'Long runs', period: 'Aug 2026' })).id;
+  const yearly = (await seedGoal(f, { parentId: lineA, horizon: 'Yearly', title: 'Marathon', periodKey: '2026' })).id;
+  monthly = (await seedGoal(f, { parentId: yearly, horizon: 'Monthly', title: 'Long runs', periodKey: '2026-08' })).id;
 });
 
 const post = (path: string, json: unknown) =>

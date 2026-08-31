@@ -26,16 +26,23 @@ import { resolveWeek } from '../week';
  * There are EXACTLY three exits (R-task-13): complete, move-to-backlog, cancel. There is no defer, no
  * snooze, no reschedule, and no move-to-another-week endpoint — S-task-13-1 requires that no such
  * operation exists, so do not add one here.
+ *
+ * ⚠ **A2 (R-rm-5)** — the Tasks SCREEN is gone; this read is not. It is the Weekly lens's data source
+ * (R-lens-12), and `POST /tasks` now takes **no week at all**: `originWeekStart` is seeded from the
+ * Weekly parent's `periodKey` (R-task-40), and `newWeeklyGoal` creates that parent in the same
+ * transaction when there is none (R-task-48).
  */
 export const tasksRoutes = new Hono<AppBindings>()
   .get(E.tasks, zQuery(TasksQuery), async (c) => {
     const q = query(c, TasksQuery);
     const week = resolveWeek(ctx(c), q.week);
+    // ⚠ **A2 (R-rm-4)** — no `goalId`. There are no filter pills, and no lens read accepts a goal filter
+    // of any kind (R-lens-15): grouping by Life goal is the whole answer, and it is the server's job.
     return c.json(
       await c
         .get('container')
         .resolve(TaskService)
-        .list(ctx(c), { weekStart: week.weekStart, ...(q.goalId ? { goalId: q.goalId } : {}) }),
+        .list(ctx(c), { weekStart: week.weekStart, ...(q.limit !== undefined ? { limit: q.limit } : {}) }),
     );
   })
 

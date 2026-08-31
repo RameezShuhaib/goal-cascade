@@ -17,7 +17,6 @@ import {
   ITaskLinkRepo,
   ITaskRepo,
   IUserRepo,
-  IWeeklyFocusRepo,
 } from '../../application/ports';
 import {
   ApiTokenService,
@@ -28,7 +27,6 @@ import {
   GuardedBatch,
   LearningService,
   MeService,
-  PlanService,
   ProvisionUserService,
   TaskService,
 } from '../../application/services';
@@ -50,7 +48,6 @@ import {
   D1TaskLinkRepo,
   D1TaskRepo,
   D1UserRepo,
-  D1WeeklyFocusRepo,
 } from '../persistence';
 import { createDb, type Db } from '../persistence/db';
 import { DB, ENV } from './tokens';
@@ -79,7 +76,6 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
   c.registerSingleton(IUserRepo, D1UserRepo);
   c.registerSingleton(IPreferencesRepo, D1PreferencesRepo);
   c.registerSingleton(IGoalRepo, D1GoalRepo);
-  c.registerSingleton(IWeeklyFocusRepo, D1WeeklyFocusRepo);
   c.registerSingleton(ITaskRepo, D1TaskRepo);
   c.registerSingleton(ITaskLinkRepo, D1TaskLinkRepo);
   c.registerSingleton(ITaskEventRepo, D1TaskEventRepo);
@@ -101,7 +97,6 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
   c.registerSingleton(GoalTreeGuard);
   c.registerSingleton(MeService);
   c.registerSingleton(GoalService);
-  c.registerSingleton(PlanService);
   c.registerSingleton(TaskService);
   c.registerSingleton(BacklogService);
   c.registerSingleton(LearningService);

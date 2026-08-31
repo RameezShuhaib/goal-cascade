@@ -1,20 +1,30 @@
-import type { TaskDetailResponse, TaskResponse, TasksResponse } from '@goal-cascade/shared';
-import { IGoalRepo, IWeeklyFocusRepo } from '../../src/application/ports';
+import type { CreateTaskResponse, TaskDetailResponse, TaskResponse, TasksResponse } from '@goal-cascade/shared';
+import { IGoalRepo } from '../../src/application/ports';
 import { GuardedBatch } from '../../src/application/services';
-import type { Goal, WeeklyFocus } from '../../src/domain/entities';
+import type { Goal } from '../../src/domain/entities';
 import type { Horizon } from '../../src/domain/enums';
+import { labelOf } from '../../src/domain/periods';
 import { ids, type TestApp } from '../helpers/app';
 
 /**
  * Seeding for the task suite.
  *
- * Goals and weekly focuses are written through their REPOSITORY PORTS rather than through `GoalService`
- * or `PlanService`: those belong to other agents and are still stubs, and a task test that 501s because
- * a neighbouring feature is unfinished tests nothing. Tasks themselves are always driven over HTTP,
+ * Goals are written through their REPOSITORY PORT rather than over HTTP so a task test can arrange a
+ * PAST week, which R-goal-36 refuses through the product. Tasks themselves are always driven over HTTP,
  * through the real router — the week model is only meaningful end to end.
+ *
+ * ⚠ **A2** — `activate()` is gone with `weekly_focus` (R-rm-2). There is nothing to activate: a weekly
+ * intent IS a goal, and a task hangs off it because of its HORIZON (R-goal-39), never because a focus
+ * row exists. `makeWeek()` replaces it.
  */
 
-export async function makeGoal(t: TestApp, userId: string, horizon: Horizon, parentId: string | null): Promise<Goal> {
+export async function makeGoal(
+  t: TestApp,
+  userId: string,
+  horizon: Horizon,
+  parentId: string | null,
+  periodKey = '',
+): Promise<Goal> {
   const now = t.clock.nowIso();
   const goal: Goal = {
     id: ids.ulid(),
@@ -24,7 +34,8 @@ export async function makeGoal(t: TestApp, userId: string, horizon: Horizon, par
     title: `${horizon} goal`,
     why: '',
     pulse: 'On track',
-    period: '',
+    periodKey,
+    period: labelOf(horizon, periodKey),
     createdAt: now,
     updatedAt: now,
     version: 1,
@@ -34,25 +45,27 @@ export async function makeGoal(t: TestApp, userId: string, horizon: Horizon, par
   return goal;
 }
 
-/** A Life › Monthly line: the shortest legal tree with one focusable leaf. */
-export async function makeLine(t: TestApp, userId: string): Promise<{ life: Goal; leaf: Goal }> {
+/**
+ * A Life › Monthly › Weekly line: the shortest tree that can hold a task.
+ *
+ * ⚠ **A2** — the old version stopped at Monthly and called it "the shortest legal tree with one
+ * focusable leaf". That leaf is now precisely the goal that must NOT hold a task (R-goal-37,
+ * S-goal-37-1), so `monthly` is kept as the trap fixture and `weekly` is the target.
+ */
+export async function makeLine(
+  t: TestApp,
+  userId: string,
+  weekStart: string,
+): Promise<{ life: Goal; monthly: Goal; weekly: Goal }> {
   const life = await makeGoal(t, userId, 'Life', null);
-  const leaf = await makeGoal(t, userId, 'Monthly', life.id);
-  return { life, leaf };
+  const monthly = await makeGoal(t, userId, 'Monthly', life.id, weekStart.slice(0, 7));
+  const weekly = await makeGoal(t, userId, 'Weekly', monthly.id, weekStart);
+  return { life, monthly, weekly };
 }
 
-/**
- * D-2 — a leaf is ACTIVE in a week exactly while a `weekly_focus` row exists for it in that week. There
- * is no `active` flag to set, and a blank sentence is never stored.
- */
-export async function activate(t: TestApp, userId: string, goalId: string, weekStart: string, sentence = 'Ship the thing'): Promise<WeeklyFocus> {
-  const now = t.clock.nowIso();
-  const focus: WeeklyFocus = { id: ids.ulid(), userId, goalId, weekStart, sentence, createdAt: now, updatedAt: now };
-  const c = t.container();
-  await c
-    .resolve(GuardedBatch)
-    .run([{ label: 'focus.insert', stmt: c.resolve<IWeeklyFocusRepo>(IWeeklyFocusRepo).insertStmt(focus) }]);
-  return focus;
+/** One more Weekly goal in `weekStart` under `parentId` — how a week holds several intentions. */
+export function makeWeek(t: TestApp, userId: string, parentId: string, weekStart: string): Promise<Goal> {
+  return makeGoal(t, userId, 'Weekly', parentId, weekStart);
 }
 
 export const key = () => crypto.randomUUID().replace(/-/g, '');
@@ -61,9 +74,9 @@ export async function createTask(
   t: TestApp,
   cookie: string,
   body: Record<string, unknown>,
-): Promise<{ status: number; json: TaskResponse & { error?: { code: string } } }> {
+): Promise<{ status: number; json: CreateTaskResponse & { error?: { code: string } } }> {
   const res = await t.fetch('/api/tasks', { method: 'POST', cookie, idempotencyKey: key(), json: body });
-  return { status: res.status, json: (await res.json()) as TaskResponse & { error?: { code: string } } };
+  return { status: res.status, json: (await res.json()) as CreateTaskResponse & { error?: { code: string } } };
 }
 
 /** Creates a task and fails loudly if it was refused — the arrange step of most tests below. */
@@ -93,3 +106,5 @@ export const codeOf = async (res: Response) => ((await res.json()) as { error: {
 /** The event texts of a task's timeline, newest first. */
 export const texts = (d: TaskDetailResponse) => d.task.events.map((e) => e.text);
 export const kinds = (d: TaskDetailResponse) => d.task.events.map((e) => e.kind);
+
+export type { TaskResponse };

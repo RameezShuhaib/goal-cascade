@@ -1,39 +1,46 @@
 import {
   Horizon,
   OneLiner,
-  Period,
+  PeriodKey,
   Pulse,
   Reason,
   Title,
   Ulid,
   WeekOffset,
-  type GoalView,
+  WeekStart,
+  isPeriodKeyFor,
 } from '@goal-cascade/shared';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { BootstrapService, GoalService, GoalTreeGuard } from '../../../application/services';
 import { guard } from '../errors';
-import {
-  activeLeafCandidates,
-  goalOut,
-  isAmbiguous,
-  ok,
-  outline,
-  pathIndex,
-  rankGoals,
-  stampIdempotencyKey,
-  subtreeIds,
-  week,
-  weekOut,
-  type McpDeps,
-} from '../shapes';
+import { goalOut, isAmbiguous, lensOutline, ok, rankGoals, stampIdempotencyKey, week, weekOut, type McpDeps } from '../shapes';
 
 /**
- * The week input every read tool shares. `WeekOffset` is the repo's own schema (`z.int().max(0).min(-520)`
- * with a `.describe()`), reused verbatim — zod 4.5 exposes `~standard.jsonSchema`, so the SDK advertises
- * it without a conversion step and the bound cannot drift from the API's.
+ * The week input every week-scoped read tool shares. `WeekOffset` is the repo's own schema, reused
+ * verbatim — zod 4.5 exposes `~standard.jsonSchema`, so the SDK advertises it without a conversion step
+ * and the bound cannot drift from the API's.
+ *
+ * ⚠ **A2 (R-lens-7)** — that bound is now `±520`, the absolute storage range. A positive offset is
+ * ordinary: any future period is reachable and writable.
  */
 const WeekOffsetArg = WeekOffset.default(0);
+
+/**
+ * R-goal-33 — a canonical period key.
+ *
+ * The SHAPE is a `.refine()`, which zod → JSON Schema drops, so the model can only learn it from the
+ * prose. Every field that takes one therefore names all four shapes in its own description — a
+ * `.describe()` on the field REPLACES this one rather than appending to it, which is exactly the kind of
+ * silent loss the refinement test exists to catch.
+ */
+const PERIOD_KEY_SHAPES = '2026 (Yearly) | 2026-Q3 (Quarterly) | 2026-09 (Monthly) | a Monday 2026-09-07 (Weekly)';
+const PeriodKeyArg = PeriodKey.describe(PERIOD_KEY_SHAPES);
+
+/** R-goal-34 — a period as the surface shapes it: the canonical key AND its rendered label. */
+function periodOut(p: { periodKey: string; label: string; isCurrent: boolean; isPast: boolean; hasWork: boolean }) {
+  return { period_key: p.periodKey, label: p.label, is_current: p.isCurrent, is_past: p.isPast, has_work: p.hasWork };
+}
 
 export function registerGoalTools(server: McpServer, deps: McpDeps): void {
   const { dc, ctx } = deps;
@@ -44,11 +51,11 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'Overview of the whole account',
       description:
-        'Start here. Returns the owner\'s entire goal tree as an indented outline with ids and paths, the current week, which branches are active this week and their focus sentences, plus counts of open tasks, backlog items and learnings. One call is enough to answer "what is this person working on".',
+        'Start here. Returns the owner\'s life goals, THIS WEEK\'s lens — the weekly goals written for this week, the ones still carrying open work from earlier weeks, and every task visible in the week — plus the backlog, the learnings, and counts. One call is enough to answer "what is this person working on". It is deliberately NOT the whole goal tree: reading is by lens (list_lens), one horizon and one period at a time.',
       inputSchema: z
         .object({
           include: z
-            .array(z.enum(['tree', 'week', 'tasks', 'backlog', 'learnings']))
+            .array(z.enum(['lens', 'tasks', 'backlog', 'learnings']))
             .optional()
             .describe('Trim the payload when you already have context. Omit for everything.'),
           week_offset: WeekOffsetArg,
@@ -60,20 +67,32 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
         const w = week(ctx, week_offset);
         const b = await dc.resolve(BootstrapService).get(ctx, w);
         const want = (k: string) => !include || include.includes(k as never);
-        const paths = pathIndex(b.goals);
-        const activeLeaves = b.goals.filter((g) => g.isActive);
         return ok({
           week: weekOut(w),
-          week_history_weeks: b.weekHistoryWeeks,
-          ...(want('tree') ? { tree: b.goals.map((g) => goalOut(g, paths, b.goals)), outline: outline(b.goals) } : {}),
-          active_leaves: activeLeaves.map((g) => ({ id: g.id, path: paths.get(g.id), focus: g.focus })),
-          ...(want('tasks') ? { tasks: b.tasks } : {}),
+          life_goals: b.lifeGoals.map(goalOut),
+          ...(want('lens')
+            ? {
+                weekly_lens: {
+                  groups: b.lens.groups.map((g) => ({ id: g.id, title: g.title, open_tasks: g.openTasks })),
+                  this_week: b.lens.items.map(goalOut),
+                  // R-lens-12 — goals whose own week has passed but whose open work carries into this
+                  // one. They are a SEPARATE band on purpose: never this week's plan, and never a
+                  // `+ Task` target (adding new work to a past week's goal would be back-dating).
+                  carried: b.lens.carried.map(goalOut),
+                  outline: lensOutline(b.lens.groups, [...b.lens.items, ...b.lens.carried]),
+                  has_forward_content: b.lens.hasForwardContent,
+                },
+              }
+            : {}),
+          ...(want('tasks') ? { tasks: b.lens.tasks } : {}),
           ...(want('backlog') ? { backlog: b.backlog } : {}),
           ...(want('learnings') ? { learnings: b.learnings } : {}),
           counts: {
-            goals: b.goals.length,
-            open_tasks: b.tasks.filter((t) => t.status === 'open').length,
-            carrying_tasks: b.tasks.filter((t) => t.status === 'open' && t.carryWeeks >= 1).length,
+            life_goals: b.lifeGoals.length,
+            weekly_goals_this_week: b.lens.items.length,
+            carried_weekly_goals: b.lens.carried.length,
+            open_tasks: b.lens.tasks.filter((t) => t.status === 'open').length,
+            carrying_tasks: b.lens.tasks.filter((t) => t.status === 'open' && t.carryWeeks >= 1).length,
             backlog: b.backlog.length,
             learnings: b.learnings.length,
           },
@@ -82,179 +101,190 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
       }),
   );
 
-  // ── 2. find_goal ───────────────────────────────────────────────────────────────────────────────
+  // ── 2. list_lens ───────────────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'list_lens',
+    {
+      title: 'One horizon, one period',
+      description:
+        'The main read. Every goal at ONE horizon in ONE period, from all life lines, grouped under the life goal each belongs to. This is how the product is navigated — there is no whole-tree read and no filter, because grouping already answers "just this line". Omit period for the current one. The Life lens has no period: it is simply all of them. On the Weekly lens the result also carries `carried` (goals whose own week has passed but whose open work carries into this one, oldest first) and `tasks`. `has_forward_content` says whether any later period holds anything.',
+      inputSchema: z
+        .object({
+          lens: Horizon.default('Weekly').describe('Life | Yearly | Quarterly | Monthly | Weekly.'),
+          period: PeriodKeyArg.optional().describe(`Omit for the current period of that horizon. Shapes: ${PERIOD_KEY_SHAPES}.`),
+          cursor: z.string().max(64).optional().describe('From a previous result’s next_cursor.'),
+          limit: z.int().min(1).max(200).optional(),
+        })
+        .strict(),
+    },
+    async ({ lens, period, cursor, limit }) =>
+      guard(async () => {
+        // R-lens-14 — an unparseable period falls back to the current one rather than erroring, so a
+        // stale link lands somewhere real. Refusing it here would be a second rule.
+        const usable = period !== undefined && isPeriodKeyFor(lens, period) ? period : undefined;
+        const res = await dc.resolve(GoalService).lens(ctx, {
+          lens,
+          ...(usable !== undefined ? { period: usable } : {}),
+          ...(cursor !== undefined ? { cursor } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        });
+        return ok({
+          lens: res.lens,
+          period: res.period ? periodOut(res.period) : null,
+          groups: res.groups.map((g) => ({ id: g.id, title: g.title, pulse: g.pulse, open_tasks: g.openTasks })),
+          items: res.items.map(goalOut),
+          carried: res.carried.map(goalOut),
+          tasks: res.tasks,
+          outline: lensOutline(res.groups, [...res.items, ...res.carried]),
+          next_cursor: res.nextCursor,
+          has_forward_content: res.hasForwardContent,
+          server_now: res.serverNow,
+        });
+      }),
+  );
+
+  // ── 3. get_period ──────────────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'get_period',
+    {
+      title: 'The current period at every horizon',
+      description:
+        'For an anchor date (default: the server\'s today in the owner\'s timezone), the period each of the five horizons would land on, with how many goals are there. Use it to turn "this quarter" or "next month" into the canonical period key the other tools take — never compute a period from your own clock, and never construct a key by hand.',
+      inputSchema: z.object({ anchor: z.iso.date().optional().describe('YYYY-MM-DD. Omit for today.') }).strict(),
+    },
+    async ({ anchor }) =>
+      guard(async () => {
+        const res = await dc.resolve(GoalService).zoom(ctx, anchor);
+        return ok({
+          anchor: res.anchor,
+          periods: res.rows.map((r) => ({
+            lens: r.lens,
+            period_key: r.periodKey,
+            label: r.label,
+            goals: r.count,
+            is_current: r.isCurrent,
+          })),
+          server_now: res.serverNow,
+        });
+      }),
+  );
+
+  // ── 4. find_goal ───────────────────────────────────────────────────────────────────────────────
   server.registerTool(
     'find_goal',
     {
       title: 'Resolve a phrase to goal ids',
       description:
-        'Turn a phrase the user said ("my fitness goal", "Q3 revenue") into goal ids. Returns ranked candidates with full path, horizon and whether the branch is active this week. ALWAYS call this before any tool that takes a goal_id, unless you already have the id from an earlier result in this conversation. If the result says ambiguous:true, ASK THE USER which one — do not guess. This is the only tool on this surface that matches on text; every mutating tool takes ids only.',
+        'Turn a phrase the user said ("my fitness goal", "Q3 revenue") into goal ids. Returns ranked candidates with horizon, period and whether the goal is WEEKLY — which is the only thing that decides whether it can hold a task. ALWAYS call this before any tool that takes a goal_id, unless you already have the id from an earlier result in this conversation. If the result says ambiguous:true, ASK THE USER which one — do not guess. This is the only tool on this surface that matches on text; every mutating tool takes ids only. It searches ONE lens at a time, because that is how the data is read.',
       inputSchema: z
         .object({
-          query: z.string().trim().min(1).max(200).describe('Free text, matched against title, why and the full path.'),
-          horizon: Horizon.optional().describe('Restrict to one horizon.'),
+          query: z.string().trim().min(1).max(200).describe('Free text, matched against title and why.'),
+          lens: Horizon.default('Weekly').describe('Which horizon to search.'),
+          period: PeriodKeyArg.optional().describe(`Omit for the current period of that horizon. Shapes: ${PERIOD_KEY_SHAPES}.`),
           only: z
-            .enum(['any', 'leaves', 'active_leaves', 'can_hold_backlog', 'life'])
+            .enum(['any', 'weekly', 'can_hold_backlog', 'life'])
             .default('any')
-            .describe(
-              'active_leaves = valid task targets; can_hold_backlog = non-Life goals; life = valid Learning tags.',
-            ),
+            .describe('weekly = valid task targets; can_hold_backlog = Yearly/Quarterly/Monthly; life = valid Learning tags.'),
           limit: z.int().min(1).max(20).default(5),
-          week_offset: WeekOffsetArg,
         })
         .strict(),
     },
-    async ({ query, horizon, only, limit, week_offset }) =>
+    async ({ query, lens, period, only, limit }) =>
       guard(async () => {
-        const w = week(ctx, week_offset);
-        const { goals } = await dc.resolve(GoalService).list(ctx, w);
-        const paths = pathIndex(goals);
-        const eligible = goals.filter((g) => {
-          if (horizon && g.horizon !== horizon) return false;
-          if (only === 'leaves') return g.isLeaf && g.parentId !== null;
-          if (only === 'active_leaves') return g.isActive;
-          if (only === 'can_hold_backlog') return g.parentId !== null;
-          if (only === 'life') return g.parentId === null;
+        const usable = period !== undefined && isPeriodKeyFor(lens, period) ? period : undefined;
+        const res = await dc.resolve(GoalService).lens(ctx, { lens, ...(usable !== undefined ? { period: usable } : {}), limit: 200 });
+        const pool = [...res.items, ...res.carried];
+        const eligible = pool.filter((g) => {
+          // ⚠ **A2** — `only: 'active_leaves'` and `only: 'leaves'` are DELETED (R-rm-2). "Leaf" is
+          // retired as a product word, and a childless Monthly goal is a leaf that must never hold work.
+          if (only === 'weekly') return g.horizon === 'Weekly';
+          if (only === 'can_hold_backlog') return g.horizon !== 'Life' && g.horizon !== 'Weekly';
+          if (only === 'life') return g.horizon === 'Life';
           return true;
         });
-        const matches = rankGoals(eligible, query, paths);
+        const matches = rankGoals(eligible, query);
         return ok({
-          matches: matches.slice(0, limit).map((m) => ({
-            ...goalOut(m.goal, paths, goals),
-            score: m.score,
-            matched_on: m.matchedOn,
-          })),
+          matches: matches.slice(0, limit).map((m) => ({ ...goalOut(m.goal), score: m.score, matched_on: m.matchedOn })),
           ambiguous: isAmbiguous(matches.slice(0, limit)),
-          week: weekOut(w),
+          lens: res.lens,
+          period: res.period,
           server_now: ctx.now,
         });
       }),
   );
 
-  // ── 3. list_goals ──────────────────────────────────────────────────────────────────────────────
-  server.registerTool(
-    'list_goals',
-    {
-      title: 'The goal tree, filterable',
-      description:
-        'The goal tree, filterable. Use get_overview for a first look; use this to answer narrow questions like "which branches are dormant" or "which goals hold backlog". Ordering is depth-first, parents before children.',
-      inputSchema: z
-        .object({
-          week_offset: WeekOffsetArg,
-          horizon: Horizon.optional(),
-          state: z.enum(['all', 'active', 'dormant', 'leaves', 'has_backlog']).default('all'),
-          under_goal_id: Ulid.optional().describe("Restrict to that goal's subtree, including the goal itself."),
-          format: z.enum(['outline', 'flat']).default('outline'),
-        })
-        .strict(),
-    },
-    async ({ week_offset, horizon, state, under_goal_id, format }) =>
-      guard(async () => {
-        const w = week(ctx, week_offset);
-        const { goals } = await dc.resolve(GoalService).list(ctx, w);
-        const paths = pathIndex(goals);
-        const scope = under_goal_id ? subtreeIds(goals, under_goal_id) : null;
-        const filtered = goals.filter((g) => {
-          if (scope && !scope.has(g.id)) return false;
-          if (horizon && g.horizon !== horizon) return false;
-          if (state === 'active') return g.isActive;
-          if (state === 'dormant') return g.dormant;
-          if (state === 'leaves') return g.isLeaf;
-          if (state === 'has_backlog') return g.backlogCount > 0;
-          return true;
-        });
-        return ok({
-          goals: filtered.map((g) => goalOut(g, paths, goals)),
-          ...(format === 'outline' ? { outline: outline(filtered) } : {}),
-          week: weekOut(w),
-          server_now: ctx.now,
-        });
-      }),
-  );
-
-  // ── 4. get_goal ────────────────────────────────────────────────────────────────────────────────
+  // ── 5. get_goal ────────────────────────────────────────────────────────────────────────────────
   server.registerTool(
     'get_goal',
     {
       title: 'One goal in full',
       description:
-        'One goal in full: breadcrumb path, children with their active/dormant state, its backlog, the learnings attached to its Life line, and the periods it could be re-planned to. IMPORTANT: when backlog_is_aggregate is true the goal is a Life goal and its backlog list is a READ-ONLY roll-up of every descendant\'s items — those ids must not be passed to move_backlog_item or delete_backlog_item as if they were this goal\'s own. Pass one of replan_options to replan_goal rather than inventing a period string.',
-      inputSchema: z.object({ goal_id: Ulid, week_offset: WeekOffsetArg }).strict(),
+        'One goal in full: its ancestors with their periods, its children, its backlog, the learnings attached to its life line, and the periods it could be re-planned to. On a WEEKLY goal it also carries its tasks and `pull_list` — the backlog items sitting on the goals ABOVE it, ready to pull in — and its own backlog is always empty, because a weekly goal holds none. IMPORTANT: when backlog_is_aggregate is true the goal is a life goal and its backlog list is a READ-ONLY roll-up of every descendant\'s items; those ids must not be passed to move_backlog_item or delete_backlog_item as if they were this goal\'s own. Pass one of replan_options to replan_goal rather than inventing a period key. `children` is the only way to tell whether a goal has any — there is no is_leaf field, on purpose.',
+      inputSchema: z.object({ goal_id: Ulid }).strict(),
     },
-    async ({ goal_id, week_offset }) =>
+    async ({ goal_id }) =>
       guard(async () => {
-        const w = week(ctx, week_offset);
-        const [detail, all] = await Promise.all([
-          dc.resolve(GoalService).detail(ctx, goal_id, w),
-          dc.resolve(GoalService).list(ctx, w),
-        ]);
-        const paths = pathIndex(all.goals);
+        const detail = await dc.resolve(GoalService).detail(ctx, goal_id);
         return ok({
-          goal: goalOut(detail.goal, paths, all.goals),
-          ancestors: detail.ancestors.map((g) => goalOut(g, paths, all.goals)),
-          children: detail.children.map((g) => goalOut(g, paths, all.goals)),
+          goal: goalOut(detail.goal),
+          ancestors: detail.ancestors.map(goalOut),
+          children: detail.children.map(goalOut),
           backlog: detail.backlog,
           backlog_is_aggregate: detail.backlogIsAggregate,
+          pull_list: detail.pullList,
+          tasks: detail.tasks,
           learnings: detail.learnings,
-          replan_options: detail.replanOptions,
-          week: weekOut(w),
+          replan_options: detail.replanOptions.map((p) => ({ period_key: p.periodKey, label: p.label })),
           server_now: detail.serverNow,
         });
       }),
   );
 
-  // ── 5. preview_goal_deletion ───────────────────────────────────────────────────────────────────
+  // ── 6. preview_goal_deletion ───────────────────────────────────────────────────────────────────
   server.registerTool(
     'preview_goal_deletion',
     {
       title: 'What deleting this goal would destroy',
       description:
-        'Read-only. Returns exactly what deleting this goal would destroy: the sub-goals, weekly focuses, tasks (with their activity timelines) and backlog items in its whole subtree, plus the learnings that would fall back to "Unsorted". Nothing is written. It answers for LEAF goals too, which is the case that matters most — a leaf carrying forty open tasks deletes with no warning from the API itself. Show these numbers to the user and get their agreement before calling delete_goal.',
+        'Read-only. Returns exactly what deleting this goal would destroy: the sub-goals — of which `weekly_goals` are weeks of intention — the tasks with their activity timelines, and the backlog items in its whole subtree, plus the learnings that would fall back to "Unsorted". Nothing is written. Deleting a MONTHLY goal takes every weekly goal under it and all of their tasks, so these numbers can be large. It answers for childless goals too, which is the case that matters most — a weekly goal carrying forty open tasks deletes with no warning from the API itself. Show these numbers to the user and get their agreement before calling delete_goal.',
       inputSchema: z.object({ goal_id: Ulid }).strict(),
     },
     async ({ goal_id }) =>
       guard(async () => {
-        const w = week(ctx, 0);
-        const [preview, all] = await Promise.all([
+        const [preview, detail] = await Promise.all([
           dc.resolve(GoalService).remove(ctx, goal_id, { cascade: false, dryRun: true }),
-          dc.resolve(GoalService).list(ctx, w),
+          dc.resolve(GoalService).detail(ctx, goal_id),
         ]);
-        const paths = pathIndex(all.goals);
-        const subtree = [...subtreeIds(all.goals, goal_id)];
-        const self = all.goals.find((g) => g.id === goal_id);
         return ok({
-          goal: self ? { id: self.id, title: self.title, path: paths.get(self.id), horizon: self.horizon } : null,
+          goal: { id: detail.goal.id, title: detail.goal.title, horizon: detail.goal.horizon, period: detail.goal.period },
           would_remove: {
             goals: preview.removed.goals,
-            weekly_focuses: preview.removed.weeklyFocuses,
+            weekly_goals: preview.removed.weeklyGoals,
             tasks: preview.removed.tasks,
             task_events: preview.removed.taskEvents,
             backlog_items: preview.removed.backlogItems,
           },
           would_untag: { learnings: preview.untagged.learnings },
-          subtree: all.goals
-            .filter((g) => subtree.includes(g.id))
-            .map((g) => ({ id: g.id, title: g.title, path: paths.get(g.id), horizon: g.horizon, backlog_items: g.backlogCount })),
-          requires_cascade: subtree.length > 1,
+          requires_cascade: preview.removed.goals > 1,
           server_now: preview.serverNow,
         });
       }),
   );
 
-  // ── 6. create_goal ─────────────────────────────────────────────────────────────────────────────
+  // ── 7. create_goal ─────────────────────────────────────────────────────────────────────────────
   server.registerTool(
     'create_goal',
     {
       title: 'Create a goal',
       description:
-        "Create a goal. Horizons nest Life › Yearly › Quarterly › Monthly and a child's horizon must be strictly SHORTER than its parent's. Life goals have no parent and no period; every other horizon needs a parent. Monthly goals can never have sub-goals, so a Monthly parent is always refused. Omit period to let the server derive it from the horizon and today. Whitespace-only titles are refused, not trimmed to empty.",
+        "Create a goal at any of the five horizons. They nest Life › Yearly › Quarterly › Monthly › WEEKLY and a child's horizon must be strictly SHORTER than its parent's, so WEEKLY goals can never have sub-goals and a weekly parent is always refused. Levels may be SKIPPED: a weekly goal may hang off a monthly, quarterly, yearly or life goal, and none of those is an error. Life goals have no parent and no period; every other horizon needs a parent. Omit period_key to let the server derive the current period for that horizon — never construct one from your own clock. A period earlier than the current one is refused with PERIOD_IN_PAST; there is no limit in the other direction. Whitespace-only titles are refused, not trimmed to empty.",
       inputSchema: z
         .object({
           title: Title,
           horizon: Horizon,
           parent_id: Ulid.nullable().describe('null ONLY for a Life goal. Otherwise a goal of strictly longer horizon.'),
           why: OneLiner.default(''),
-          period: Period.optional().describe('e.g. "2026", "Q4 2026", "Sep 2026". Must be omitted for a Life goal.'),
+          period_key: PeriodKeyArg.optional().describe(`Must be omitted for a Life goal, and must match the horizon: ${PERIOD_KEY_SHAPES}.`),
           pulse: Pulse.default('On track'),
         })
         .strict(),
@@ -267,49 +297,51 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
           why: args.why,
           horizon: args.horizon,
           parentId: args.parent_id,
-          ...(args.period !== undefined ? { period: args.period } : {}),
+          ...(args.period_key !== undefined ? { periodKey: args.period_key } : {}),
           pulse: args.pulse,
         };
         // The SAME guard `POST /goals` runs, and it runs BEFORE the service — the service deliberately
-        // does not re-check the tree rules, so skipping this would skip R-goal-3/4/5/6/28 entirely.
+        // does not re-check the tree rules, so skipping this would skip R-goal-3/4/5/31/32 entirely.
         await dc.resolve(GoalTreeGuard).assertCanCreate(ctx, input);
         const res = await dc.resolve(GoalService).create(ctx, input);
-        return ok(await withPath(deps, res.goal, res.serverNow));
+        return ok({ goal: goalOut(res.goal), server_now: res.serverNow });
       }),
   );
 
-  // ── 7. update_goal ─────────────────────────────────────────────────────────────────────────────
+  // ── 8. update_goal ─────────────────────────────────────────────────────────────────────────────
   server.registerTool(
     'update_goal',
     {
       title: "Edit a goal's card",
       description:
-        "Edit a goal's title, motivation, target period and pulse. Horizon and parent are NOT editable here — use move_goal to re-parent and replan_goal to change the period. At least one field must be given. Setting a period on a Life goal is refused: Life goals have no target period.",
+        "Edit a goal's title, motivation, period and pulse. Horizon and parent are NOT editable here — use move_goal to re-parent and replan_goal to change the period. At least one field must be given. Setting a period on a Life goal is refused (it has none), and setting one on a WEEKLY goal is refused outright: a weekly goal IS a week, and moving it would restate what a past week held. A period earlier than the current one is refused with PERIOD_IN_PAST.",
       inputSchema: z
         .object({
           goal_id: Ulid,
           title: Title.optional(),
           why: OneLiner.optional(),
-          period: Period.optional(),
+          period_key: PeriodKeyArg.optional(),
           pulse: Pulse.optional(),
         })
         .strict(),
     },
-    async ({ goal_id, ...patch }) =>
+    async ({ goal_id, period_key, ...patch }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
-        const res = await dc.resolve(GoalService).patch(ctx, goal_id, patch);
-        return ok(await withPath(deps, res.goal, res.serverNow));
+        const res = await dc
+          .resolve(GoalService)
+          .patch(ctx, goal_id, { ...patch, ...(period_key !== undefined ? { periodKey: period_key } : {}) });
+        return ok({ goal: goalOut(res.goal), server_now: res.serverNow });
       }),
   );
 
-  // ── 8. move_goal ───────────────────────────────────────────────────────────────────────────────
+  // ── 9. move_goal ───────────────────────────────────────────────────────────────────────────────
   server.registerTool(
     'move_goal',
     {
       title: 'Re-parent a goal',
       description:
-        "Re-parent a goal. Its children move with it and its own horizon does not change. The new parent must have a LONGER horizon and must not be the goal itself or any of its descendants — a goal cannot move under its own child. Life goals cannot be moved at all. Read the returned new_path back to the user.",
+        "Re-parent a goal. Its children move with it and its own horizon does not change. The new parent must have a LONGER horizon and must not be the goal itself or any of its descendants — a goal cannot move under its own child. Life goals cannot be moved at all. A WEEKLY goal CAN be moved: that corrects which intention a week served, and it never changes the goal's week or any of its tasks' weeks.",
       inputSchema: z.object({ goal_id: Ulid, new_parent_id: Ulid }).strict(),
     },
     async ({ goal_id, new_parent_id }) =>
@@ -319,46 +351,56 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
         // them in that order. The service does not re-check either.
         await dc.resolve(GoalTreeGuard).assertCanMove(ctx, goal_id, new_parent_id);
         const res = await dc.resolve(GoalService).move(ctx, goal_id, { parentId: new_parent_id });
-        const after = await dc.resolve(GoalService).list(ctx, week(ctx, 0));
-        const paths = pathIndex(after.goals);
-        return ok({
-          goal: goalOut(res.goal, paths, after.goals),
-          new_path: paths.get(res.goal.id),
-          moved_descendants: subtreeIds(after.goals, res.goal.id).size - 1,
-          server_now: res.serverNow,
-        });
+        return ok({ goal: goalOut(res.goal), server_now: res.serverNow });
       }),
   );
 
-  // ── 9. replan_goal ─────────────────────────────────────────────────────────────────────────────
+  // ── 10. replan_goal ────────────────────────────────────────────────────────────────────────────
   server.registerTool(
     'replan_goal',
     {
       title: 'Move a goal to a later period',
       description:
-        "Move a goal to a later target period — the product's only \"push\". Pass one of the replan_options from get_goal rather than inventing a period string; the options are derived server-side from today and this goal's horizon. The period must differ from the current one. The reason is OPTIONAL and the product deliberately never demands one — pass only what the user actually said, never an invented reason. Life goals cannot be re-planned.",
-      inputSchema: z
-        .object({ goal_id: Ulid, period: Period, reason: Reason.optional() })
-        .strict(),
+        "Move a goal to a later period — the product's only \"push\". Pass one of the replan_options from get_goal rather than inventing a period key; the options are derived server-side from today and this goal's horizon. The period must differ from the current one and must not be in the past. The reason is OPTIONAL and the product deliberately never demands one — pass only what the user actually said, never an invented reason. NEITHER a Life goal NOR a WEEKLY goal is re-plannable: a life goal has no period, and a weekly goal is a week. An intention that did not happen carries forward through its open tasks, or is written again as a new weekly goal for the new week — say that rather than trying to move it.",
+      inputSchema: z.object({ goal_id: Ulid, period_key: PeriodKeyArg, reason: Reason.optional() }).strict(),
     },
-    async ({ goal_id, period, reason }) =>
+    async ({ goal_id, period_key, reason }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
-        const before = await dc.resolve(GoalService).detail(ctx, goal_id, week(ctx, 0));
+        const before = await dc.resolve(GoalService).detail(ctx, goal_id);
         const res = await dc
           .resolve(GoalService)
-          .replan(ctx, goal_id, { period, ...(reason !== undefined ? { reason } : {}) });
-        return ok({ ...(await withPath(deps, res.goal, res.serverNow)), previous_period: before.goal.period });
+          .replan(ctx, goal_id, { periodKey: period_key, ...(reason !== undefined ? { reason } : {}) });
+        return ok({ goal: goalOut(res.goal), previous_period: before.goal.period, server_now: res.serverNow });
       }),
   );
 
-  // ── 10. delete_goal ────────────────────────────────────────────────────────────────────────────
+  // ── 11. repeat_last_week ───────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'repeat_last_week',
+    {
+      title: "Copy last week's weekly goals into a week",
+      description:
+        "Copy the previous week's weekly goals FOR ONE LIFE LINE into the named week as ordinary new goals — same titles and parents, pulse reset to On track, NO tasks copied, and nothing linking a copy to its source. This is deliberately not a recurrence feature: there is no template, no series and no \"detached from the series\" state, and every copy is an ordinary goal that can be edited, moved or deleted. It is per life line, not account-wide, so the owner reviews one line at a time. A past week is refused; an empty previous week creates nothing.",
+      inputSchema: z
+        .object({ life_goal_id: Ulid, week_start: WeekStart.describe('The Monday to copy INTO.') })
+        .strict(),
+    },
+    async ({ life_goal_id, week_start }) =>
+      guard(async () => {
+        stampIdempotencyKey(deps);
+        const res = await dc.resolve(GoalService).repeatWeek(ctx, { lifeGoalId: life_goal_id, weekStart: week_start });
+        return ok({ created: res.created.map(goalOut), count: res.created.length, server_now: res.serverNow });
+      }),
+  );
+
+  // ── 12. delete_goal ────────────────────────────────────────────────────────────────────────────
   server.registerTool(
     'delete_goal',
     {
       title: 'Delete a goal and its whole subtree',
       description:
-        'DESTRUCTIVE AND PERMANENT. Deletes this goal AND its entire subtree: every sub-goal, weekly focus, task (with its activity timeline) and backlog item below it. Learnings tagged to anything deleted fall back to "Unsorted". There is no undo and no trash. Call preview_goal_deletion first, repeat its counts to the user, and get their explicit agreement before calling this. cascade must be true when the goal has descendants; without it the call is refused with the counts, which IS the confirmation step.',
+        'DESTRUCTIVE AND PERMANENT. Deletes this goal AND its entire subtree: every sub-goal — weekly goals included — every task with its activity timeline, and every backlog item below it. Learnings tagged to anything deleted fall back to "Unsorted". There is no undo and no trash. Call preview_goal_deletion first, repeat its counts to the user, and get their explicit agreement before calling this. cascade must be true when the goal has descendants; without it the call is refused with the counts, which IS the confirmation step.',
       inputSchema: z
         .object({
           goal_id: Ulid,
@@ -377,7 +419,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
           deleted: res.deleted,
           removed: {
             goals: res.removed.goals,
-            weekly_focuses: res.removed.weeklyFocuses,
+            weekly_goals: res.removed.weeklyGoals,
             tasks: res.removed.tasks,
             task_events: res.removed.taskEvents,
             backlog_items: res.removed.backlogItems,
@@ -387,11 +429,4 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
         });
       }),
   );
-}
-
-/** A goal result with its breadcrumb attached — the form an agent can read back to the user. */
-async function withPath(deps: McpDeps, goal: GoalView, serverNow: string) {
-  const all = await deps.dc.resolve(GoalService).list(deps.ctx, week(deps.ctx, 0));
-  const paths = pathIndex(all.goals);
-  return { goal: goalOut(goal, paths, all.goals), server_now: serverNow };
 }

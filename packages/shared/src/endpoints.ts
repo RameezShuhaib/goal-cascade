@@ -31,22 +31,43 @@ export const ENDPOINTS = {
   bootstrap: '/bootstrap',
 
   // ── goals ──
+  /**
+   * ⚠ **A2 (R-lens-16)** — `GET /goals?lens=<horizon>&period=<periodKey>` is a **scoped lens read**: one
+   * horizon, one period, paginated, with each item's Life-goal group already resolved by the server. It
+   * is NOT the whole tree, flat — that read model is retired (R-rm-5), because with a Weekly horizon it
+   * would ship hundreds of goals a year and stop working in the second year, silently and gradually.
+   *
+   * `POST /goals` creates one. Levels may be skipped and **Weekly** is the terminal horizon (R-goal-31).
+   */
   goals: '/goals',
-  /** `GET` = the detail screen (R-goal-27); `PATCH` = edit; `DELETE?cascade=true` = subtree delete (Q-5). */
+  /**
+   * ⚠ **A2, new (R-lens-22)** — the Zoom sheet's five rows in ONE grouped read: for each horizon, the
+   * period an anchor date would land on and how many goals are there. It must never be five lens reads.
+   *
+   * Registered BEFORE `goal(':id')` so the literal wins the route match.
+   */
+  goalsZoom: '/goals/zoom',
+  /**
+   * ⚠ **A2, new (R-goal-46)** — `Repeat last week`: copies one Life line's previous-week Weekly goals into
+   * the named week as ordinary new goals. No template, no series, no recurrence machinery.
+   */
+  goalsRepeatWeek: '/goals/repeat-week',
+  /** `GET` = the detail page (R-goal-41); `PATCH` = edit; `DELETE?cascade=true` = subtree delete (Q-5). */
   goal: (id: string) => `/goals/${id}`,
-  /** Re-parent. Children move with the goal; the target must have a LONGER horizon and not be a descendant. */
+  /**
+   * Re-parent. Children move with the goal; the target must have a LONGER horizon and not be a descendant.
+   * ⚠ **A2** — available on a **Weekly** goal too, and it may never change that goal's `periodKey`
+   * (R-goal-40).
+   */
   goalMove: (id: string) => `/goals/${id}/move`,
-  /** Replaces the old "push": a new target period plus an OPTIONAL one-line reason. */
+  /** Replaces the old "push": a new target `periodKey` plus an OPTIONAL one-line reason. */
   goalReplan: (id: string) => `/goals/${id}/replan`,
 
-  // ── the weekly plan ──
-  /**
-   * `GET /plan?week=` reads any past week's focus set (D-2 — past weeks render their own sentences);
-   * `PUT /plan` saves the WHOLE current week atomically and refuses any other week (R-plan-2/7).
-   */
-  plan: '/plan',
-
   // ── tasks (always scoped to a week via `?week=`) ──
+  /**
+   * ⚠ **A2 (R-rm-5)** — the Tasks SCREEN is gone; this read is not. It is the Weekly lens's data source
+   * and it survives verbatim, minus the plan (R-rm-2) and the goal filter (R-rm-4).
+   */
   tasks: '/tasks',
   task: (id: string) => `/tasks/${id}`,
   taskComplete: (id: string) => `/tasks/${id}/complete`,

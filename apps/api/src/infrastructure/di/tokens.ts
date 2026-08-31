@@ -9,7 +9,6 @@ export {
   IUserRepo,
   IPreferencesRepo,
   IGoalRepo,
-  IWeeklyFocusRepo,
   ITaskRepo,
   ITaskLinkRepo,
   ITaskEventRepo,

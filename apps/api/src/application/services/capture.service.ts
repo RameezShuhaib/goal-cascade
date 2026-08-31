@@ -8,7 +8,6 @@ import type {
   LearningView,
   PatchLearningRequest,
 } from '@goal-cascade/shared';
-import { WEEK_HISTORY_WEEKS } from '@goal-cascade/shared';
 import { inject, injectable } from 'tsyringe';
 import type { RequestContext } from '../context';
 import type { Learning } from '../../domain/entities';
@@ -19,8 +18,7 @@ import { BacklogService, newestFirst } from './backlog.service';
 import { GoalService } from './goal.service';
 import { GuardedBatch } from './guarded-batch';
 import { MeService } from './me.service';
-import { PlanService } from './plan.service';
-import { TaskService } from './task.service';
+import { weekView } from './views';
 
 /**
  * R-learning-2 — a Learning is tagged to a **Life goal or nothing**. A tag pointing at a
@@ -159,11 +157,21 @@ export class LearningService {
  * A PWA's first paint after a cold start should cost one request, not seven.
  *
  * It **composes the other services' readers and derives nothing of its own**. That is the whole design
- * rule here: a second implementation of "which tasks are visible this week" or "which leaves are active"
- * is exactly how the bootstrap payload and the per-screen fetches start disagreeing, and the client
+ * rule here: a second implementation of "which tasks are visible this week" or "which goals are in this
+ * lens" is exactly how the bootstrap payload and the per-screen fetches start disagreeing, and the client
  * would have no way to tell which one was lying. Every array below comes from the service that owns it —
  * including the lazy `Carried to week of …` producer inside `TaskService.list` (R-task-29, Q-17), which
- * must fire on a cold open just as it does on a Tasks-screen fetch.
+ * must fire on a cold open just as it does on a lens fetch.
+ *
+ * ── ⚠ **A2 (R-rm-5, R-nav-28) — it no longer ships every goal** ────────────────────────────────────
+ *
+ * It used to call `GoalService.list` (the whole tree, flat) AND `PlanService.get`, which meant
+ * `SELECT * FROM goals WHERE user_id = ?` **twice per cold open**, then Θ(n²·d) of derivation on top.
+ *
+ * A cold start opens the **Weekly lens at the week containing today** (R-nav-28), so that is exactly what
+ * this carries now: the **Life goals** — bounded by the number of Life lines, and the one list guaranteed
+ * complete, because the Life lens is where every Life goal is always visible — that lens, and its week's
+ * tasks. `plan` went with the entity (R-rm-2) and `ideas` with theirs (R-rm-1).
  *
  * The payload is a snapshot of ONE week (`week` says which). Weeks in it are absolute Mondays (D-1) so
  * it does not decay across a Monday boundary, but `week.offset` and `carryWeeks` are projections against
@@ -174,20 +182,17 @@ export class BootstrapService {
   constructor(
     @inject(MeService) private readonly me: MeService,
     @inject(GoalService) private readonly goals: GoalService,
-    @inject(PlanService) private readonly plan: PlanService,
-    @inject(TaskService) private readonly tasks: TaskService,
     @inject(BacklogService) private readonly backlog: BacklogService,
     @inject(LearningService) private readonly learnings: LearningService,
   ) {}
 
-  async get(ctx: RequestContext, week: { weekStart: string; offset?: number; isCurrent?: boolean }): Promise<BootstrapResponse> {
+  async get(ctx: RequestContext, week: { weekStart: string }): Promise<BootstrapResponse> {
     // The reads are independent, so they run concurrently: one round trip for the client should not be
-    // seven serialised round trips to D1.
-    const [me, goals, plan, tasks, backlog, learnings] = await Promise.all([
+    // several serialised round trips to D1.
+    const [me, lifeLens, weeklyLens, backlog, learnings] = await Promise.all([
       this.me.getMe(ctx),
-      this.goals.list(ctx, week),
-      this.plan.get(ctx, week),
-      this.tasks.list(ctx, { weekStart: week.weekStart }),
+      this.goals.lens(ctx, { lens: 'Life' }),
+      this.goals.lens(ctx, { lens: 'Weekly', period: week.weekStart }),
       this.backlog.list(ctx, {}),
       this.learnings.list(ctx),
     ]);
@@ -195,13 +200,9 @@ export class BootstrapService {
     return {
       user: me.user,
       preferences: me.preferences,
-      // The week the payload is about, as the goals reader resolved it — one answer, not two.
-      week: goals.week,
-      /** R-nav-4 / D-24 — echoed so the client never hardcodes the bound its two week controls share. */
-      weekHistoryWeeks: WEEK_HISTORY_WEEKS,
-      goals: goals.goals,
-      plan: plan.entries,
-      tasks: tasks.tasks,
+      week: weekView(ctx, week.weekStart),
+      lifeGoals: lifeLens.items,
+      lens: weeklyLens,
       backlog: backlog.items,
       learnings: learnings.learnings,
       serverNow: ctx.now,

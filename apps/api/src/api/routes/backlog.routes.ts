@@ -2,7 +2,7 @@ import {
   ConvertBacklogItemRequest,
   CreateBacklogItemRequest,
   ENDPOINTS as E,
-  GoalFilterQuery,
+  BacklogQuery,
   IdParams,
   MoveBacklogItemRequest,
   PatchBacklogItemRequest,
@@ -23,8 +23,8 @@ import { body, params, query, zJson, zParams, zQuery } from '../validate';
  * refused by the guarded `status = 'open'` update in `IBacklogRepo.markConvertedGuardedStmt`.
  */
 export const backlogRoutes = new Hono<AppBindings>()
-  .get(E.backlog, zQuery(GoalFilterQuery), async (c) =>
-    c.json(await c.get('container').resolve(BacklogService).list(ctx(c), query(c, GoalFilterQuery))),
+  .get(E.backlog, zQuery(BacklogQuery), async (c) =>
+    c.json(await c.get('container').resolve(BacklogService).list(ctx(c), query(c, BacklogQuery))),
   )
 
   .post(E.backlog, idempotent, zJson(CreateBacklogItemRequest), async (c) =>

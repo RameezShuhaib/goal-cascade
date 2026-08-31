@@ -33,37 +33,62 @@ export const ERROR_STATUS = {
   NOT_FOUND: 404,
 
   /**
-   * R-goal-5 / R-goal-6 / R-goal-17 — a child's horizon must be strictly SHORTER than its parent's
-   * (Life 0 › Yearly 1 › Quarterly 2 › Monthly 3), so Monthly is terminal and equal rank is refused.
-   * Raised on create (S-goal-5-2, S-goal-5-3, S-goal-6-1) and on move (S-goal-18-2).
+   * R-goal-5 / R-goal-31 / R-goal-17 — a child's horizon must be strictly SHORTER than its parent's
+   * (Life 0 › Yearly 1 › Quarterly 2 › Monthly 3 › **Weekly 4**), so **Weekly** is terminal and equal
+   * rank is refused. Raised on create (S-goal-5-2, S-goal-5-3, S-goal-31-1) and on move (S-goal-18-2).
+   *
+   * ⚠ **A2** — the terminal horizon MOVED. A **Monthly** parent is now legal (S-goal-31-2 is the exact
+   * request the old rule required to be refused), and levels may still be skipped, so a Weekly goal under
+   * a Life, Yearly or Quarterly goal is not a conflict either (R-goal-32).
    */
   HORIZON_CONFLICT: 409,
   /** R-goal-18(a,b) — the move target is the goal itself or one of its descendants (S-goal-18-1). */
   WOULD_CREATE_CYCLE: 409,
   /** Q-5 — delete refused because the goal still has children and no explicit `?cascade=true` was given. */
   GOAL_HAS_CHILDREN: 409,
-  /**
-   * R-goal-28 / D-8 — giving a leaf a child (create-under or move-under) while it still carries open
-   * tasks. Refused rather than silently re-homing someone's work: "move or close them first".
-   */
-  GOAL_HAS_OPEN_TASKS: 409,
   /** R-goal-21 — a Life goal cannot be moved or re-planned (S-goal-21-1). */
   LIFE_GOAL_IMMUTABLE: 409,
-  /**
-   * R-goal-9 / R-goal-12 / R-plan-8 — only a non-Life LEAF can hold a weekly focus or own a task.
-   * Raised when a plan entry or a task points at a Life goal or at a goal that has children (S-plan-8-1).
-   */
-  NOT_A_LEAF: 409,
   /** R-learning-2 — a Learning tag must be a Life goal or null. */
   NOT_A_LIFE_GOAL: 409,
   /**
-   * R-backlog-8 — "Add to this week" on an item whose branch has no active weekly focus. The UI answers
-   * with "This branch isn't active this week" → [Set a weekly focus] / [Cancel] (S-backlog-8-1/8-3).
+   * ⚠ **A2, new (R-goal-39, replaces `NOT_A_LEAF`)** — a task's `goalId` named a goal whose horizon is
+   * not `Weekly`.
+   *
+   * **The condition is the horizon, full stop — never leaf-ness** (R-goal-37). Because Weekly is terminal
+   * every Weekly goal is childless, so "Weekly" implies "no children"; **the converse is false and is the
+   * trap**: a Monthly goal with no Weekly children is a leaf by the structural definition and is
+   * precisely the goal that must never hold a task (S-goal-37-1). A build that admits it has keyed task
+   * ownership on leaf-ness.
    */
-  BRANCH_NOT_ACTIVE: 409,
+  NOT_A_WEEKLY_GOAL: 409,
   /**
-   * R-backlog-2 — backlog items attach to Yearly/Quarterly/Monthly goals only. Never a Life goal (a Life
-   * goal's detail screen shows a READ-ONLY aggregate of its descendants' items) and never a week.
+   * ⚠ **A2, new (R-backlog-26, replaces `BRANCH_NOT_ACTIVE`)** — no Weekly goal exists at or under the
+   * item's goal for the target week, so nothing can receive the conversion. The client answers with
+   * "No weekly goal here for that week" and R-task-48's inline create, rather than sending the owner away
+   * (S-backlog-26-2).
+   */
+  NO_WEEKLY_GOAL: 409,
+  /**
+   * ⚠ **A2, new (R-goal-36, replaces `WEEK_NOT_CURRENT`)** — a create, an edit, a re-plan or a
+   * `Repeat last week` named a period earlier than the current one for its horizon.
+   *
+   * **This is D-2, generalised.** A goal written into last month is a plan claiming to have existed then,
+   * and it changes what a past lens says happened. Planning never rewrites history. There is **no forward
+   * bound at any horizon**: every future period is writable, so this code never means "too far ahead".
+   *
+   * Its converse binds equally: a past period is closed to new PLAN and to nothing else. Title, `why` and
+   * `pulse` edits, Move, Delete, and every task operation — completing one included — still succeed
+   * there (S-goal-36-4, S-lens-10-2).
+   */
+  PERIOD_IN_PAST: 409,
+  /**
+   * R-backlog-2 / R-backlog-26 — backlog items attach to Yearly/Quarterly/Monthly goals only. Never a
+   * Life goal (a Life goal's detail screen shows a READ-ONLY aggregate of its descendants' items) and
+   * ⚠ **A2** never a **Weekly** goal, because a backlog item has no week.
+   *
+   * It is also the refusal when Move-to-Backlog finds no legal target: a Weekly goal whose only ancestor
+   * is a Life goal has nowhere above the week to land (R-backlog-29, S-backlog-29-2). That is the one
+   * cost of R-goal-32's level-skipping, it is rare, and refusing beats inventing a home.
    */
   LIFE_GOAL_NO_BACKLOG: 409,
   /**
@@ -72,9 +97,10 @@ export const ERROR_STATUS = {
    */
   ALREADY_CONVERTED: 409,
   /**
-   * R-backlog-7 / D-18 / S-backlog-7-2 — more than one ACTIVE leaf at or under the item's goal qualifies
-   * to receive it, so the server refuses to pick: that id decides which focus the task belongs to for the
-   * rest of its life, and the mockup took whichever came first in array order.
+   * R-backlog-26 / D-18 / S-backlog-26-3 — more than one **Weekly goal** at or under the item's goal
+   * qualifies to receive it for the target week, so the server refuses to pick: that id decides which
+   * week the task belongs to for the rest of its life, and the mockup took whichever came first in array
+   * order.
    *
    * It is a 409 and not a 422 on purpose. The request was well formed and the input was fine — the
    * product simply has no single answer yet — and the client needs to tell this apart from a validation
@@ -87,18 +113,18 @@ export const ERROR_STATUS = {
    * has already exited refuses both (S-task-17-1).
    */
   TASK_ALREADY_EXITED: 409,
-  /**
-   * R-plan-2 — planning edits the CURRENT week only. A plan save naming any other week is refused
-   * wholesale, never partially applied (S-plan-2-1, Q-3).
-   */
-  WEEK_NOT_CURRENT: 409,
   /** Q-2 / Q-3 — a write carrying a stale `version` lost the race with another device. */
   CONCURRENT_UPDATE: 409,
   IDEMPOTENCY_IN_PROGRESS: 409,
 
   /**
-   * R-task-14 / R-nav-3 — a week outside the addressable range: a future week (never selectable anywhere)
-   * or, on complete, a week earlier than the task's origin (S-task-14-2, S-nav-3-1).
+   * R-task-44 — a week outside the addressable range.
+   *
+   * ⚠ **A2** — its meaning NARROWED. It no longer means "a future week" in general: future periods are
+   * ordinary and writable (R-goal-36, R-lens-7). It now means the absolute storage range, or — on
+   * **complete** — a week outside `originWeek <= week <= currentWeek`. You cannot finish work in a week
+   * that has not happened, and a task under a future Weekly goal cannot be completed at all until that
+   * week arrives (S-task-44-1). A write into a past PERIOD is `PERIOD_IN_PAST`, not this.
    */
   WEEK_OUT_OF_RANGE: 422,
   VALIDATION_FAILED: 422,

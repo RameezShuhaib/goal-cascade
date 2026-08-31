@@ -1,4 +1,4 @@
-import { IanaTimezone, Theme, WEEK_HISTORY_WEEKS } from '@goal-cascade/shared';
+import { IanaTimezone, Theme } from '@goal-cascade/shared';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { MeService } from '../../../application/services';
@@ -23,7 +23,9 @@ export function registerAccountTools(server: McpServer, deps: McpDeps): void {
           user: { id: me.user.id, name: me.user.name, email: me.user.email, email_verified: me.user.emailVerified },
           preferences: { theme: me.preferences.theme, timezone: me.preferences.timezone, updated_at: me.preferences.updatedAt },
           week: weekOut(week(ctx, 0)),
-          week_history_weeks: WEEK_HISTORY_WEEKS,
+          // ⚠ **A2 (R-rm-3)** — `week_history_weeks` is GONE. It advertised the week switcher's 8-week
+          // window as if it were a data bound; there is no bound in either direction any more
+          // (R-lens-7), and telling an agent otherwise would make it refuse reads the API accepts.
           server_now: me.serverNow,
         });
       }),

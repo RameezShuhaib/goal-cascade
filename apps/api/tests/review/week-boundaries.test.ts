@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addWeeks, carryWeeks, offsetOf, weekStartOf, weekStartOfDate, weeksBetween } from '../../src/domain/weeks';
 import { createTestApp, signedInOwner } from '../helpers/app';
-import { createGoal, goalById, makeLine, planIn, savePlan, seedFocus, seedTask } from '../goals/fixtures';
+import { createGoal, lens, makeLine, seedGoal, seedTask } from '../goals/fixtures';
 
 /**
  * REVIEW — attack 5: the D-1 class of bug, where anything relative to "now" changes meaning as time
@@ -11,14 +11,17 @@ import { createGoal, goalById, makeLine, planIn, savePlan, seedFocus, seedTask }
  * The clock is driven across a Monday, a month end, a quarter end, a year end, and a southern-hemisphere
  * DST transition (Pacific/Auckland springs forward on the last Sunday of September — the change lands on
  * the Sunday/Monday boundary, which is exactly where a naive `getDay()` implementation breaks).
+ *
+ * ⚠ **A2** — a week's INTENTION is now a Weekly goal rather than a focus row (R-rm-2), so the "does a
+ * stored row move" question is asked of `goals.period_key` as well as of `tasks.origin_week_start`. Both
+ * are absolute Mondays, and neither is ever rewritten.
  */
 describe('REVIEW / attack 5 — a stored week is an absolute Monday and never decays', () => {
   it('crossing a MONDAY re-projects the offsets and leaves every stored value alone', async () => {
     const t = createTestApp({ now: '2026-09-03T09:00:00.000Z' }); // Thursday; week 0 = 2026-08-31
     const { cookie, userId } = await signedInOwner(t);
-    const { monthly } = await makeLine(t, cookie);
-    await savePlan(t, cookie, '2026-08-31', [{ goalId: monthly.id, sentence: 'this week' }]);
-    const task = await seedTask(t, userId, monthly.id, '2026-08-31');
+    const { weekly } = await makeLine(t, cookie);
+    const task = await seedTask(t, userId, weekly.id, '2026-08-31');
 
     const before = (await (await t.fetch(`/api/tasks/${task.id}`, { cookie })).json()) as {
       task: { originWeekStart: string; carryWeeks: number };
@@ -33,22 +36,46 @@ describe('REVIEW / attack 5 — a stored week is an absolute Monday and never de
     // The ROW did not move; the projection did. That is D-1 in one assertion.
     expect(after.task.originWeekStart).toBe('2026-08-31');
     expect(after.task.carryWeeks).toBe(1);
-    expect((await planIn(t, cookie, 0)).entries).toHaveLength(0); // last week's plan is not this week's
-    expect((await planIn(t, cookie, -1)).entries.map((e) => e.sentence)).toEqual(['this week']);
-    expect((await goalById(t, cookie, monthly.id, 0)).isActive).toBe(false);
-    expect((await goalById(t, cookie, monthly.id, -1)).isActive).toBe(true);
+
+    /**
+     * SUPERSEDED — the old assertions here were `planIn(…).entries` and `goalById(…).isActive`, which
+     * asked "does last week's PLAN read as this week's". Both are gone (R-rm-2). The successor question
+     * is R-lens-12's, and it is sharper: **the goal itself moves between the two bands.** Last week's
+     * Weekly goal is no longer in this week's plan — it is in the CARRIED band, because its task is
+     * still open — and it is still in its own week's plan when that week is viewed.
+     */
+    const thisWeek = await lens(t, cookie, { lens: 'Weekly', period: '2026-09-07' });
+    expect(thisWeek.items.map((g) => g.id)).not.toContain(weekly.id);
+    expect(thisWeek.carried.map((g) => g.id)).toContain(weekly.id);
+
+    const itsOwnWeek = await lens(t, cookie, { lens: 'Weekly', period: '2026-08-31' });
+    expect(itsOwnWeek.items.map((g) => g.id)).toContain(weekly.id);
+    expect(itsOwnWeek.carried).toEqual([]);
   });
 
-  it('a plan save that crosses the Monday while the screen is open is refused, not written into the wrong week', async () => {
+  /**
+   * SUPERSEDED — this asserted `WEEK_NOT_CURRENT`: a plan save that crossed the Monday while the screen
+   * was open was refused rather than written into the wrong week. There is no plan save (R-rm-3), and
+   * the code is retired (R-rm-2). **The defect it protected against is unchanged and now generalised to
+   * every horizon**: a write into a period that has become past is refused with `PERIOD_IN_PAST`
+   * (R-goal-36). The screen crossing a boundary is exactly how that becomes reachable in ordinary use.
+   */
+  it('S-goal-36-1 — a create that crosses the Monday while the screen is open is refused, not back-dated', async () => {
     const t = createTestApp({ now: '2026-09-06T23:59:00.000Z' }); // Sunday; the week is still 2026-08-31
     const { cookie } = await signedInOwner(t);
     const { monthly } = await makeLine(t, cookie);
-    expect((await savePlan(t, cookie, '2026-08-31', [{ goalId: monthly.id, sentence: 'ok' }])).status).toBe(200);
+    const ok = await createGoal(t, cookie, { title: 'ok', horizon: 'Weekly', parentId: monthly.id, periodKey: '2026-08-31' });
+    expect(ok.periodKey).toBe('2026-08-31');
 
-    t.clock.set('2026-09-07T00:00:30.000Z'); // Monday
-    const late = await savePlan(t, cookie, '2026-08-31', [{ goalId: monthly.id, sentence: 'too late' }]);
+    t.clock.set('2026-09-07T00:00:30.000Z'); // Monday: that week is now PAST
+    const late = await t.fetch('/api/goals', {
+      method: 'POST',
+      cookie,
+      idempotencyKey: crypto.randomUUID(),
+      json: { title: 'too late', horizon: 'Weekly', parentId: monthly.id, periodKey: '2026-08-31' },
+    });
     expect(late.status).toBe(409);
-    expect(((await late.json()) as { error: { code: string } }).error.code).toBe('WEEK_NOT_CURRENT');
+    expect(((await late.json()) as { error: { code: string } }).error.code).toBe('PERIOD_IN_PAST');
   });
 
   it('MONTH, QUARTER and YEAR ends: the week Monday is arithmetic, not calendar-aware', () => {
@@ -86,34 +113,42 @@ describe('REVIEW / attack 5 — a stored week is an absolute Monday and never de
     const t = createTestApp({ now: '2026-08-31T01:00:00.000Z' });
     const nz = await signedInOwner(t, { timezone: 'Pacific/Auckland' });
     const hi = await signedInOwner(t, { timezone: 'Pacific/Honolulu' });
-    const weekOf = async (cookie: string) => (await planIn(t, cookie)).week.weekStart;
+    const weekOf = async (cookie: string) => (await lens(t, cookie, { lens: 'Weekly' })).period?.periodKey;
 
     expect(await weekOf(nz.cookie)).toBe('2026-08-31');
     expect(await weekOf(hi.cookie)).toBe('2026-08-24');
   });
 
-  it('R-task-10/11 — the carry threshold lands on the correct side at EXACTLY 1 and EXACTLY 2 weeks', () => {
-    // The label is a client rendering of `carryWeeks`, which is `viewed − origin` in whole weeks.
-    expect(carryWeeks('2026-08-31', '2026-08-31')).toBe(0); // R-task-12: no label
-    expect(carryWeeks('2026-08-24', '2026-08-31')).toBe(1); // R-task-10: gray "since …"
-    expect(carryWeeks('2026-08-17', '2026-08-31')).toBe(2); // R-task-11: red chip, at exactly 2
-    expect(carryWeeks('2026-08-10', '2026-08-31')).toBe(3);
+  it('R-task-43 — the carry threshold lands on the correct side at EXACTLY 1 and EXACTLY 2 weeks', () => {
+    // The label is a client rendering of `carryWeeks`, which is `min(viewed, current) − origin` in whole
+    // weeks (⚠ A2: signed, R-task-43). These are all past/current views, where the `min` is inert.
+    const current = '2026-08-31';
+    expect(carryWeeks('2026-08-31', '2026-08-31', current)).toBe(0); // R-task-12: no label
+    expect(carryWeeks('2026-08-24', '2026-08-31', current)).toBe(1); // R-task-10: gray "since …"
+    expect(carryWeeks('2026-08-17', '2026-08-31', current)).toBe(2); // R-task-11: red chip, at exactly 2
+    expect(carryWeeks('2026-08-10', '2026-08-31', current)).toBe(3);
     // …and across a year end, where naive month/day arithmetic would drift.
-    expect(carryWeeks('2026-12-28', '2027-01-04')).toBe(1);
-    expect(carryWeeks('2026-12-21', '2027-01-04')).toBe(2);
+    expect(carryWeeks('2026-12-28', '2027-01-04', '2027-01-04')).toBe(1);
+    expect(carryWeeks('2026-12-21', '2027-01-04', '2027-01-04')).toBe(2);
     // It depends on the VIEWED week, never on today (S-task-11-2).
-    expect(carryWeeks('2026-08-17', '2026-08-24')).toBe(1);
-    // A task can never be "negative" weeks old.
-    expect(carryWeeks('2026-08-31', '2026-08-24')).toBe(0);
+    expect(carryWeeks('2026-08-17', '2026-08-24', current)).toBe(1);
+    /**
+     * SUPERSEDED — the last line used to read "a task can never be 'negative' weeks old", asserting
+     * R-task-37's `max(0, …)` clamp. R-task-43 supersedes it: the age is SIGNED, and a negative value is
+     * the honest reading of "not due yet". No label fires below 1 either way, which is why this needs an
+     * assertion rather than a comment — nothing that renders changed.
+     */
+    expect(carryWeeks('2026-08-31', '2026-08-24', current)).toBe(-1);
     expect(offsetOf('2026-08-24', '2026-08-31')).toBe(-1);
   });
 
-  it('R-task-10/11 over HTTP — the same task reads 1 week in one viewed week and 2 in the next', async () => {
+  it('R-task-43 over HTTP — the same task reads 1 week in one viewed week and 2 in the next', async () => {
     const t = createTestApp({ now: '2026-08-31T10:00:00.000Z' });
     const { cookie, userId } = await signedInOwner(t);
-    const { monthly } = await makeLine(t, cookie);
-    await savePlan(t, cookie, '2026-08-31', [{ goalId: monthly.id, sentence: 'live' }]);
-    const task = await seedTask(t, userId, monthly.id, '2026-08-17');
+    const { life } = await makeLine(t, cookie);
+    // A Weekly goal for a PAST week, which R-goal-36 refuses through the product — hence the seed.
+    const past = await seedGoal(t, userId, { parentId: life.id, horizon: 'Weekly', title: 'two weeks ago', periodKey: '2026-08-17' });
+    const task = await seedTask(t, userId, past.id, '2026-08-17');
 
     const at = async (week: number) => {
       const res = (await (await t.fetch(`/api/tasks?week=${week}`, { cookie })).json()) as {
@@ -126,18 +161,44 @@ describe('REVIEW / attack 5 — a stored week is an absolute Monday and never de
     expect(await at(-2)).toBe(0); // its origin week → no label
   });
 
-  it('a past week’s focus survives every later save, and the current week never reads it', async () => {
+  /**
+   * SUPERSEDED — this asserted "a past week's FOCUS survives every later save, and the current week never
+   * reads it". There are no focus rows and no whole-week save (R-rm-2, R-rm-3), so the mechanism it
+   * tested is gone. **The principle is not**: it is D-2, and R-lens-10 restates it for the goal table —
+   * *a past period renders exactly what was there, and no write may create an item in it or move one
+   * into it.* Which is what this now asserts, in the shape that replaced it.
+   */
+  it('S-lens-10-1 / R-lens-10 — a past week renders its OWN goals, and no later write touches them', async () => {
     const t = createTestApp({ now: '2026-08-31T10:00:00.000Z' });
     const { cookie, userId } = await signedInOwner(t);
-    const { quarterly, monthly } = await makeLine(t, cookie);
-    const other = await createGoal(t, cookie, { title: 'Other', horizon: 'Monthly', parentId: quarterly.id });
-    await seedFocus(t, userId, monthly.id, '2026-08-17', 'two weeks ago');
-    await seedFocus(t, userId, monthly.id, '2026-08-24', 'one week ago');
+    const { life, monthly } = await makeLine(t, cookie);
+    const twoAgo = await seedGoal(t, userId, { parentId: monthly.id, horizon: 'Weekly', title: 'two weeks ago', periodKey: '2026-08-17' });
+    const oneAgo = await seedGoal(t, userId, { parentId: monthly.id, horizon: 'Weekly', title: 'one week ago', periodKey: '2026-08-24' });
 
-    await savePlan(t, cookie, '2026-08-31', [{ goalId: other.id, sentence: 'this week' }]);
+    // Writing THIS week changes nothing about either past week.
+    await createGoal(t, cookie, { title: 'this week', horizon: 'Weekly', parentId: monthly.id });
 
-    expect((await planIn(t, cookie, -2)).entries.map((e) => e.sentence)).toEqual(['two weeks ago']);
-    expect((await planIn(t, cookie, -1)).entries.map((e) => e.sentence)).toEqual(['one week ago']);
-    expect((await planIn(t, cookie, 0)).entries.map((e) => e.sentence)).toEqual(['this week']);
+    expect((await lens(t, cookie, { lens: 'Weekly', period: '2026-08-17' })).items.map((g) => g.title)).toEqual(['two weeks ago']);
+    expect((await lens(t, cookie, { lens: 'Weekly', period: '2026-08-24' })).items.map((g) => g.title)).toEqual(['one week ago']);
+    expect((await lens(t, cookie, { lens: 'Weekly', period: '2026-08-31' })).items.map((g) => g.title)).toEqual([
+      makeLineWeeklyTitle,
+      'this week',
+    ]);
+
+    // …and a create INTO one of those weeks is refused, leaving them byte-identical (D-2).
+    const back = await t.fetch('/api/goals', {
+      method: 'POST',
+      cookie,
+      idempotencyKey: crypto.randomUUID(),
+      json: { title: 'rewriting history', horizon: 'Weekly', parentId: life.id, periodKey: '2026-08-17' },
+    });
+    expect(back.status).toBe(409);
+    const stillTwoAgo = await lens(t, cookie, { lens: 'Weekly', period: '2026-08-17' });
+    expect(stillTwoAgo.items.map((g) => g.id)).toEqual([twoAgo.id]);
+    expect(stillTwoAgo.items[0]).toMatchObject({ title: 'two weeks ago', version: 1 });
+    void oneAgo;
   });
 });
+
+/** `makeLine` seeds one Weekly goal for the current week; its title is fixed by the fixture. */
+const makeLineWeeklyTitle = 'This week';

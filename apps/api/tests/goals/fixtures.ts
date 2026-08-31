@@ -1,17 +1,19 @@
-import type { GoalView, GoalsResponse, PlanResponse } from '@goal-cascade/shared';
-import { IBacklogRepo, ILearningRepo, ITaskRepo, IWeeklyFocusRepo } from '../../src/application/ports';
-import { GuardedBatch } from '../../src/application/services';
-import type { BacklogItem, Learning, Task, WeeklyFocus } from '../../src/domain/entities';
-import type { Horizon, Pulse } from '../../src/domain/enums';
+import type { GoalView, Horizon, LensResponse, Pulse } from '@goal-cascade/shared';
+import { sql } from 'drizzle-orm';
+import { IBacklogRepo, IGoalRepo, ILearningRepo, ITaskRepo } from '../../src/application/ports';
+import { DB, GuardedBatch } from '../../src/application/services';
+import type { BacklogItem, Goal, Learning, Task } from '../../src/domain/entities';
+import { labelOf } from '../../src/domain/periods';
 import { ids, type TestApp } from '../helpers/app';
 
 /**
- * Fixtures for the goal-tree and weekly-plan suites.
+ * Fixtures for the goal and lens suites.
  *
  * Trees are built through the REAL routes wherever possible — a fixture that writes rows the API would
- * refuse proves nothing about the API. The two direct-write helpers exist for states no endpoint can
- * reach: a task with an origin in a past week (R-task-5 forbids back-dating) and a focus row for a past
- * week (R-plan-2 makes planning current-week-only).
+ * refuse proves nothing about the API. The direct-write helpers exist for states no endpoint can reach,
+ * and after A2 that set is precise: a task with an origin in a past week, and a goal in a PAST period
+ * (R-goal-36 refuses both through the product, which is exactly why the carried band and the migration
+ * need a way to arrange them).
  */
 
 export const codeOf = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
@@ -21,58 +23,95 @@ export const detailsOf = async (res: Response) =>
 export async function createGoal(
   t: TestApp,
   cookie: string,
-  input: { title: string; horizon: Horizon; parentId?: string | null; period?: string; why?: string; pulse?: Pulse },
+  input: { title: string; horizon: Horizon; parentId?: string | null; periodKey?: string; why?: string; pulse?: Pulse },
 ): Promise<GoalView> {
   const res = await t.fetch('/api/goals', { method: 'POST', cookie, idempotencyKey: crypto.randomUUID(), json: input });
   if (res.status !== 201) throw new Error(`create goal failed ${res.status}: ${await res.text()}`);
   return ((await res.json()) as { goal: GoalView }).goal;
 }
 
-/** Life `L` › Yearly `Y` › Quarterly `Q` › Monthly `M`, plus a second Yearly `Y2` on the same Life root. */
+export function createGoalRaw(t: TestApp, cookie: string, input: Record<string, unknown>) {
+  return t.fetch('/api/goals', { method: 'POST', cookie, idempotencyKey: crypto.randomUUID(), json: input });
+}
+
+/**
+ * Life `L` › Yearly `Y` › Quarterly `Q` › Monthly `M`, plus a second Yearly `Y2` on the same Life root,
+ * and — ⚠ **A2** — a **Weekly** `W` under `M` for the current week, because that is now the only kind of
+ * goal that can hold a task (R-goal-39).
+ */
 export async function makeLine(t: TestApp, cookie: string) {
   const life = await createGoal(t, cookie, { title: 'Health', horizon: 'Life' });
   const yearly = await createGoal(t, cookie, { title: 'Strong year', horizon: 'Yearly', parentId: life.id });
   const quarterly = await createGoal(t, cookie, { title: 'Q push', horizon: 'Quarterly', parentId: yearly.id });
   const monthly = await createGoal(t, cookie, { title: 'This month', horizon: 'Monthly', parentId: quarterly.id });
+  const weekly = await createGoal(t, cookie, { title: 'This week', horizon: 'Weekly', parentId: monthly.id });
   const yearly2 = await createGoal(t, cookie, { title: 'Other year', horizon: 'Yearly', parentId: life.id });
-  return { life, yearly, quarterly, monthly, yearly2 };
+  return { life, yearly, quarterly, monthly, weekly, yearly2 };
 }
 
-export async function goalsIn(t: TestApp, cookie: string, week?: number): Promise<GoalView[]> {
-  const res = await t.fetch(`/api/goals${week === undefined ? '' : `?week=${week}`}`, { cookie });
+/** R-lens-16 — one lens read. `period` omitted means the current period of that horizon (R-lens-14). */
+export async function lens(
+  t: TestApp,
+  cookie: string,
+  q: { lens: Horizon; period?: string; limit?: number; cursor?: string } = { lens: 'Weekly' },
+): Promise<LensResponse> {
+  const params = new URLSearchParams({ lens: q.lens });
+  if (q.period !== undefined) params.set('period', q.period);
+  if (q.limit !== undefined) params.set('limit', String(q.limit));
+  if (q.cursor !== undefined) params.set('cursor', q.cursor);
+  const res = await t.fetch(`/api/goals?${params.toString()}`, { cookie });
   if (res.status !== 200) throw new Error(`GET /goals failed ${res.status}: ${await res.text()}`);
-  return ((await res.json()) as GoalsResponse).goals;
+  return (await res.json()) as LensResponse;
 }
 
-export async function goalById(t: TestApp, cookie: string, id: string, week?: number): Promise<GoalView> {
-  const all = await goalsIn(t, cookie, week);
-  const goal = all.find((g) => g.id === id);
-  if (!goal) throw new Error(`goal ${id} not in the tree`);
+/** One goal as its own lens renders it. */
+export async function goalInLens(t: TestApp, cookie: string, goal: GoalView): Promise<GoalView> {
+  const res = await lens(t, cookie, { lens: goal.horizon, ...(goal.horizon === 'Life' ? {} : { period: goal.periodKey }) });
+  const found = [...res.items, ...res.carried].find((g) => g.id === goal.id);
+  if (!found) throw new Error(`goal ${goal.id} is not in the ${goal.horizon} lens for ${goal.periodKey}`);
+  return found;
+}
+
+/**
+ * A goal written DIRECTLY, bypassing the routes.
+ *
+ * ⚠ **A2** — the one thing this exists for is a **past period**: R-goal-36 refuses that write through
+ * the product, deliberately and permanently, so the carried band (R-lens-12) and the migration's own
+ * fixtures cannot be arranged any other way. It writes through the same port and the same
+ * `GuardedBatch` the service uses, so nothing here depends on a private table shape.
+ */
+export async function seedGoal(
+  t: TestApp,
+  userId: string,
+  input: { parentId: string | null; horizon: Horizon; title: string; periodKey?: string; why?: string; createdAt?: string },
+): Promise<Goal> {
+  const now = t.clock.nowIso();
+  const periodKey = input.periodKey ?? '';
+  const goal: Goal = {
+    id: ids.ulid(),
+    userId,
+    parentId: input.parentId,
+    horizon: input.horizon,
+    title: input.title,
+    why: input.why ?? '',
+    pulse: 'On track',
+    periodKey,
+    period: labelOf(input.horizon, periodKey),
+    createdAt: input.createdAt ?? now,
+    updatedAt: input.createdAt ?? now,
+    version: 1,
+  };
+  const c = t.container();
+  await c.resolve(GuardedBatch).run([{ label: 'seed.goal', stmt: c.resolve<IGoalRepo>(IGoalRepo).insertStmt(goal) }]);
   return goal;
 }
 
-export function savePlan(t: TestApp, cookie: string, weekStart: string, entries: { goalId: string; sentence: string }[]) {
-  return t.fetch('/api/plan', { method: 'PUT', cookie, idempotencyKey: crypto.randomUUID(), json: { weekStart, entries } });
-}
-
-export async function planIn(t: TestApp, cookie: string, week?: number): Promise<PlanResponse> {
-  const res = await t.fetch(`/api/plan${week === undefined ? '' : `?week=${week}`}`, { cookie });
-  if (res.status !== 200) throw new Error(`GET /plan failed ${res.status}: ${await res.text()}`);
-  return (await res.json()) as PlanResponse;
-}
-
-/** A focus row for a week the plan endpoint refuses to write (R-plan-2: current week only). */
-export async function seedFocus(t: TestApp, userId: string, goalId: string, weekStart: string, sentence: string) {
-  const now = t.clock.nowIso();
-  const focus: WeeklyFocus = { id: ids.ulid(), userId, goalId, weekStart, sentence, createdAt: now, updatedAt: now };
-  const c = t.container();
-  await c
-    .resolve(GuardedBatch)
-    .run([{ label: 'focus.insert', stmt: c.resolve<IWeeklyFocusRepo>(IWeeklyFocusRepo).insertStmt(focus) }]);
-  return focus;
-}
-
-/** An open task with an explicit origin week — R-task-5 forbids back-dating through the API. */
+/**
+ * An open task with an explicit origin week.
+ *
+ * R-task-41 forbids back-dating through the API, and R-task-40 gives a task no week parameter at all, so
+ * a task that originated in a past week can only be arranged this way.
+ */
 export async function seedTask(t: TestApp, userId: string, goalId: string, originWeekStart: string, title = 'work') {
   const now = t.clock.nowIso();
   const task: Task = {
@@ -98,10 +137,7 @@ export async function seedTask(t: TestApp, userId: string, goalId: string, origi
   return task;
 }
 
-/**
- * Backlog items and learnings for the Q-5 cascade tests. `BacklogService` / `LearningService` are other
- * agents' stubs today, so these rows are written straight through the repos.
- */
+/** Backlog items and learnings for the Q-5 cascade tests. */
 export async function seedBacklogItem(t: TestApp, userId: string, goalId: string, title = 'someday') {
   const now = t.clock.nowIso();
   const item: BacklogItem = {
@@ -158,6 +194,17 @@ export async function tasksUnder(t: TestApp, userId: string, goalIds: string[]):
   return t.container().resolve<ITaskRepo>(ITaskRepo).listByGoals(userId, goalIds);
 }
 
-export async function focusesUnder(t: TestApp, userId: string, goalIds: string[]): Promise<WeeklyFocus[]> {
-  return t.container().resolve<IWeeklyFocusRepo>(IWeeklyFocusRepo).listByGoals(userId, goalIds);
+/**
+ * Every goal in the account, straight from D1.
+ *
+ * ⚠ **A2 (R-lens-27)** — this is deliberately **raw SQL in a test helper and not a repository method**.
+ * `IGoalRepo.listAll` was deleted precisely so no production path can read every goal, and adding it
+ * back "just for tests" is one refactor away from a caller. A test that needs the whole table — the
+ * migration audit, and the `UNSORTED` fixture — reaches past the port on purpose, and the fact that it
+ * has to is the assertion.
+ */
+export async function allGoalsRaw(t: TestApp, userId: string): Promise<Goal[]> {
+  const db = t.container().resolve<{ all: (q: unknown) => Promise<unknown[]> }>(DB);
+  const rows = await db.all(sql`SELECT * FROM goals WHERE user_id = ${userId} ORDER BY created_at, id`);
+  return rows as Goal[];
 }

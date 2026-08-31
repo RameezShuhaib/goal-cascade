@@ -63,10 +63,11 @@ const ROUTES: Row[] = [
   { method: 'PATCH', path: ENDPOINTS.goal(ULID), json: { title: 'Renamed' } },
   { method: 'DELETE', path: ENDPOINTS.goal(ULID) },
   { method: 'POST', path: ENDPOINTS.goalMove(ULID), json: { parentId: ULID }, command: true },
-  { method: 'POST', path: ENDPOINTS.goalReplan(ULID), json: { period: '2027' }, command: true },
+  { method: 'POST', path: ENDPOINTS.goalReplan(ULID), json: { periodKey: '2027' }, command: true },
+  // A2, new (R-lens-22, R-goal-46).
+  { method: 'GET', path: ENDPOINTS.goalsZoom },
+  { method: 'POST', path: ENDPOINTS.goalsRepeatWeek, json: { lifeGoalId: ULID, weekStart: '2026-08-31' }, command: true },
 
-  { method: 'GET', path: ENDPOINTS.plan },
-  { method: 'PUT', path: ENDPOINTS.plan, json: { weekStart: '2026-08-31', entries: [] }, command: true },
 
   { method: 'GET', path: ENDPOINTS.tasks },
   { method: 'POST', path: ENDPOINTS.tasks, json: { goalId: ULID, title: 'Do the thing' }, command: true },

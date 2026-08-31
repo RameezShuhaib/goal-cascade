@@ -29,6 +29,7 @@ const makeGoal = (userId: string): Goal => ({
   title: 'Financial freedom',
   why: '',
   pulse: 'On track',
+  periodKey: '',
   period: '',
   createdAt: t.clock.nowIso(),
   updatedAt: t.clock.nowIso(),

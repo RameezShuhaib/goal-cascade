@@ -1,6 +1,5 @@
-import { WEEK_HISTORY_WEEKS, type WeekView } from '@goal-cascade/shared';
+import type { WeekView } from '@goal-cascade/shared';
 import type { RequestContext } from '../application/context';
-import { DomainError } from '../domain/errors';
 import { weekStartFromOffset } from '../domain/weeks';
 
 /**
@@ -10,25 +9,35 @@ import { weekStartFromOffset } from '../domain/weeks';
  * one. `ctx.currentWeekStart` was resolved once per request from the OWNER's timezone (R-auth-5), so
  * two devices in different zones resolve `week=-1` to the same Monday.
  *
- * The schema already refuses a positive offset (`WeekOffset`), so a `WEEK_OUT_OF_RANGE` here means the
- * caller reached past the addressable history — which the week switcher cannot do (R-nav-3/4, D-24).
- * Anything older is still readable by naming its `weekStart` explicitly (Q-13); this bound is the
- * switcher's, and it is one number for both controls.
+ * ── ⚠ **A2 (R-lens-7, R-rm-3) — this function used to be the chokepoint, and both of its bounds are
+ * gone** ───────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * It carried two refusals:
+ *
+ *  1. `if (offset > 0) throw WEEK_OUT_OF_RANGE` — "future weeks are not addressable". **Deleted.** Any
+ *     future period is reachable and writable at every horizon (R-goal-36, owner decision 5), and the
+ *     forward chevron is never disabled (S-lens-7-3). One line, and it gated `/goals`, `/tasks`,
+ *     `/bootstrap` and every MCP week tool at once.
+ *  2. `if (offset < -(maxHistory - 1))` — the 8-week picker window. **Deleted.** `WEEK_HISTORY_WEEKS`
+ *     stops being a bound (R-rm-3); there is no picker to enumerate (R-lens-17), and greying out the back
+ *     chevron at the account's first period would cost a `MIN(period_key)` probe on every render. A bound
+ *     in one direction only rebuilds D-24's asymmetry, and D-24 is now satisfied by construction: one
+ *     control per dimension, so no two controls can disagree about a range.
+ *
+ * **What replaced the forward guard, and where.** The bound that actually mattered — you cannot complete
+ * work in a week that has not happened — was being inherited here for free. It is now stated explicitly
+ * in the two places that own it: `CompleteTaskRequest.week`'s own `.max(0)` (R-task-44, S-rm-3-1) and
+ * `TaskService.resolveWeekFor`. Removing this guard without adding those would have been a **silent**
+ * regression with no diff on either line.
+ *
+ * What remains is `WeekOffset`'s own `±520`, which is the absolute storage range and not a product rule.
  */
-/**
- * `maxHistory` is annotated `number` rather than left to inference: `WEEK_HISTORY_WEEKS` is `8 as const`,
- * so the default alone would type the parameter as the literal `8` and no other bound could be passed.
- * The MCP surface passes its own (`api/mcp/shapes.ts`) — the 8-week clamp is the WEEK SWITCHER's range
- * (R-nav-4, D-24), a UI bound, and an agent has no switcher.
- */
-export function resolveWeek(ctx: RequestContext, offset = 0, maxHistory: number = WEEK_HISTORY_WEEKS): WeekView {
-  if (offset > 0) throw new DomainError('WEEK_OUT_OF_RANGE', 'future weeks are not addressable', { offset });
-  if (offset < -(maxHistory - 1)) {
-    throw new DomainError('WEEK_OUT_OF_RANGE', `the week switcher reaches back ${maxHistory} weeks`, { offset, maxHistory });
-  }
+export function resolveWeek(ctx: RequestContext, offset = 0): WeekView {
+  const weekStart = weekStartFromOffset(ctx.currentWeekStart, offset);
   return {
-    weekStart: weekStartFromOffset(ctx.currentWeekStart, offset),
+    weekStart,
     offset,
     isCurrent: offset === 0,
+    isPast: offset < 0,
   };
 }

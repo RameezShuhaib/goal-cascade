@@ -1,32 +1,30 @@
 import type { Horizon } from '@goal-cascade/shared';
 import { GuardedBatch } from '../../src/application/services';
-import {
-  IBacklogRepo,
-  IGoalRepo,
-  ILearningRepo,
-  ITaskRepo,
-  IWeeklyFocusRepo,
-} from '../../src/application/ports';
-import type { Goal, WeeklyFocus } from '../../src/domain/entities';
+import { IBacklogRepo, IGoalRepo, ILearningRepo, ITaskRepo } from '../../src/application/ports';
+import type { Goal } from '../../src/domain/entities';
+import { labelOf } from '../../src/domain/periods';
 import { ids, type TestApp } from '../helpers/app';
 
 /**
  * Direct-repo fixtures for the backlog / capture / bootstrap suites.
  *
- * `GoalService` and `PlanService` belong to other agents and are still stubs, so a goal tree and a
- * weekly focus cannot be built over HTTP yet. These write the same rows those services will, through
- * the SAME ports and the SAME `GuardedBatch` — so nothing here depends on a private table shape, and
- * when those services land these helpers can be swapped for `POST /goals` + `PUT /plan` one call at a
- * time without touching a single assertion.
+ * They write through the SAME ports and the SAME `GuardedBatch` the services use, so nothing here
+ * depends on a private table shape. What they buy that HTTP cannot is a goal in a PAST period, which
+ * R-goal-36 refuses through the product deliberately and permanently.
+ *
+ * ⚠ **A2 (R-rm-2)** — `seedFocus` is gone with `weekly_focus`. A week's intention is a `seedGoal` with
+ * `horizon: 'Weekly'` and the week's Monday as its `periodKey`, and several under one parent is how a
+ * week holds several intentions (R-goal-31).
  */
 
 export type Fixture = { t: TestApp; userId: string; cookie: string };
 
 export async function seedGoal(
   f: Fixture,
-  input: { parentId: string | null; horizon: Horizon; title: string; period?: string; why?: string },
+  input: { parentId: string | null; horizon: Horizon; title: string; periodKey?: string; why?: string },
 ): Promise<Goal> {
   const c = f.t.container();
+  const periodKey = input.periodKey ?? '';
   const goal: Goal = {
     id: ids.ulid(),
     userId: f.userId,
@@ -35,31 +33,14 @@ export async function seedGoal(
     title: input.title,
     why: input.why ?? '',
     pulse: 'On track',
-    period: input.period ?? '',
+    periodKey,
+    period: labelOf(input.horizon, periodKey),
     createdAt: f.t.clock.nowIso(),
     updatedAt: f.t.clock.nowIso(),
     version: 1,
   };
   await c.resolve(GuardedBatch).run([{ label: 'seed.goal', stmt: c.resolve<IGoalRepo>(IGoalRepo).insertStmt(goal) }]);
   return goal;
-}
-
-/** D-2 — "active this week" is exactly "a `weekly_focus` row exists for this week". */
-export async function seedFocus(f: Fixture, goalId: string, weekStart: string, sentence = 'Ship the thing'): Promise<WeeklyFocus> {
-  const c = f.t.container();
-  const focus: WeeklyFocus = {
-    id: ids.ulid(),
-    userId: f.userId,
-    goalId,
-    weekStart,
-    sentence,
-    createdAt: f.t.clock.nowIso(),
-    updatedAt: f.t.clock.nowIso(),
-  };
-  await c
-    .resolve(GuardedBatch)
-    .run([{ label: 'seed.focus', stmt: c.resolve<IWeeklyFocusRepo>(IWeeklyFocusRepo).insertStmt(focus) }]);
-  return focus;
 }
 
 /** Q-5 — the goals agent's cascade nulls Learning tags rather than deleting them. */
@@ -90,4 +71,13 @@ export async function openTasksUnder(f: Fixture, goalIds: string[]) {
 /** Every backlog row, converted ones included — a list endpoint deliberately hides those (R-backlog-6). */
 export async function backlogRow(f: Fixture, id: string) {
   return f.t.container().resolve<IBacklogRepo>(IBacklogRepo).findById(f.userId, id);
+}
+
+/**
+ * ⚠ **A2 (R-goal-31)** — a **weekly goal** for `weekStart` under `parentId`: the thing that replaced a
+ * focus row. Several under one parent in one week is normal — that is how a week holds more than one
+ * intention — and it is the only kind of goal a task may hang off (R-goal-39).
+ */
+export function seedWeeklyGoal(f: Fixture, parentId: string, weekStart: string, title = 'Ship the thing'): Promise<Goal> {
+  return seedGoal(f, { parentId, horizon: 'Weekly', title, periodKey: weekStart });
 }

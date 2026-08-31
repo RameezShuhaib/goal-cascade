@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { inject, injectable } from 'tsyringe';
+import { chunkIds } from '../../application/ports';
 import type { ILearningRepo, IPreferencesRepo, IUserRepo, WriteStmt } from '../../application/ports';
 import { DB } from '../../application/services/guarded-batch';
 import type { AuthUser, Learning, Preferences } from '../../domain/entities';
@@ -80,14 +81,23 @@ export class D1LearningRepo implements ILearningRepo {
       .all();
   }
 
-  /** R-learning-5 — the learnings on a Life root's whole line (the caller passes the root's id set). */
-  listByGoals(userId: string, goalIds: readonly string[]): Promise<Learning[]> {
-    return this.db
-      .select()
-      .from(learnings)
-      .where(and(eq(learnings.userId, userId), inArray(learnings.goalId, ids(goalIds))))
-      .orderBy(desc(learnings.capturedAt), desc(learnings.id))
-      .all();
+  /**
+   * R-learning-5 — the learnings on a Life root's whole line (the caller passes the root's id set), and
+   * Q-5's untag preview, which passes a whole subtree. **Chunked** for the second case.
+   */
+  async listByGoals(userId: string, goalIds: readonly string[]): Promise<Learning[]> {
+    if (goalIds.length === 0) return [];
+    const pages = await Promise.all(
+      chunkIds(goalIds).map((part) =>
+        this.db
+          .select()
+          .from(learnings)
+          .where(and(eq(learnings.userId, userId), inArray(learnings.goalId, part)))
+          .orderBy(desc(learnings.capturedAt), desc(learnings.id))
+          .all(),
+      ),
+    );
+    return pages.flat();
   }
 
   insertStmt(learning: Learning): WriteStmt {
