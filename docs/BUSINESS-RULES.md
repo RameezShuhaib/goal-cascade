@@ -18,7 +18,7 @@ The rules of the final design, by entity. This is the contract the UI already im
 
 ## Weekly focus
 
-- One sentence per leaf per week, written in **Weekly planning** (Edit plan — current week only).
+- One or more sentences per leaf per week, written in **Weekly planning** (Edit plan — the current week, or any of the next 4). Several sentences for the same goal in the same week are an ordered list of intents; tasks hang off the goal and the week, not off a particular sentence.
 - Checking a leaf activates it (focus sentence required for it to stick); unchecking clears the focus → dormant.
 - Planning is **pull-based**: under each checked leaf, "From the backlog" lists items from that leaf's monthly goal and its ancestors; tapping one opens the task-create modal pre-filled.
 
@@ -26,7 +26,7 @@ The rules of the final design, by entity. This is the contract the UI already im
 
 - Lives under an active leaf's weekly focus. Created from: planning/+ Task, a Backlog pull, an Idea ("Task this week"), or the + drawer with "Also add to the current week".
 - Fields: `title` (required), `cond` done-condition (**optional**), optional `desc` description and external `links`.
-- **Week model**: `originWeek` (creation week offset), `doneWeek` (completion week or null). Weeks start **Monday**; offsets ≤ 0; future weeks not selectable.
+- **Week model**: `originWeek` (creation week offset), `doneWeek` (completion week or null). Weeks start **Monday**. The current week and the next 4 are planable, so a task can be created in a week that has not started yet; it is invisible until that week arrives, and it never carries a late chip before then. A task can only be **completed** in a week that has already begun.
   - An **open** task is visible in every week ≥ its origin — it auto-carries into the current week with no prompt or wizard.
   - A **done** task is visible only in the week it was completed, with a muted "Done Fri 28 Aug" date.
 - **Carry labels** (in the viewed week, age = viewWeek − originWeek):
@@ -47,7 +47,7 @@ The rules of the final design, by entity. This is the contract the UI already im
 - Created from: the global **+** drawer (goal defaults to last used), a goal detail "+ Add", a task moved out of a week, or an Idea attached to a goal.
 - **The only way backlog becomes work**: "Add to this week" → opens the standard task-create modal pre-filled; on save the item is **converted** (removed), never duplicated. If the item's branch has no active weekly focus: "This branch isn't active this week" → [Set a weekly focus] / [Cancel].
 - Other actions: Move to another goal (any non-life goal), Delete.
-- Grouped by life goal › sub-goal (branch path), newest first. A life goal's detail screen shows a **read-only aggregate** of its descendants' items, each labeled with its goal.
+- Grouped by life goal › sub-goal (branch path). Within a goal the order is yours: newest first until you rearrange it, then whatever order you put it in. Reordering works by dragging and by keyboard alike. A life goal's detail screen shows a **read-only aggregate** of its descendants' items, each labeled with its goal.
 
 ## Idea (parking lot)
 
@@ -64,6 +64,6 @@ The rules of the final design, by entity. This is the contract the UI already im
 ## Navigation & system
 
 - Tabs: Tasks · Goals · **+** (opens the Add-to-Backlog drawer; "View Backlog →" inside reaches the full page) · Ideas · Learnings.
-- Tasks header: week switcher (chevrons + week picker; current week default; past weeks labeled "still editable"), goal filter pills with open-task counts, Edit plan top-right (current week only).
+- Tasks header: week switcher (chevrons + week picker; current week default; past weeks labeled "still editable", future weeks labeled "planned"), goal filter pills with open-task counts, Edit plan top-right (current week or any of the next 4). Today's counts never include future work.
 - Every page: consistent top-right cluster — theme toggle (light/dark) + one primary action.
 - Removed entirely: weekly review wizard, push flow with mandatory reasons, audit-trail views, week reports, carry-count flags.
