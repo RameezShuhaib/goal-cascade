@@ -1,78 +1,79 @@
-import { useStore } from '../store';
+import { useState } from 'react';
+import type { BacklogItemView } from '@goal-cascade/shared';
+import { useUI } from '../context/UIContext';
+import { useBacklog, useGoals } from '../api/queries';
 import { TopActions } from '../components/TopActions';
-import { chipBtn, colors, dangerBtn, eyebrow, h1, menuBtn, page, sectionLabel, serif, topBtn } from '../ui';
+import { BacklogItemCard } from '../components/BacklogItemCard';
+import { Empty, Loading, LoadError } from '../components/states';
+import { useSkin } from '../skin';
+import { lifeGoals, nonLifeGoals, rootIdOfGoalId } from '../utils/tree';
 
+/**
+ * R-backlog-13 — the full backlog page: grouped by `<Life goal> › <owning goal>`, newest first.
+ *
+ * The order is the SERVER's (`capturedAt` desc, `id` desc — Q-7/D-17). The mockup relied on array
+ * insertion order and stored display strings like `'Today'` and `'25 Aug'`, which no refetch could sort;
+ * here the row renders `capturedAt` and never stores what it renders.
+ *
+ * R-nav-2 — this page has no tab. It is reached from the `+` drawer or a Life goal's detail screen.
+ */
 export function BacklogScreen() {
-  const s = useStore();
-  const st = s.st;
-  const groups: { title: string; items: typeof st.backlog }[] = [];
-  s.lifeGoals().forEach((lg) => {
-    s.nonLife()
-      .filter((g) => s.rootOf(g).id === lg.id)
-      .forEach((g) => {
-        const items = st.backlog.filter((b) => b.goalId === g.id);
-        if (items.length) groups.push({ title: `${lg.title} › ${g.title}`, items });
-      });
-  });
+  const S = useSkin();
+  const ui = useUI();
+  const backlogQ = useBacklog();
+  const goalsQ = useGoals(0);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const goals = goalsQ.data?.goals ?? [];
+  const items = backlogQ.data?.items ?? [];
+
+  const groups: { key: string; title: string; items: BacklogItemView[] }[] = [];
+  for (const life of lifeGoals(goals)) {
+    for (const g of nonLifeGoals(goals)) {
+      if (rootIdOfGoalId(goals, g.id) !== life.id) continue;
+      const mine = items.filter((b) => b.goalId === g.id);
+      if (mine.length) groups.push({ key: g.id, title: `${life.title} › ${g.title}`, items: mine });
+    }
+  }
+  // D-27 — an item whose goal is missing from this payload must still be reachable, not silently dropped.
+  const grouped = new Set(groups.flatMap((grp) => grp.items.map((b) => b.id)));
+  const orphans = items.filter((b) => !grouped.has(b.id));
+  if (orphans.length) groups.push({ key: '__orphans', title: 'Elsewhere', items: orphans });
+
+  const failed = backlogQ.error ?? goalsQ.error;
+  const pending = (backlogQ.isPending || goalsQ.isPending) && !failed;
 
   return (
-    <div style={page} data-screen-label="Backlog">
+    <div style={S.page} data-screen-label="Backlog">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div>
-          <div style={eyebrow}>Deferred work</div>
-          <h1 style={{ ...h1, marginTop: 2 }}>Backlog</h1>
+          <div style={S.eyebrow}>Deferred work</div>
+          <h1 style={{ ...S.h1, marginTop: 2 }}>Backlog</h1>
         </div>
         <TopActions>
-          <button style={topBtn} onClick={() => s.openBacklogDrawer()}>+ Add</button>
+          <button type="button" style={S.topBtn} onClick={() => ui.openSheet({ kind: 'backlogDrawer' })}>
+            + Add
+          </button>
         </TopActions>
       </div>
-      {st.backlog.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '44px 24px' }}>
-          <div style={{ ...serif, fontSize: 18, color: '#4a4a44' }}>Nothing in the backlog.</div>
-          <div style={{ fontSize: 13.5, color: colors.mut, marginTop: 6 }}>Future work lives here until you pull it into a week.</div>
+
+      {pending && <Loading label="Loading the backlog…" />}
+      {failed && <LoadError error={failed} what="the backlog" onRetry={() => void backlogQ.refetch()} />}
+
+      {!pending && !failed && items.length === 0 && (
+        <div style={{ marginTop: 20 }}>
+          <Empty title="Nothing in the backlog." body="Future work lives here until you pull it into a week." />
         </div>
       )}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginTop: 20 }}>
         {groups.map((grp) => (
-          <div key={grp.title}>
-            <div style={{ ...sectionLabel, marginBottom: 7 }}>{grp.title}</div>
+          <div key={grp.key}>
+            <div style={{ ...S.sectionLabel, marginBottom: 7 }}>{grp.title}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {grp.items.map((b) => {
-                const sel = st.selBacklog === b.id;
-                return (
-                  <div key={b.id} style={{ background: '#fff', borderRadius: 12, padding: '12px 14px', border: `1px solid ${sel ? 'oklch(0.75 0.06 125)' : colors.line}` }}>
-                    <button onClick={() => s.set({ selBacklog: sel ? null : b.id, blMoving: false })} style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none', padding: 0, cursor: 'pointer', minHeight: 44 }}>
-                      <div style={{ fontSize: 14.5, color: colors.ink }}>{b.title}</div>
-                      <div style={{ fontSize: 12, color: colors.mut, marginTop: 3 }}>Added {b.when}</div>
-                      {b.desc && <div style={{ fontSize: 13, color: '#4a4a44', marginTop: 4 }}>{b.desc}</div>}
-                      {b.links.length > 0 && (
-                        <div style={{ fontSize: 12, fontWeight: 700, color: colors.accentLink, marginTop: 3 }}>
-                          {b.links.length} link{b.links.length > 1 ? 's' : ''}
-                        </div>
-                      )}
-                      {b.fromWeek && <div style={{ fontSize: 11.5, color: colors.faint, marginTop: 2 }}>from {b.fromWeek}</div>}
-                    </button>
-                    {sel && st.blMoving && (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-                        {s.nonLife()
-                          .filter((x) => x.id !== b.goalId)
-                          .map((x) => (
-                            <button key={x.id} style={chipBtn(false)} onClick={() => s.moveBacklogItem(b.id, x.id)}>
-                              {x.title}
-                            </button>
-                          ))}
-                      </div>
-                    )}
-                    {sel && !st.blMoving && (
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-                        <button style={menuBtn} onClick={() => s.pullToWeek(b)}>Add to this week</button>
-                        <button style={menuBtn} onClick={() => s.set({ blMoving: true })}>Move to another goal</button>
-                        <button style={dangerBtn} onClick={() => s.deleteBacklogItem(b.id)}>Delete</button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {grp.items.map((b) => (
+                <BacklogItemCard key={b.id} item={b} goals={goals} selected={selected === b.id} onSelect={setSelected} />
+              ))}
             </div>
           </div>
         ))}

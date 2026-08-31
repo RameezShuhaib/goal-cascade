@@ -170,6 +170,110 @@ export const learning = (over: Partial<LearningView> = {}): LearningView => ({
   ...over,
 });
 
+// ---- a tree that tells a story --------------------------------------------
+//
+// The screen tests need a cascade with real shape, not two rows: two Life lines, one active leaf, three
+// dormant ones, and an unrelated Monthly goal so the move sheet can show BOTH disabled reasons.
+//
+//   L  Be strong at 60            (Life)      branches 1 of 2
+//   └ Y  Get back under 80kg      (Yearly)
+//     └ Q  Rebuild the gym habit  (Quarterly)
+//       ├ M  Lift three times a week   (Monthly)  ACTIVE — "Three sessions, no excuses."
+//       └ D  Sleep before midnight     (Monthly)  dormant
+//   L2 Ship the thing             (Life)      branches 0 of 1
+//   └ Y2 Launch v1                (Yearly)
+//     └ M2 Write the changelog     (Monthly)  dormant
+//
+// Ordered parents-before-children, then `createdAt` — the order the server guarantees (Q-7). Nothing in
+// the app re-sorts, so a fixture in the wrong order would be a real finding.
+
+export const L = ulid(1);
+export const M = ulid(2);
+export const Y = ulid(3);
+export const Q = ulid(4);
+export const D = ulid(5);
+export const L2 = ulid(6);
+export const Y2 = ulid(7);
+export const M2 = ulid(8);
+
+const BASE: GoalView[] = [
+  goal({ id: L, title: 'Be strong at 60', branches: { active: 1, total: 2 }, subtreeActive: true }),
+  goal({ id: Y, parentId: L, horizon: 'Yearly', title: 'Get back under 80kg', period: '2026', why: '', branches: null, subtreeActive: true }),
+  goal({ id: Q, parentId: Y, horizon: 'Quarterly', title: 'Rebuild the gym habit', period: 'Q3 2026', why: '', branches: null, subtreeActive: true }),
+  goal({
+    id: M,
+    parentId: Q,
+    horizon: 'Monthly',
+    title: 'Lift three times a week',
+    period: 'Sep 2026',
+    why: '',
+    focus: 'Three sessions, no excuses.',
+    isLeaf: true,
+    isActive: true,
+    subtreeActive: true,
+    branches: null,
+  }),
+  goal({
+    id: D,
+    parentId: Q,
+    horizon: 'Monthly',
+    title: 'Sleep before midnight',
+    period: 'Sep 2026',
+    why: '',
+    isLeaf: true,
+    dormant: true,
+    subtreeActive: false,
+    branches: null,
+  }),
+  goal({ id: L2, title: 'Ship the thing', why: '', branches: { active: 0, total: 1 }, subtreeActive: false }),
+  goal({ id: Y2, parentId: L2, horizon: 'Yearly', title: 'Launch v1', period: '2026', why: '', branches: null, subtreeActive: false }),
+  goal({
+    id: M2,
+    parentId: Y2,
+    horizon: 'Monthly',
+    title: 'Write the changelog',
+    period: 'Sep 2026',
+    why: '',
+    isLeaf: true,
+    dormant: true,
+    subtreeActive: false,
+    branches: null,
+  }),
+];
+
+/** The tree, with per-goal overrides keyed by id: `tree({ [F.M]: { isActive: false } })`. */
+export const tree = (over: Record<string, Partial<GoalView>> = {}): GoalView[] => BASE.map((g) => ({ ...g, ...(over[g.id] ?? {}) }));
+
+export const treeResponse = (over: Record<string, Partial<GoalView>> = {}, w = week()) => ({
+  week: w,
+  goals: tree(over),
+  serverNow: NOW,
+});
+
+/** One goal's detail screen, built out of the same tree so the two can never disagree. */
+export const detailOf = (
+  id: string,
+  extra: { backlog?: BacklogItemView[]; backlogIsAggregate?: boolean; learnings?: LearningView[] } = {},
+) => {
+  const all = tree();
+  const self = all.find((g) => g.id === id)!;
+  const ancestors: GoalView[] = [];
+  let p = all.find((g) => g.id === self.parentId);
+  while (p) {
+    ancestors.unshift(p);
+    p = all.find((g) => g.id === p!.parentId);
+  }
+  return {
+    goal: self,
+    ancestors,
+    children: all.filter((g) => g.parentId === id),
+    backlog: extra.backlog ?? [],
+    backlogIsAggregate: extra.backlogIsAggregate ?? self.parentId === null,
+    learnings: extra.learnings ?? [],
+    serverNow: NOW,
+  };
+};
+
 // ---- whole responses -------------------------------------------------------
 
 export const goalsResponse = () => ({ week: week(), goals: [goal(), leaf()], serverNow: NOW });
