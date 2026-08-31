@@ -18,3 +18,6 @@ apps/api/worker-configuration.d.ts
 
 # agent worktrees
 .claude/
+
+# production secret values kept locally (Cloudflare cannot show a secret back after it is set)
+.secrets-production.txt

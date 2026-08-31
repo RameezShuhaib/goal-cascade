@@ -32,6 +32,14 @@ export default defineConfig({
         // makes an offline open render in Manrope instead of falling back to the system font mid-session.
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        // The service worker is built as its own bundle, and vite-plugin-pwa is hoisted to the workspace
+        // root — so it resolves the ROOT's vite (8.x, rolldown) while the app below builds with this
+        // package's vite 5. Without an explicit target that second bundle inherits vite's default browser
+        // list, which includes safari14, and esbuild refuses to down-transform Workbox's destructuring to
+        // it ("Transforming destructuring to the configured target environment is not supported yet") —
+        // 40 errors, no `dist`, no deploy. Service workers only ever run in browsers that already support
+        // all of this, so targeting them directly is correct rather than a workaround.
+        target: 'es2022',
       },
       devOptions: { enabled: false },
       // Vitest loads this config too; building a service worker has nothing to do there, and the
