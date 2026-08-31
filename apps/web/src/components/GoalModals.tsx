@@ -375,6 +375,31 @@ const countsOf = (r: DeleteGoalResponse): DeleteCounts => ({
 /** True when a delete would destroy anything at all — the whole test for "does this need confirming?". */
 const destroysSomething = (c: DeleteCounts): boolean => c.subGoals + c.tasks + c.backlogItems > 0;
 
+/** The three nouns Q-5 names, in the order it names them. */
+const REMOVED_NOUNS: ReadonlyArray<readonly [keyof DeleteCounts, string]> = [
+  ['subGoals', 'sub-goal'],
+  ['tasks', 'task'],
+  ['backlogItems', 'backlog item'],
+];
+
+/**
+ * `2 tasks and 1 backlog item` — the losses, and only the losses.
+ *
+ * Q-5 asks for the counts to be named; it does not ask for zeroes to be named, and the browser walkthrough
+ * caught "This removes 0 sub-goals, 2 tasks and 1 backlog item" reading as clumsy in a strip that otherwise
+ * only names what is actually lost. A category at zero is dropped; `plural` still decides each surviving
+ * noun's ending, so `1 backlog item` stays singular. The list joins with commas and a final "and", so one
+ * category reads `2 tasks`, two read `2 tasks and 1 backlog item`, three keep the original sentence.
+ *
+ * Never called with every count at zero: that is `destroysSomething() === false`, which has its own copy
+ * ("This goal holds nothing else") precisely because there is no list to write here.
+ */
+const removalList = (c: DeleteCounts): string => {
+  const parts = REMOVED_NOUNS.filter(([k]) => c[k] > 0).map(([k, noun]) => plural(c[k], noun));
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+};
+
 /**
  * Q-5 — delete, and the acknowledgement it needs.
  *
@@ -450,10 +475,7 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
         {checking
           ? 'Checking what this would remove…'
           : counts && destroys
-            ? `This removes ${plural(counts.subGoals, 'sub-goal')}, ${plural(counts.tasks, 'task')} and ${plural(
-                counts.backlogItems,
-                'backlog item',
-              )}. Ideas and learnings tagged here move to Unsorted. There is no undo.`
+            ? `This removes ${removalList(counts)}. Ideas and learnings tagged here move to Unsorted. There is no undo.`
             : counts
               ? 'This goal holds nothing else. There is no trash and no undo.'
               : 'There is no trash and no undo.'}

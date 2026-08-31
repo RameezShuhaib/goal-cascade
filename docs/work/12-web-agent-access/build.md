@@ -293,3 +293,87 @@ was touched. Everything below is what the web client now does instead.
 - §3 #6's note to narrow `AGENT_TOKEN_QUIET` once the API decides: `NOT_FOUND` no longer needs to be quiet
   for the reason given there (the route ships), but it is left in place — it is not this change's call to
   make, and quieting it costs nothing while `refusalCopy` still explains it in the field.
+
+## Walkthrough fixes
+
+Three defects the browser walkthrough (`docs/work/09-e2e-browser/report.md#agent-access--deletion-confirmation`)
+found in the shipped UI. Narrow fixes; nothing was redesigned, no test was weakened, and
+`apps/api/**` and `packages/shared/**` were not touched — the backend was already right.
+
+### 1. The MCP URL was show-once, and is not a secret
+
+`AgentAccess` rendered the URL only inside the `Revealed` panel, so the endpoint inherited the
+token's show-once behaviour: dismiss the reveal and the only in-app way to read
+`https://goals.rameezshuhaib.com/mcp` back was to **replace the token** — destroying a working
+credential to recover a public string.
+
+`CopyRow` for the MCP URL now renders in the non-revealed branch too, so it is present in **every**
+state: while the status read is in flight, when it fails, when there is no token yet, when one
+exists, and while the password form is up. The reveal panel keeps its own copy of the row (it shows
+`phase.mcpUrl`, the value the create response named), so nothing about the show-once path changed.
+
+Confirmed against the contract rather than assumed: `ApiTokenStatusResponse` declares `mcpUrl` as a
+**required** `z.url()` alongside `token: … .nullable()` (`packages/shared/src/commands.ts`), and
+`me.routes.ts` builds it from `new URL(c.req.url).origin` before it asks the service whether a token
+exists — so the status read carries it when `token` is `null`. The client reads
+`statusQ.data.mcpUrl`; the origin-derived string is only the fallback for a read that has not landed
+or has failed, which is what it already was.
+
+Empty state before a token exists is deliberate, not incidental: knowing the endpoint is part of
+deciding whether to make a credential for it.
+
+### 2. Copy feedback was assistive-only
+
+The button already flipped `Copy` → `Copied` for `COPIED_MS`, but the walkthrough looked for
+confirmation and saw none — a 12px word swapping inside a control the eye has just left is easy to
+miss, and the only other channel was the 1×1 visually-hidden `aria-live` node.
+
+So the visible channel is now two things, not one: the label flip **plus** a
+`Copied to the clipboard.` line in the same slot the clipboard refusal uses, directly under the
+value it is about. Both are per-row state (`copied.field`), so copying the URL never confirms the
+token and vice versa — the confirmation moves rather than accumulating. The live region is
+**unchanged**: it still says which value (`MCP URL copied to the clipboard.`), still says it once,
+and is still the only thing a screen reader is given. `S.T.mut` is the app's existing quiet grey
+(4.61:1 on `paper`, 4.99:1 on `card`); no colour was introduced, so `tests/contrast.test.ts` has
+nothing new to check.
+
+The toast was considered and rejected. `UIToast` sits at `zIndex: 60` and would clear the sheet's
+`43`, but the confirmation belongs at the point of action — one of two adjacent rows — and a
+floating bar at the bottom of the screen cannot say which row without repeating its label.
+
+Clipboard failure was re-checked, since the walkthrough never exercised it: both rungs still work
+(`lib/clipboard.ts` unchanged), the value is still focused and selected, the two keys are still
+named, and the button still refuses to claim a success it did not have. It is now covered in the
+resting state as well as in the reveal.
+
+### 3. "removes 0 sub-goals"
+
+`DeleteGoalSheet` interpolated all three counts unconditionally, so a Monthly leaf read
+`This removes 0 sub-goals, 2 tasks and 1 backlog item.` — naming a loss that is not a loss.
+`removalList()` in `components/GoalModals.tsx` drops any category at zero and joins what is left
+with commas and a final "and": one category reads `2 tasks`, two read `2 tasks and 1 backlog item`,
+three keep the original sentence exactly. `plural()` still decides each surviving noun's ending, so
+`1 backlog item` stays singular.
+
+`destroysSomething()` is unchanged and still gates the branch, so `removalList` is never called with
+every count at zero — that is the empty-goal state, which keeps its own distinct copy
+("This goal holds nothing else. There is no trash and no undo.") and its plain `Delete` button.
+
+### Tests
+
+Twelve added, none removed or weakened; `apps/web` goes 222 → 234.
+
+- **`tests/screens/agentAccess.test.tsx`** — a new `the MCP URL is not show-once` describe covering
+  the five states (no token, no token with a server-named `mcpUrl`, resting beside an existing
+  token, after `Done` dismisses the reveal, and during the password form), plus four in
+  `— copying`: the visible confirmation alongside the live region, per-row independence across both
+  controls, the revert after `COPIED_MS` under fake timers, and a copy — and a refusal — driven from
+  the resting state.
+- **`tests/screens/goals.test.tsx`** — one existing assertion was **corrected, not retired**: `THE
+  BUG: a leaf goal with no sub-goals…` asserted `/0 sub-goals, 40 tasks and 6 backlog items/`, which
+  encoded the defect. It now asserts the whole sentence and that `0 sub-goals` is absent. Two tests
+  added for the one-category (`1 task`) and two-category (`1 sub-goal and 1 backlog item`) joins,
+  each also asserting the omitted category is unnamed.
+
+The keyboard test still passes unchanged — the two new focusable elements sit inside the Account
+sheet, so the trap and the tab order are as they were.

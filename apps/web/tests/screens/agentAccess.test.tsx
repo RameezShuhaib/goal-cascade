@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { AppShell } from '../../src/AppShell';
 import { renderApp } from '../render';
@@ -100,6 +100,81 @@ describe('Agent access — placement', () => {
     server.use(http.get('/api/me/api-token', () => HttpResponse.json(F.agentTokenStatus())));
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText(/ends in 34kt/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The endpoint URL is not a secret and must not behave like one.
+ *
+ * The browser walkthrough found it rendered ONLY inside the one-shot reveal panel, which made the URL
+ * show-once too: dismiss the panel and the only in-app way to read it back was to replace the token — that
+ * is, to destroy a working credential to recover a public string. `mcpUrl` is a required field of
+ * `ApiTokenStatusResponse` and the API fills it from the request origin before it looks at whether a token
+ * exists, so the status read can carry the section in every state.
+ */
+describe('Agent access — the MCP URL is not show-once', () => {
+  it('is shown BEFORE any token exists, so the endpoint is known while deciding whether to make one', async () => {
+    const { user } = renderApp(<AppShell />);
+    await openAccount(user);
+
+    expect(await screen.findByText('No token yet.')).toBeInTheDocument();
+    expect(screen.getByLabelText('MCP URL')).toHaveValue(`${window.location.origin}/mcp`);
+    expect(screen.getByRole('button', { name: 'Copy MCP URL' })).toBeInTheDocument();
+    // The endpoint is public; the credential is not, and there is not one yet.
+    expect(screen.queryByLabelText('Token')).not.toBeInTheDocument();
+  });
+
+  it('and in the no-token state the value is the SERVER’s mcpUrl, not one derived from this origin', async () => {
+    // `token: null` and a named URL — exactly what a deployment on its own hostname answers a fresh
+    // account with. If the client derived the URL instead of reading it, this would be the jsdom origin.
+    const named = 'https://goals.example.test/mcp';
+    server.use(http.get('/api/me/api-token', () => HttpResponse.json(F.agentTokenAbsent({ mcpUrl: named }))));
+    const { user } = renderApp(<AppShell />);
+    await openAccount(user);
+
+    await waitFor(() => expect(screen.getByLabelText('MCP URL')).toHaveValue(named));
+  });
+
+  it('is shown in the resting state beside an existing token, without replacing anything', async () => {
+    withToken();
+    const { user } = renderApp(<AppShell />);
+    await openAccount(user);
+
+    expect(await screen.findByText(/ends in 34kt/)).toBeInTheDocument();
+    expect(screen.getByLabelText('MCP URL')).toHaveValue(`${window.location.origin}/mcp`);
+    // Reading the URL costs no request that mints anything.
+    expect(requests('POST', '/api/me/api-token')).toHaveLength(0);
+  });
+
+  it('THE BUG: dismissing the show-once panel takes the token away and leaves the URL', async () => {
+    let exists = false;
+    server.use(
+      http.get('/api/me/api-token', () => HttpResponse.json(exists ? F.agentTokenStatus() : F.agentTokenAbsent())),
+      http.post('/api/me/api-token', cmd(() => {
+        exists = true;
+        return HttpResponse.json(F.agentTokenCreated(), { status: 201 });
+      })),
+    );
+    const { user } = renderApp(<AppShell />);
+    await reveal(user);
+
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+
+    expect(screen.queryByDisplayValue(F.PLAINTEXT_TOKEN)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Token')).not.toBeInTheDocument();
+    // Still there, still copyable, and no replace was needed to get it back.
+    expect(screen.getByLabelText('MCP URL')).toHaveValue(`${window.location.origin}/mcp`);
+    expect(screen.getByRole('button', { name: 'Copy MCP URL' })).toBeInTheDocument();
+  });
+
+  it('and it stays put while the password form is open, so it is never the thing you lose by asking', async () => {
+    withToken();
+    const { user } = renderApp(<AppShell />);
+    await openAccount(user);
+
+    await user.click(await screen.findByRole('button', { name: 'Replace token' }));
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    expect(screen.getByLabelText('MCP URL')).toHaveValue(`${window.location.origin}/mcp`);
   });
 });
 
@@ -259,6 +334,101 @@ describe('Agent access — copying', () => {
     // Confirming one does not confirm the other.
     expect(await screen.findByRole('button', { name: 'MCP URL copied' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy Token' })).toBeInTheDocument();
+  });
+
+  /**
+   * The walkthrough's second finding: the ONLY confirmation was the 1×1 visually-hidden live region, so a
+   * screen-reader user was told and a sighted user was not. The live region stays — this adds the visible
+   * channel beside it, and asserts the two are independent per row, so "which one did I just copy?" is
+   * never a question.
+   */
+  it('VISIBLE FEEDBACK: a copy that works says so on screen, not only to a screen reader', async () => {
+    const { user } = renderApp(<AppShell />);
+    await reveal(user);
+    stubClipboard(async () => {});
+
+    await user.click(screen.getByRole('button', { name: 'Copy Token' }));
+
+    // Seen: the button flips, and a line lands under the value it is about.
+    expect(await screen.findByRole('button', { name: 'Token copied' })).toHaveTextContent('Copied');
+    expect(screen.getByText('Copied to the clipboard.')).toBeInTheDocument();
+    // Heard: the live region is unchanged, and still says WHICH value.
+    expect(screen.getByText('Token copied to the clipboard.')).toBeInTheDocument();
+  });
+
+  it('and the two rows confirm independently — copying one never says the other was copied', async () => {
+    const { user } = renderApp(<AppShell />);
+    await reveal(user);
+    stubClipboard(async () => {});
+
+    await user.click(screen.getByRole('button', { name: 'Copy MCP URL' }));
+    // Exactly one visible confirmation, and it is inside the MCP URL's own row.
+    const confirmations = await screen.findAllByText('Copied to the clipboard.');
+    expect(confirmations).toHaveLength(1);
+    expect(confirmations[0]!.parentElement).toContainElement(screen.getByLabelText('MCP URL'));
+    expect(screen.getByRole('button', { name: 'Copy Token' })).toHaveTextContent('Copy');
+
+    // Copying the second moves the confirmation rather than accumulating one.
+    await user.click(screen.getByRole('button', { name: 'Copy Token' }));
+    const moved = await screen.findAllByText('Copied to the clipboard.');
+    expect(moved).toHaveLength(1);
+    expect(moved[0]!.parentElement).toContainElement(screen.getByLabelText('Token'));
+    expect(screen.getByRole('button', { name: 'Copy MCP URL' })).toHaveTextContent('Copy');
+  });
+
+  it('the visible confirmation reverts on its own, so it reads as an event and not as a state', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { user } = renderApp(<AppShell />);
+      await reveal(user);
+      stubClipboard(async () => {});
+
+      await user.click(screen.getByRole('button', { name: 'Copy Token' }));
+      expect(await screen.findByText('Copied to the clipboard.')).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+
+      expect(screen.queryByText('Copied to the clipboard.')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copy Token' })).toHaveTextContent('Copy');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the MCP URL copies from the RESTING state too, with the same visible confirmation', async () => {
+    // The row exists before any token does, so its copy affordance has to work there — that is the whole
+    // point of showing it: a person setting a client up reaches for the URL without minting anything.
+    const { user } = renderApp(<AppShell />);
+    await openAccount(user);
+    await screen.findByText('No token yet.');
+    const clipboard = stubClipboard(async () => {});
+
+    await user.click(screen.getByRole('button', { name: 'Copy MCP URL' }));
+
+    expect(clipboard.writeText).toHaveBeenCalledWith(`${window.location.origin}/mcp`);
+    expect(await screen.findByText('Copied to the clipboard.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'MCP URL copied' })).toHaveTextContent('Copied');
+    expect(screen.getByText('MCP URL copied to the clipboard.')).toBeInTheDocument();
+    expect(requests('POST', '/api/me/api-token')).toHaveLength(0);
+  });
+
+  it('a refusal in the resting state still selects the value and names the two keys', async () => {
+    const { user } = renderApp(<AppShell />);
+    await openAccount(user);
+    await screen.findByText('No token yet.');
+    removeClipboard();
+
+    await user.click(screen.getByRole('button', { name: 'Copy MCP URL' }));
+
+    const field = screen.getByLabelText('MCP URL') as HTMLInputElement;
+    expect(await screen.findByText(/press ⌘C, or Ctrl\+C, to copy it/)).toBeInTheDocument();
+    expect(field).toHaveFocus();
+    expect(field.selectionEnd).toBe(field.value.length);
+    // A refusal never claims the success it did not have — on the button or in the line beneath it.
+    expect(screen.getByRole('button', { name: 'Copy MCP URL' })).toHaveTextContent('Copy');
+    expect(screen.queryByText('Copied to the clipboard.')).not.toBeInTheDocument();
   });
 
   it('CLIPBOARD REFUSED: the value is selected, the two keys are named, and a reader is told', async () => {

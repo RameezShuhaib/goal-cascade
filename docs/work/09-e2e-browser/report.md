@@ -466,3 +466,85 @@ warnings, no React key/act noise.
    SR benefit without the box.
 
 No other regression found. Fixes 1, 2 and 3 all pass.
+
+## Agent access + deletion confirmation
+
+Verified 2026-08-31 in Chrome against https://goals.rameezshuhaib.com after unregistering the
+service worker and deleting both caches (`workbox-precache-v2-...`, `goal-cascade-read-models`),
+so this is the new build and not a cached one.
+
+### Feature 1 — Agent access (API token): PASS with one gap
+
+- **Discoverable.** Lives in the Account sheet as an `AGENT ACCESS` section between "Verify this
+  email address" and "Sign out". Copy is jargon-light: "One token lets an MCP client read and
+  change this cascade. There is only ever one, and it is stored hashed — so it is shown once,
+  when it is made."
+- **Existing token.** Resting state shows `Created Mon 31 Aug · ends in t97c` — created date plus
+  last-4, no secret. Confirmed via DOM dump that the plaintext appears nowhere in the document.
+- **Wrong password.** Deliberately wrong password returned the specific inline message
+  **"That password doesn't match."** in red under the field — not a generic validation error. PASS.
+- **Correct password.** New token revealed once in a bordered panel headed "This is the only time
+  the token is shown. Copy it now — if it gets away, make a new one." with MCP URL and Token rows,
+  each with its own Copy button, plus a Done button.
+- **MCP URL.** Value is exactly `https://goals.rameezshuhaib.com/mcp` with its own copy control.
+  ⚠️ **Gap:** the MCP URL is shown *only* in the show-once reveal panel. In the resting state
+  (existing token) and in the "No token yet." state it is absent from the sheet entirely. Since the
+  reveal is one-shot, a user who dismisses it can never see the MCP URL again without replacing
+  their token — which invalidates the credential they already deployed. The URL is not a secret and
+  should be shown persistently.
+- **Copy feedback.** ⚠️ **Second gap:** clicking Copy writes an announcement
+  ("Token copied to the clipboard.") into an `aria-live` region, but that region is a 1×1
+  absolutely-positioned visually-hidden node. The button label does not change and nothing visible
+  appears — polled the DOM at 120ms intervals for ~700ms after a programmatic click and the button
+  read "Copy" throughout. Screen-reader users get feedback; sighted users get none.
+- **Show-once holds.** Closed the sheet and reopened it: the panel is gone, the row reads
+  `Created Mon 31 Aug · ends in tUEI` (last-4 correctly tracking the new token), and a full
+  `document.body.innerHTML` search for the plaintext returned false. PASS.
+- **Revoke.** Two-step: an in-page strip reading "Revoke this token? Anything using it stops
+  working." with `Revoke` / `Keep it`. Confirming drops the section to "No token yet." + "Create a
+  token". Creation from the empty state also requires the password. PASS.
+
+Tokens generated during this run: `...t97c` (pre-existing, replaced) → `...tUEI` (replaced) →
+revoked → current. **Current valid token: `gcm_yRlZu9gUOGnRKhQATt5tljrMidEii2TjaHI0TlDLCuM`**
+(MCP URL `https://goals.rameezshuhaib.com/mcp`).
+
+### Feature 2 — Goal deletion confirmation: PASS
+
+Setup: created `ZZ Throwaway parent` (Life) → `ZZ Throwaway leaf` (Monthly), gave the leaf a weekly
+focus, two tasks (`ZZ task one`, `ZZ task two`) and one backlog item (`ZZ backlog item`).
+
+- **Leaf confirmation, counts correct.** In-page strip (no native dialog):
+  > Delete "ZZ Throwaway leaf"?
+  > This removes 0 sub-goals, 2 tasks and 1 backlog item. Ideas and learnings tagged here move to
+  > Unsorted. There is no undo.
+  Matches exactly what was created.
+- **Recursive counts correct.** Opened the same confirmation on the *parent* (cancelled without
+  deleting): "This removes 1 sub-goal, 2 tasks and 1 backlog item." — descendant tasks and backlog
+  are rolled up, and singular/plural is handled per-noun.
+- **Cancel really cancels.** "Keep it" on the leaf, then reopened the goal detail: weekly focus,
+  both tasks and the backlog item all still present. Nothing deleted.
+- **Delete really deletes.** "Delete everything" removed the leaf; the Tasks tab no longer contains
+  the focus card or either task; the parent's chip fell to "0 of 0 branches active".
+- **Empty goal does not nag.** Deleting the now-empty parent shows a shorter strip — "This goal
+  holds nothing else. There is no trash and no undo." — and the primary button reads plain `Delete`
+  rather than `Delete everything`. It still asks once, which is right for an irreversible action,
+  but it does not enumerate zeroes. A "Goal deleted" toast follows.
+- **Tone.** Reads careful rather than alarming: lowercase prose, "Keep it" as the escape hatch
+  (not "Cancel"), and it says where ideas/learnings *go* rather than only what is lost. The one
+  nit is "0 sub-goals" in the leaf case — naming a zero is slightly clumsy in a strip that
+  otherwise only names real losses; dropping zero-valued nouns would read better.
+
+Cleanup: both throwaway goals deleted. Nothing pre-existing was touched (`Learn to sail` /
+`MCP e2e test`, created by an earlier run, left alone).
+
+### Console
+
+Clean. `read_console_messages` over a fresh load plus the Account-sheet interaction returned zero
+messages of any level — no errors, no warnings.
+
+### Worst problem
+
+The MCP URL is only rendered inside the one-shot reveal panel. Because the token is show-once, a
+user who closes the sheet loses the endpoint URL permanently and the only in-app way to see it
+again is to replace the token — which breaks whatever is already using it. Show the MCP URL
+persistently in the resting state.

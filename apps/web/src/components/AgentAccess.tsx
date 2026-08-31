@@ -103,8 +103,11 @@ export function AgentAccess() {
 
   const token = statusQ.data?.token ?? null;
   /**
-   * Never a hardcoded hostname. The server names it if it can; otherwise it is this origin plus `/mcp`,
-   * which is right in dev, in preview and in production without a build flag.
+   * The endpoint, in every state. Never a hardcoded hostname: the status read names it — `mcpUrl` is a
+   * REQUIRED field of `ApiTokenStatusResponse` and is present whether or not `token` is null, because
+   * `me.routes.ts` derives it from the request origin before it looks at whether a token exists. The
+   * fallback below is only for the reads that have not landed or have failed; it is this origin plus
+   * `/mcp`, which is right in dev, in preview and in production without a build flag.
    */
   const originMcpUrl = statusQ.data?.mcpUrl ?? (typeof window !== 'undefined' ? `${window.location.origin}${MCP_PATH}` : MCP_PATH);
 
@@ -181,6 +184,24 @@ export function AgentAccess() {
             One token lets an MCP client read and change this cascade. There is only ever one, and it is stored hashed — so it is shown
             once, when it is made.
           </p>
+
+          {/*
+           * The MCP URL, in EVERY state — before a token exists, while one exists, and while the password
+           * form is up. It is not a secret: it is the same string for everybody on this deployment, the
+           * status read carries it whether or not `token` is null (`ApiTokenStatusResponse.mcpUrl` is
+           * required, `me.routes.ts` fills it from the request origin either way), and it is available
+           * nowhere else in the product. Rendering it only inside the show-once panel made the endpoint
+           * show-once too: dismissing the reveal left replacing a working credential as the only way to
+           * read a public string back. Only the token itself is shown once.
+           */}
+          <CopyRow
+            id={urlId}
+            label="MCP URL"
+            value={originMcpUrl}
+            fieldRef={urlRef}
+            state={copied?.field === 'url' ? copied.result : null}
+            onCopy={() => void onCopy('url', originMcpUrl)}
+          />
 
           {statusQ.isPending && (
             <p style={{ fontSize: 13, color: S.T.mut, margin: '0 0 10px 0' }}>Checking…</p>
@@ -403,6 +424,17 @@ function CopyRow({
           {state === 'copied' ? 'Copied' : 'Copy'}
         </button>
       </div>
+      {state === 'copied' && (
+        /*
+         * The VISIBLE half of the confirmation. The button already flips to "Copied", but the browser
+         * walkthrough went looking for feedback and found none it could see — a 12px word swapping inside a
+         * control the eye has just left is easy to miss, and the only other channel was the visually-hidden
+         * live region. So the confirmation also lands in the slot the refusal uses, right under the value it
+         * is about, which is what makes it unambiguous WHICH of the two rows was copied. `S.T.mut` is the
+         * app's ordinary quiet grey (4.61:1 on `paper`) — a confirmation does not need a new colour.
+         */
+        <p style={{ fontSize: 12, color: S.T.mut, margin: '5px 0 0 0', lineHeight: 1.45 }}>Copied to the clipboard.</p>
+      )}
       {state === 'unavailable' && (
         // `S.body`, not the amber `S.warn`: this is an instruction that must be read at 12px, and `warn` is
         // tuned for a one-word row label rather than for a sentence that has to clear 4.5:1 on `paper`.

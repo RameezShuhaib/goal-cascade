@@ -259,10 +259,46 @@ describe('Goals — delete (Q-5)', () => {
     await openDelete(user, 'Lift three times a week');
 
     // `GOAL_HAS_CHILDREN` would never have fired here: this goal has no descendant goals at all.
-    expect(await screen.findByText(/0 sub-goals, 40 tasks and 6 backlog items/)).toBeInTheDocument();
+    // The sentence names the two categories that exist and omits the one at zero — the browser
+    // walkthrough's nit. Every count is still the server's; only the zero is unsaid.
+    expect(
+      await screen.findByText('This removes 40 tasks and 6 backlog items. Ideas and learnings tagged here move to Unsorted. There is no undo.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/0 sub-goals/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Delete everything' }));
     await waitFor(() => expect(seen.deleted).toContain(F.M));
     expect(seen.cascade).toBe('true');
+  });
+
+  /**
+   * The walkthrough's nit: "This removes 0 sub-goals, 2 tasks and 1 backlog item" names a loss that is not
+   * a loss. Only the categories that actually exist are listed — the numbers are unchanged, and so is the
+   * per-noun singular/plural, which is easy to lose when a list stops being three fixed slots.
+   */
+  it('zero categories are not named, and the surviving nouns keep their singular and plural', async () => {
+    withTree();
+    withDeletePreview({ subGoals: 0, tasks: 1, backlogItems: 0 });
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await openDelete(user, 'Lift three times a week');
+
+    // One category, so no comma and no "and" — and `1 task`, not `1 tasks`.
+    expect(await screen.findByText(/^This removes 1 task\. Ideas and learnings/)).toBeInTheDocument();
+    expect(screen.queryByText(/sub-goal/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/backlog item/)).not.toBeInTheDocument();
+  });
+
+  it('two categories join with "and", with the singular of each preserved', async () => {
+    withTree();
+    withDeletePreview({ subGoals: 1, tasks: 0, backlogItems: 1 });
+    const { user } = renderApp(<AppShell />);
+    await openGoals(user);
+
+    await openDelete(user, 'Rebuild the gym habit');
+
+    expect(await screen.findByText(/^This removes 1 sub-goal and 1 backlog item\./)).toBeInTheDocument();
+    expect(screen.queryByText(/0 tasks/)).not.toBeInTheDocument();
   });
 
   it('the counts are the SERVER’s, and the button is not offered until they land', async () => {
