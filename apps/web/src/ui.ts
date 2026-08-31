@@ -22,7 +22,19 @@ export const colors = {
   line: '#e7e7e2',
   lineSoft: '#f0f0eb',
   border: '#dededa',
-  mut: '#8a8a82',
+  /**
+   * Secondary text — tab bar, breadcrumbs, section headers, eyebrows. It is used at 11–13.5px, so WCAG AA
+   * asks for 4.5:1 and the large-text exemption does not apply.
+   *
+   * Was `#8a8a82`, which is 3.21:1 on `paper` and 3.48:1 on `card` — a fail on both, and most of the app's
+   * secondary type (the browser walkthrough's finding B). This is the same colour one step darker in
+   * OKLCH — hue 106.7° and chroma 0.011 unchanged, lightness 0.631 → 0.543 — so the palette's warm grey is
+   * intact and only the contrast moves: 4.61:1 on `paper`, 4.99:1 on `card`.
+   *
+   * `tests/screens/contrast.test.ts` recomputes both ratios (and the dark set's) from these tokens and
+   * fails under 4.5:1, because a comment is not a mechanism.
+   */
+  mut: '#707069',
   faint: '#b5b5ad',
   disabled: '#c0c0b8',
   accent: 'oklch(0.42 0.09 125)',
@@ -314,6 +326,45 @@ function build(T: Tokens) {
       overflow: 'auto',
     } as CSS,
     sheetInner: { maxWidth: 640, margin: '0 auto', padding: '20px 20px 30px 20px' } as CSS,
+
+    /** The sheet header: the heading (the dialog's `aria-labelledby` target) and the quiet ✕. */
+    sheetHeader: { display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 } as CSS,
+    sheetTitle: { flex: 1, minWidth: 0, margin: 0, fontSize: 16, fontWeight: 800, color: T.ink, outlineOffset: 3 } as CSS,
+    /**
+     * The dismiss control. A ✕ in the header, not a button bar: the app's chrome is quiet, and a sheet
+     * that shouts about leaving is a sheet that reads as a commitment.
+     */
+    sheetClose: {
+      width: 36,
+      height: 36,
+      minWidth: 36,
+      marginTop: -6,
+      marginRight: -6,
+      border: 'none',
+      borderRadius: '50%',
+      background: 'none',
+      color: T.mut,
+      fontSize: 16,
+      lineHeight: 1,
+      cursor: 'pointer',
+      padding: 0,
+      fontFamily: 'inherit',
+    } as CSS,
+    /** Shown only when a sheet holding typed work is asked to close (see `Sheet`'s `unsaved`). */
+    discardBar: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+      background: T.paper,
+      border: `1px solid ${T.border}`,
+      borderRadius: 12,
+      padding: '9px 12px',
+      marginBottom: 12,
+      fontSize: 13,
+      fontWeight: 600,
+      color: T.ink,
+    } as CSS,
 
     /** The dashed frame every empty state in the mockup uses. */
     dashed: { background: T.card, border: `1px dashed ${T.border}`, borderRadius: 16 } as CSS,

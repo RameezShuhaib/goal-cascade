@@ -10,7 +10,7 @@ import {
   useTask,
 } from '../api/queries';
 import { useSkin } from '../skin';
-import { Sheet, SheetGrip } from './Sheet';
+import { Sheet } from './Sheet';
 import { FieldError, Loading, LoadError, commandError } from './states';
 import { instantLabel } from '../utils/dates';
 import { hostOf, node, pathOf } from '../utils/tree';
@@ -41,8 +41,7 @@ export function TaskDetailSheet({ taskId }: { taskId: string }) {
 
   if (taskQ.isPending || !task) {
     return (
-      <Sheet label="Task detail" onClose={close}>
-        <SheetGrip />
+      <Sheet label="Task detail" grip onClose={close}>
         {taskQ.error ? <LoadError error={taskQ.error} what="this task" onRetry={() => void taskQ.refetch()} /> : <Loading />}
       </Sheet>
     );
@@ -73,8 +72,7 @@ export function TaskDetailSheet({ taskId }: { taskId: string }) {
   };
 
   return (
-    <Sheet label="Task detail" onClose={close}>
-      <SheetGrip />
+    <Sheet label="Task detail" grip unsaved={dirty} onClose={close}>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: S.T.mut }}>
         {goal ? pathOf(goalsQ.data?.goals ?? [], goal).join(' › ') : ''}
       </div>
@@ -247,9 +245,8 @@ export function ConfirmTaskExitSheet({ taskId, exit }: { taskId: string; exit: '
   const title = exit === 'backlog' ? 'Move to Backlog' : 'Cancel task';
 
   return (
-    <Sheet label="Confirm" onClose={close}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>{title}</div>
-      <div style={{ fontSize: 14, color: S.body, margin: '6px 0 14px 0' }}>
+    <Sheet label={title} onClose={close}>
+      <div style={{ fontSize: 14, color: S.body, margin: '0 0 14px 0' }}>
         {task ? `“${task.title}” → ${exit === 'backlog' ? `${owner?.title ?? 'its goal'}’s backlog` : 'dropped'}` : '…'}
       </div>
       <input aria-label="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why? (optional)" style={S.input} />
@@ -273,9 +270,8 @@ export function InactiveBranchSheet({ title }: { title: string }) {
   const S = useSkin();
   const ui = useUI();
   return (
-    <Sheet label="Branch not active" onClose={() => ui.closeSheet()}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>This branch isn&apos;t active this week</div>
-      <div style={{ fontSize: 13.5, color: S.T.mut, margin: '4px 0 16px 0' }}>
+    <Sheet label="This branch isn't active this week" onClose={() => ui.closeSheet()}>
+      <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 16px 0' }}>
         &quot;{title}&quot; can only become a task under an active weekly focus.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

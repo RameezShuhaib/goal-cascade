@@ -114,7 +114,7 @@ describe('Plan — pull-based planning', () => {
     await openPlan(user);
 
     await user.click(await screen.findByRole('button', { name: '+ Find a squat rack free at 7am' }));
-    expect(await screen.findByRole('dialog', { name: 'Task create' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'New task' })).toBeInTheDocument();
     expect(screen.getByLabelText('Task title')).toHaveValue('Find a squat rack free at 7am');
     // R-backlog-7 — bound to the leaf whose card it was tapped under, so there is nothing to resolve.
     expect(screen.getByLabelText('Weekly focus')).toHaveValue(F.M);

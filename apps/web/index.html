@@ -72,11 +72,41 @@
        * covers the gutters beside the centred 640px column, the safe-area strips, and the overscroll rubber
        * band. The literal is `colors.paper` from `src/ui.ts` — the first-paint value, before React mounts.
        */
-      html, body { margin: 0; padding: 0; background: #f6f6f3; color-scheme: light; }
+      html, body { margin: 0; padding: 0; }
+      html { background: #f6f6f3; color-scheme: light; }
+      /*
+       * The body carries NO background of its own. It used to repeat the light `#f6f6f3` and pin
+       * `color-scheme: light`, both of which survived a switch to dark: native controls, scrollbars and form
+       * widgets kept rendering for a light page inside the dark app (the browser walkthrough's finding C —
+       * the default blue focus ring on the done-condition input), and a light body sat under a dark app
+       * waiting to flash. `color-scheme` is inherited, so `html`'s value — rewritten from the active theme by
+       * `applyDocumentTheme` — now reaches every control, and `html`'s background is the only page colour.
+       *
+       * These two literals are the FIRST-PAINT values only, before React mounts: they can follow nothing but
+       * `prefers-color-scheme` (the CSP forbids an inline script that could read the stored choice), and
+       * `main.tsx` repaints from the stored preference before the tree renders.
+       */
+      @media (prefers-color-scheme: dark) {
+        html { background: #1c1c19; color-scheme: dark; }
+      }
       * { box-sizing: border-box; }
       a { color: oklch(0.45 0.09 125); }
       a:hover { color: oklch(0.35 0.09 125); }
       button, input, textarea, select { font-family: 'Manrope', sans-serif; }
+      /*
+       * The focus ring is the app's own — `colors.green` / `DARK.green`, kept live in `--focus-ring` by
+       * `applyDocumentTheme`. Without it the browser draws its default (blue on a light page, white on a
+       * dark one), which is the one piece of chrome in this app nobody chose. `:focus-visible`, so a mouse
+       * click on a button does not draw one; `:where()`, so a component's own inline styles still win.
+       */
+      :root { --focus-ring: oklch(0.55 0.11 125); }
+      @media (prefers-color-scheme: dark) {
+        :root { --focus-ring: oklch(0.68 0.11 125); }
+      }
+      :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+        outline: 2px solid var(--focus-ring);
+        outline-offset: 2px;
+      }
       /*
        * Installed on a notched phone, the scrolling column has to clear the status bar and the display
        * cutouts. The bottom inset is deliberately *not* applied here — the tab bar is `position: fixed` and

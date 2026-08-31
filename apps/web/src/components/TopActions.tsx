@@ -58,8 +58,7 @@ function AccountSheet({ onClose, onVerify }: { onClose: () => void; onVerify: ()
 
   return (
     <Sheet label="Account" onClose={onClose}>
-      <div style={{ fontSize: 16, fontWeight: 800 }}>Account</div>
-      <div style={{ fontSize: 13.5, color: S.T.mut, margin: '4px 0 16px 0' }}>{user?.email ?? '…'}</div>
+      <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 16px 0' }}>{user?.email ?? '…'}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {user && !user.emailVerified && (
           <button type="button" style={{ ...S.btn(false), width: '100%' }} onClick={onVerify}>

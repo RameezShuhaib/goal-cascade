@@ -119,6 +119,25 @@ export function applyDocumentTheme(tokens: Tokens): void {
   const root = document.documentElement;
   root.style.backgroundColor = tokens.paper;
   root.style.colorScheme = tokens.night ? 'dark' : 'light';
+  /**
+   * The focus ring every control draws (`index.html`'s `:focus-visible` rule reads this). The browser
+   * default is blue on a light page and white on a dark one — the one piece of chrome in this app nobody
+   * chose, and visibly wrong on the task sheet's done-condition input.
+   */
+  root.style.setProperty('--focus-ring', tokens.green);
+  /*
+   * The body followed neither. `index.html` hardcoded `background: #f6f6f3; color-scheme: light` on it, and
+   * a stylesheet declaration beats an inherited value — so in dark mode `getComputedStyle(document.body)`
+   * still said `light`, native controls rendered light inside a dark app, and a light body sat under it
+   * ready to flash white. The rule is gone from `index.html`; these two lines make the body's own state
+   * explicit anyway, so nothing can quietly re-pin it.
+   */
+  // `null` only if this ever runs from `<head>`; the entry module is deferred, so in practice it is there.
+  const body: HTMLElement | null = document.body;
+  if (body) {
+    body.style.backgroundColor = tokens.paper;
+    body.style.colorScheme = tokens.night ? 'dark' : 'light';
+  }
   // Belt and braces against the mockup's filter surviving a hot reload during the migration.
   root.style.filter = '';
   document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', tokens.paper));

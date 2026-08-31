@@ -89,12 +89,13 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
   const blocked = !goalId || !title.trim() || busy || (toWeek && candidates.length > 1 && !chosenFocus);
 
   return (
-    <Sheet label="Add to backlog" onClose={close}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>Add to Backlog</div>
+    <Sheet
+      label="Add to Backlog"
+      onClose={close}
+      headerRight={
         <button
           type="button"
-          style={{ minHeight: 40, border: 'none', background: 'none', fontSize: 13, fontWeight: 700, color: S.T.accentLink, cursor: 'pointer', fontFamily: 'inherit' }}
+          style={{ minHeight: 36, border: 'none', background: 'none', fontSize: 13, fontWeight: 700, color: S.T.accentLink, cursor: 'pointer', fontFamily: 'inherit' }}
           onClick={() => {
             close();
             ui.setScreen('backlog');
@@ -102,8 +103,8 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
         >
           View Backlog →
         </button>
-      </div>
-
+      }
+    >
       <div style={{ ...S.fieldLabel, marginBottom: 6 }}>GOAL</div>
       {targets.length === 0 ? (
         // R-auth-6 / D-10 — a brand-new account has an empty tree. There is no fallback goal to invent.
@@ -312,9 +313,7 @@ export function TaskCreateSheet({
   const blocked = busy || !title.trim() || !goalId;
 
   return (
-    <Sheet label="Task create" onClose={close}>
-      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12, color: S.T.ink }}>New task</div>
-
+    <Sheet label="New task" onClose={close}>
       {noTarget ? (
         <>
           <div style={{ fontSize: 13.5, color: S.T.mut, marginBottom: 14 }}>

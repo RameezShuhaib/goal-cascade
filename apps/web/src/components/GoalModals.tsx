@@ -49,9 +49,8 @@ export function GoalFormSheet({ editId, parentId }: { editId: string | null; par
 
   if (!editing && parent && parent.horizon === 'Monthly') {
     return (
-      <Sheet label="New sub-goal" onClose={close}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>Monthly goals cannot have sub-goals</div>
-        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '6px 0 14px 0' }}>
+      <Sheet label="Monthly goals cannot have sub-goals" onClose={close}>
+        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 14px 0' }}>
           Monthly is the shortest horizon in the cascade — work under it is a task, not another goal.
         </div>
         <button type="button" style={{ ...S.btn(true), width: '100%' }} onClick={close}>
@@ -90,10 +89,7 @@ export function GoalFormSheet({ editId, parentId }: { editId: string | null; par
   };
 
   return (
-    <Sheet label={editing ? 'Edit goal' : 'New goal'} onClose={close}>
-      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 12, color: S.T.ink }}>
-        {editing ? 'Edit goal' : parent ? 'New sub-goal' : 'New goal'}
-      </div>
+    <Sheet label={editing ? 'Edit goal' : parent ? 'New sub-goal' : 'New goal'} onClose={close}>
       <input aria-label="Goal title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Goal title" style={{ ...S.input, marginBottom: 10 }} />
       <input aria-label="Why? One line (optional)" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why? One line (optional)" style={{ ...S.input, marginBottom: 14 }} />
 
@@ -218,8 +214,7 @@ export function MoveGoalSheet({ goalId }: { goalId: string }) {
 
   return (
     <Sheet label="Move goal" onClose={close}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>Move goal</div>
-      <div style={{ fontSize: 13.5, color: S.T.mut, margin: '4px 0 12px 0' }}>
+      <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 12px 0' }}>
         Pick a new parent for &quot;{moving.title}&quot;. Its children move with it.
       </div>
       <input aria-label="Search goals" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search goals…" style={{ ...S.input, minHeight: 44, fontSize: 14, marginBottom: 8 }} />
@@ -289,9 +284,8 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
   // R-goal-21 — not reachable from the menu, and refused server-side with `LIFE_GOAL_IMMUTABLE` anyway.
   if (goal.parentId === null) {
     return (
-      <Sheet label="Re-plan goal" onClose={close}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>A Life goal has no target period</div>
-        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '6px 0 14px 0' }}>Life goals are not re-planned; the branches under them are.</div>
+      <Sheet label="A Life goal has no target period" onClose={close}>
+        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 14px 0' }}>Life goals are not re-planned; the branches under them are.</div>
         <button type="button" style={{ ...S.btn(true), width: '100%' }} onClick={close}>
           Got it
         </button>
@@ -304,8 +298,7 @@ export function ReplanGoalSheet({ goalId }: { goalId: string }) {
 
   return (
     <Sheet label="Re-plan goal" onClose={close}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>Re-plan goal</div>
-      <div style={{ fontSize: 14, color: S.body, margin: '6px 0 14px 0' }}>
+      <div style={{ fontSize: 14, color: S.body, margin: '0 0 14px 0' }}>
         “{goal.title}” · {goal.period || '—'} → {chosen ?? '—'}
       </div>
       <div style={{ ...S.fieldLabel, marginBottom: 6 }}>NEW TARGET PERIOD</div>
@@ -407,17 +400,16 @@ export function DeleteGoalSheet({ goalId }: { goalId: string }) {
     );
 
   return (
-    <Sheet label="Delete goal" onClose={close}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: S.T.ink }}>Delete “{goal.title}”?</div>
+    <Sheet label={`Delete “${goal.title}”?`} onClose={close}>
       {counts ? (
-        <div style={{ fontSize: 13.5, color: S.body, margin: '6px 0 14px 0' }}>
+        <div style={{ fontSize: 13.5, color: S.body, margin: '0 0 14px 0' }}>
           {`This removes ${plural(counts.subGoals, 'sub-goal')}, ${plural(counts.tasks, 'task')} and ${plural(
             counts.backlogItems,
             'backlog item',
           )}. Ideas and learnings tagged here move to Unsorted. There is no undo.`}
         </div>
       ) : (
-        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '6px 0 14px 0' }}>There is no trash and no undo.</div>
+        <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 14px 0' }}>There is no trash and no undo.</div>
       )}
       <FieldError>{counts ? null : commandError(remove.error)}</FieldError>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

@@ -96,7 +96,7 @@ describe('Backlog — conversion, the only way backlog becomes work', () => {
     await user.click(screen.getByRole('button', { name: 'Add to this week' }));
 
     // R-backlog-6 — the standard create modal, pre-filled with the item's title.
-    const sheet = await screen.findByRole('dialog', { name: 'Task create' });
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
     expect(within(sheet).getByLabelText('Task title')).toHaveValue('Find a squat rack free at 7am');
     await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
 
@@ -148,7 +148,7 @@ describe('Backlog — conversion, the only way backlog becomes work', () => {
 
     expect(await screen.findByText("This branch isn't active this week")).toBeInTheDocument();
     expect(screen.getByText('"Find a squat rack free at 7am" can only become a task under an active weekly focus.')).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'Task create' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'New task' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Set a weekly focus' }));
     expect(await screen.findByText('Weekly planning')).toBeInTheDocument();
@@ -177,7 +177,7 @@ describe('Backlog — conversion, the only way backlog becomes work', () => {
     await user.click(screen.getByText('Find a squat rack free at 7am'));
     await user.click(screen.getByRole('button', { name: 'Add to this week' }));
 
-    const sheet = await screen.findByRole('dialog', { name: 'Task create' });
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
     // D-18 — no default selection: `activeLeafFor`'s "first in array order" is exactly what is gone.
     expect(within(sheet).getByLabelText('Weekly focus')).toHaveValue('');
     expect(within(sheet).getByRole('button', { name: 'Save task' })).toBeDisabled();
