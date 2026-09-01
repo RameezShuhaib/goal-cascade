@@ -1,4 +1,5 @@
 import { firstIssueMessage, isTransient, type ApiError } from '../api/errors';
+import { TASKS_LIVE_ON_WEEKLY_GOALS } from '../lens/copy';
 
 /** Which read models are stale after an error, so the screen catches up with whatever really happened. */
 export type Refresh = 'none' | 'goals' | 'tasks' | 'backlog' | 'me' | 'all';
@@ -50,7 +51,7 @@ export function presentError(err: ApiError): ErrorPresentation {
      * sentence is the one the UX plan fixes: **"Tasks live on weekly goals."**
      */
     case 'NOT_A_WEEKLY_GOAL':
-      return e('Tasks live on weekly goals.', { refresh: 'goals' });
+      return e(TASKS_LIVE_ON_WEEKLY_GOALS, { refresh: 'goals' });
     case 'NOT_A_LIFE_GOAL':
       return e('Learnings tag a Life goal, or nothing at all.', { refresh: 'goals' });
     case 'LIFE_GOAL_NO_BACKLOG':

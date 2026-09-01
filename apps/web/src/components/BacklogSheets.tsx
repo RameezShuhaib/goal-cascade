@@ -9,7 +9,7 @@ import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
 import { FieldError, Loading, commandError } from './states';
 import { hostOf } from '../utils/tree';
-import { weekLabel } from '../utils/dates';
+import { shortDate } from '../utils/dates';
 import { lensPath, BACKLOG_PATH } from '../routes';
 import { useWeeklyGoalsUnder } from '../lens/useParentOptions';
 import { implicitWeeklyGoalNote } from '../lens/copy';
@@ -284,8 +284,8 @@ export function TaskCreateSheet({
   const landed = (createdGoalTitle: string | null, landedWeek: string | undefined) => {
     close();
     if (landedWeek) {
-      ui.showToast(`Added to week of ${weekLabel(landedWeek)}`, {
-        detail: createdGoalTitle ? `Added to week of ${weekLabel(landedWeek)}, under ${createdGoalTitle}.` : undefined,
+      ui.showToast(`Added to week of ${shortDate(landedWeek)}`, {
+        detail: createdGoalTitle ? `Added to week of ${shortDate(landedWeek)}, under ${createdGoalTitle}.` : undefined,
       });
       navigate(lensPath('Weekly', landedWeek));
     } else {
@@ -365,7 +365,7 @@ export function TaskCreateSheet({
       {/* Stated before it happens. Nothing may be created invisibly (R-task-49). */}
       {willCreateGoal && weekStart && (
         <div style={{ fontSize: 13, color: S.body, background: S.T.paper, border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px', marginTop: 14 }}>
-          {implicitWeeklyGoalNote(newWeekly!.title, weekLabel(weekStart))}
+          {implicitWeeklyGoalNote(newWeekly!.title, shortDate(weekStart))}
         </div>
       )}
       {item && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>From the backlog: {item.title}</div>}

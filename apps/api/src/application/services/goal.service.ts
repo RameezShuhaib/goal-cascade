@@ -45,7 +45,7 @@ import {
   replanPeriods,
   zoomTo,
 } from '../../domain/periods';
-import { dateInTimezone, offsetOf, weekStartOf, weeksBetween } from '../../domain/weeks';
+import { addWeeks, dateInTimezone, offsetOf, weekStartOf, weeksBetween } from '../../domain/weeks';
 import type { RequestContext } from '../context';
 import {
   IBacklogLinkRepo,
@@ -548,7 +548,7 @@ export class GoalService {
       });
     }
 
-    const previousWeek = addWeeksTo(input.weekStart, -1);
+    const previousWeek = addWeeks(input.weekStart, -1);
     const [source, interiorRows] = await Promise.all([
       this.goals.listWeeklyInWeek(ctx.userId, previousWeek),
       this.goals.listInterior(ctx.userId),
@@ -1015,11 +1015,6 @@ function assertNoPeriodWrite(goal: Goal, patch: Partial<Goal>): void {
   });
 }
 
-/** Local, because `domain/weeks` owns the arithmetic and this file owns no date rules of its own. */
-function addWeeksTo(weekStart: string, n: number): string {
-  const t = Date.parse(`${weekStart}T00:00:00.000Z`);
-  return new Date(t + n * 7 * 86_400_000).toISOString().slice(0, 10);
-}
 
 function learningView(l: Learning): LearningView {
   return {

@@ -15,8 +15,9 @@ import { colors } from '../ui';
  * So: two token sets, one shape. Names mirror `src/ui.ts`'s `colors` so a screen migrates by swapping
  * `colors.x` for `T.x`, and `LIGHT` is `colors` exactly — which is what keeps `src/pwa/manifest.ts`'s
  * install colours (`MANIFEST_THEME_COLOR` = `colors.paper`, `MANIFEST_DARK_THEME_COLOR` = `colors.ink`)
- * honest. `tests/api/theme.test.ts` asserts that pairing so a palette edit cannot silently desync the
- * splash screen from the app.
+ * honest. `tests/pwa/manifest.test.ts` asserts that pairing so a palette edit cannot silently desync the
+ * splash screen from the app. (It named `tests/api/theme.test.ts`, which does not exist — a reader who
+ * greps for the drift alarm should find it, not conclude there is none.)
  */
 export interface Tokens {
   ink: string;
@@ -27,7 +28,6 @@ export interface Tokens {
   lineSoft: string;
   border: string;
   mut: string;
-  faint: string;
   disabled: string;
   accent: string;
   accentSoft: string;
@@ -58,7 +58,6 @@ export const DARK: Tokens = {
   lineSoft: '#2a2a26',
   border: '#3a3a34',
   mut: '#9a9a90',
-  faint: '#6e6e66',
   disabled: '#5a5a53',
   accent: 'oklch(0.78 0.09 125)',
   accentSoft: 'oklch(0.28 0.035 125)',

@@ -67,6 +67,17 @@ describe('web app manifest', () => {
     expect(html).toContain(ICONS.favicon32);
     expect(html).toContain('env(safe-area-inset-top');
     expect(html).toContain('--safe-bottom');
+
+    /**
+     * The property is published *for the tab bar* — `#root`'s padding cannot move it, because it is
+     * `position: fixed`. Declaring it and never consuming it is the failure this catches: it shipped that
+     * way, and on an installed notched phone the bar's 56px buttons sat under the home indicator. The
+     * comment in `index.html` names the consumer, so the consumer is asserted rather than trusted.
+     */
+    const tabBar = readFileSync(join(WEB, 'src', 'components', 'TabBar.tsx'), 'utf8');
+    expect(tabBar, 'index.html publishes --safe-bottom for the tab bar and the tab bar must consume it').toContain(
+      'var(--safe-bottom, 0px)',
+    );
   });
 
   it('self-hosts both fonts and reaches no third-party origin from the HTML', () => {

@@ -2,7 +2,13 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 /**
- * The four workflows, reproduced from `docs/research/MCP-TOOL-SURFACE.md` §4.
+ * The four workflows. `docs/research/MCP-TOOL-SURFACE.md` §4 designs them; **this file is the text.**
+ *
+ * The citation used to read *"reproduced from … §4"*, which was true when it was written and then quietly
+ * stopped being: §4 went on telling the agent to call `set_goal_focus` for a whole release after these
+ * were rewritten, so the stated provenance pointed at the pre-A2 design. §4 is a summary of the shape and
+ * the refusals now, and says so; the exact wording lives here and nowhere else, so there is no second
+ * copy to drift. `tests/mcp/surface.test.ts` checks that §4 still names these four prompts.
  *
  * These are not convenience macros — they are where the product's *judgement* lives. Every one of them
  * ends by constraining what the agent may do on its own: `plan_the_week` forbids creating or completing

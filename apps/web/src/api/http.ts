@@ -268,8 +268,12 @@ export class HttpApiClient {
 
   // ---- tasks --------------------------------------------------------------
   //
-  // ⚠ **A2 (R-rm-5)** — the Tasks SCREEN is gone; this read is not. It survives as one of the Weekly
-  // lens's inputs, minus the plan (R-rm-2) and minus the goal filter (R-rm-4).
+  // ⚠ **A2 (R-rm-5)** — the Tasks SCREEN is gone, and so is this client's use of the read. The Weekly
+  // lens takes its tasks from `LensResponse.tasks` in the same payload as its goals (`useLens`), which is
+  // the whole point of one lens being one request. `GET /tasks` itself is very much alive — it is what
+  // the MCP surface's `list_tasks` is backed by — but on THIS client the only caller is `useTasks`, and
+  // `useTasks` has no production consumer. Kept because the endpoint is real and the wrapper is three
+  // lines; do not describe it as a lens input again.
 
   tasks(q: { week?: number; limit?: number } = {}) {
     return this.request('GET', ENDPOINTS.tasks, TasksResponse, { query: { week: q.week, limit: q.limit } });

@@ -35,7 +35,6 @@ export const colors = {
    * fails under 4.5:1, because a comment is not a mechanism.
    */
   mut: '#707069',
-  faint: '#b5b5ad',
   disabled: '#c0c0b8',
   accent: 'oklch(0.42 0.09 125)',
   accentSoft: 'oklch(0.95 0.025 125)',
@@ -61,15 +60,16 @@ function build(T: Tokens) {
   const onInk = T.paper;
   /** The mockup's `#4a4a44` — body copy a step softer than `ink`. */
   const body = T.night ? '#c9c9c1' : '#4a4a44';
-  /** The mockup's `#2a2a26` — the serif focus sentence. */
+/**
+   * The mockup's `#2a2a26` — the darkest text tone, a step above `ink`.
+   *
+   * ⚠ It was named for the serif focus sentence, which is deleted (R-rm-2). **The token is not**: it is
+   * what `TaskPage` colours the activity timeline with, and the timeline is the one place left that wants
+   * text weightier than body copy.
+   */
   const quote = T.night ? '#dedcd4' : '#2a2a26';
-  /** The move sheet's disabled-reason amber. Never red: an invalid target is information, not a failure. */
-  const warn = T.night ? 'oklch(0.78 0.1 60)' : 'oklch(0.55 0.1 60)';
   /** The ring around a selected list card. */
   const ring = T.night ? 'oklch(0.55 0.07 125)' : 'oklch(0.75 0.06 125)';
-  const softL = T.night ? '0.28' : '0.95';
-  const softC = T.night ? '0.035' : '0.03';
-  const softInk = T.night ? '0.82' : '0.42';
 
   const page: CSS = { maxWidth: 640, margin: '0 auto', padding: '20px 16px 110px 16px' };
   const card: CSS = { background: T.card, border: `1px solid ${T.line}`, borderRadius: 16 };
@@ -90,7 +90,6 @@ function build(T: Tokens) {
     onInk,
     body,
     quote,
-    warn,
     ring,
 
     page,
@@ -256,38 +255,45 @@ function build(T: Tokens) {
       ...(on ? { fontWeight: 800, color: T.ink, boxShadow: `inset 0 3px 0 ${T.green}` } : { fontWeight: 600, color: T.mut }),
     }),
 
-    pulseBadge: (p: Pulse): CSS => ({
-      fontSize: 12,
-      fontWeight: 700,
-      padding: '4px 10px',
-      borderRadius: 11,
-      whiteSpace: 'nowrap',
-      background: `oklch(${softL} ${softC} ${pulseHue(p)})`,
-      color: `oklch(${softInk} 0.1 ${pulseHue(p)})`,
-    }),
-
-    /** R-goal-15 — the pulse dot. `dim` is dormancy, and dormancy must read as intentional, not broken. */
-    dot: (p: Pulse, dim: boolean): CSS => ({
+    /**
+     * R-goal-15 — the pulse dot.
+     *
+     * ⚠ The `dim` parameter is deleted with `pulseBadge` above it. It rendered dormancy at 35% opacity,
+     * and **no goal is muted or greyed anywhere any more** (R-goal-38) — both callers passed `false`, and
+     * `lens/cards.tsx` says why in as many words. A parameter every caller passes the same value to is a
+     * branch that only exists to be got wrong later.
+     */
+    dot: (p: Pulse): CSS => ({
       display: 'inline-block',
       width: 8,
       height: 8,
       minWidth: 8,
       borderRadius: '50%',
       background: `oklch(${T.night ? '0.68' : '0.55'} 0.11 ${pulseHue(p)})`,
-      opacity: dim ? 0.35 : 1,
     }),
 
-    hChip: (active: boolean): CSS => ({
+    /**
+     * ⚠ `hChip` lost its `active` parameter for the same reason: both callers pass `false`, so the
+     * `accentSoft`/`accent` arm was unreachable. A horizon chip labels a horizon; it has never had a
+     * selected state to show.
+     */
+    hChip: (): CSS => ({
       fontSize: 10,
       fontWeight: 800,
       letterSpacing: '0.06em',
       padding: '2px 7px',
       borderRadius: 8,
       whiteSpace: 'nowrap',
-      ...(active ? { background: T.accentSoft, color: T.accent } : { background: T.lineSoft, color: T.mut }),
+      background: T.lineSoft,
+      color: T.mut,
     }),
 
-    pickerRow: (state: 'ok' | 'sel' | 'dis'): CSS => ({
+    /**
+     * ⚠ `pickerRow` lost its `'dis'` state, and `warn` — the amber it was coloured with — went with it.
+     * All five call sites pass `'ok'` or `'sel'`: `GoalModals` records that R-goal-19's two disabled
+     * reasons "no longer have anything to annotate", so there is no disabled row left to render.
+     */
+    pickerRow: (state: 'ok' | 'sel'): CSS => ({
       display: 'flex',
       alignItems: 'center',
       width: '100%',
@@ -300,8 +306,8 @@ function build(T: Tokens) {
       fontSize: 13.5,
       fontWeight: 600,
       fontFamily: 'inherit',
-      color: state === 'dis' ? T.disabled : T.ink,
-      cursor: state === 'dis' ? 'not-allowed' : 'pointer',
+      color: T.ink,
+      cursor: 'pointer',
     }),
 
     /**
@@ -311,7 +317,7 @@ function build(T: Tokens) {
     carryLabel: (sev: 'gray' | 'chip'): CSS =>
       sev === 'chip'
         ? { display: 'inline-block', fontSize: 11.5, fontWeight: 700, color: T.paper, background: T.red, borderRadius: 9, padding: '2px 8px' }
-        : { fontSize: 11.5, fontWeight: 700, color: T.faint },
+        : { fontSize: 11.5, fontWeight: 700, color: T.mut },
 
     overlay: { position: 'fixed', inset: 0, background: 'rgba(20,20,18,0.4)', zIndex: 42 } as CSS,
     sheet: {

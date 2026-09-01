@@ -98,6 +98,17 @@ export const BacklogQuery = z
   .strict();
 
 /**
+ * `?limit=` pages the learnings list (`MAX_PAGE`).
+ *
+ * ⚠ **A2 (Q-12)** — learnings were the one list endpoint the page cap never reached: `GET /learnings`
+ * answered with an unbounded `SELECT`, so an account at Q-12's own 5,000-learning ceiling put 5,000 rows
+ * in one response. Q-12 says *every* list endpoint is capped, and this is the endpoint that made that
+ * false. Same shape as `BacklogQuery` on purpose — a list route that pages differently from its
+ * neighbours is a list route someone gets wrong.
+ */
+export const LearningsQuery = z.object({ limit: z.coerce.number().int().min(1).max(MAX_PAGE).optional() }).strict();
+
+/**
  * Q-5 — deletion cascades the WHOLE subtree (tasks, task events, backlog items) in one transaction;
  * Learning tags pointing into it null out to Unsorted rather than cascading. There is no soft-delete and
  * no trash.
@@ -588,6 +599,7 @@ export type TasksQuery = z.infer<typeof TasksQuery>;
 export type LensQuery = z.infer<typeof LensQuery>;
 export type ZoomQuery = z.infer<typeof ZoomQuery>;
 export type BacklogQuery = z.infer<typeof BacklogQuery>;
+export type LearningsQuery = z.infer<typeof LearningsQuery>;
 export type DeleteGoalQuery = z.infer<typeof DeleteGoalQuery>;
 export type DeleteResponse = z.infer<typeof DeleteResponse>;
 export type DeleteGoalResponse = z.infer<typeof DeleteGoalResponse>;

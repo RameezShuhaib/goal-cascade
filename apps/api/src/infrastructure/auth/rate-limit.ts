@@ -33,7 +33,12 @@ export const AUTH_RATE_LIMIT_RULES = {
   '/change-email': { window: 600, max: 5 },
 } as const;
 
-/** The longest window we can be asked about — how long a counter row stays useful. */
+/**
+ * The longest window we can be asked about — how long a counter row stays useful, and therefore the
+ * cutoff an ops sweep passes to `IAuthRateLimitRepo.purgeBefore`. Its only caller is
+ * `tests/ops-sweep.test.ts`; see the note on that method for why the seam is kept and proven rather than
+ * routed.
+ */
 export const AUTH_RATE_LIMIT_MAX_WINDOW_MS =
   Math.max(AUTH_RATE_LIMIT_WINDOW_S, ...Object.values(AUTH_RATE_LIMIT_RULES).map((r) => r.window)) * 1000;
 

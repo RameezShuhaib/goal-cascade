@@ -67,9 +67,10 @@ for next week reads \`-1\`, never \`+1\`, so a plan never ages and the red chip 
  * anything paginated or unbounded (task activity timelines, historical tasks across all weeks). Those
  * stay behind tools so the agent pays for what it asks for.
  *
- * ⚠ **A2 (R-lens-16, R-rm-2)** — `goalcascade://tree` and `tree/outline` are **lens** resources now:
- * there is no whole-tree read to expose. `goalcascade://week/*` loses its plan half and gains the carried
- * band.
+ * ⚠ **A2 (R-lens-16, R-rm-2)** — `goalcascade://tree` and `tree/outline` are **deleted**, and nothing
+ * replaced them at that URI: there is no whole-tree read to expose, because the goal list grows with every
+ * week the owner uses the product (R-lens-27). What an agent reaches for instead is `goalcascade://life`
+ * and `goalcascade://week/*` — the latter having lost its plan half and gained the carried band.
  *
  * Note the per-family error surfacing the SDK applies: a thrown error in a `resources/read` becomes a
  * JSON-RPC error, not an `isError` result. So these throw rather than returning the tool-error envelope.
@@ -87,7 +88,7 @@ export function registerResources(server: McpServer, deps: McpDeps): void {
     {
       title: 'Life goals (JSON)',
       description:
-        "Every life goal — the only unscoped read in the product, and the one list guaranteed complete. Each carries its carrying signal (\"N tasks carrying · oldest W weeks\"). Everything else is read by lens, one horizon and one period at a time.",
+        'Every life goal — one of the two reads that is not scoped to a period (the other is learnings), and the one list an account never outgrows: life goals are few by construction. Each carries its carrying signal ("N tasks carrying · oldest W weeks"). Everything else is read by lens, one horizon and one period at a time.',
       mimeType: 'application/json',
     },
     async (uri) => {

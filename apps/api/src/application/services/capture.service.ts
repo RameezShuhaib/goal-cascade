@@ -8,6 +8,7 @@ import type {
   LearningView,
   PatchLearningRequest,
 } from '@goal-cascade/shared';
+import { MAX_PAGE } from '@goal-cascade/shared';
 import { inject, injectable } from 'tsyringe';
 import type { RequestContext } from '../context';
 import type { Learning } from '../../domain/entities';
@@ -71,10 +72,23 @@ export class LearningService {
     @inject(GuardedBatch) private readonly batch: GuardedBatch,
   ) {}
 
-  /** R-learning-2 / Q-7 — newest first; the `Unsorted` grouping is the client's. */
-  async list(ctx: RequestContext): Promise<LearningsResponse> {
-    const rows = await this.learnings.listAll(ctx.userId);
-    return { learnings: newestFirst(rows).map(toLearningView), serverNow: ctx.now };
+  /**
+   * R-learning-2 / Q-7 — newest first; the `Unsorted` grouping is the client's.
+   *
+   * ⚠ **A2 (Q-12)** — `MAX_PAGE`, wired. This was the last list endpoint reading unbounded: Q-12 caps
+   * learnings at 5,000 per account and this route would hand back all 5,000 in one response. The
+   * `limit + 1` probe is the same one `BacklogService.list` uses — it is how `nextCursor` learns whether
+   * there is another page without a second count query.
+   */
+  async list(ctx: RequestContext, query: { limit?: number } = {}): Promise<LearningsResponse> {
+    const limit = Math.min(query.limit ?? MAX_PAGE, MAX_PAGE);
+    const rows = await this.learnings.listAll(ctx.userId, limit + 1);
+    const page = newestFirst(rows).slice(0, limit);
+    return {
+      learnings: page.map(toLearningView),
+      nextCursor: rows.length > limit ? (page[page.length - 1]?.id ?? null) : null,
+      serverNow: ctx.now,
+    };
   }
 
   async create(ctx: RequestContext, input: CreateLearningRequest): Promise<LearningResponse> {

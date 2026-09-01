@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@goal-cascade/shared": "*",
-    "@tanstack/query-sync-storage-persister": "^5.51.0",
     "@tanstack/react-query": "^5.51.0",
     "@tanstack/react-query-persist-client": "^5.51.0",
     "better-auth": "^1.7.2",

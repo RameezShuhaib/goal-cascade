@@ -105,7 +105,8 @@ describe('Sheets — a modal you can leave', () => {
   it('every sheet inherits it — the goal form, the drawer and the Zoom sheet close on Escape too', async () => {
     const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
 
-    await user.click(await screen.findByRole('button', { name: '+ Weekly goal' }));
+    // `[0]` — the cluster row's create, which DOM order puts ahead of the group feet that share its name.
+    await user.click((await screen.findAllByRole('button', { name: '+ Weekly goal' }))[0]!);
     expect(await screen.findByRole('dialog', { name: 'New Weekly goal' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

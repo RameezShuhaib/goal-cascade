@@ -26,15 +26,6 @@ export class D1UserRepo implements IUserRepo {
       .get()
       .then((r) => (r ? D1UserRepo.toAuthUser(r) : null));
   }
-
-  findByEmail(email: string): Promise<AuthUser | null> {
-    return this.db
-      .select()
-      .from(user)
-      .where(eq(user.email, email.trim().toLowerCase()))
-      .get()
-      .then((r) => (r ? D1UserRepo.toAuthUser(r) : null));
-  }
 }
 
 @injectable()
@@ -72,13 +63,18 @@ export class D1LearningRepo implements ILearningRepo {
       .then((r) => r ?? null);
   }
 
-  listAll(userId: string): Promise<Learning[]> {
-    return this.db
+  /**
+   * R-learning-2 / Q-7 — newest first, which is a total order: `captured_at` alone ties.
+   * ⚠ **A2 (Q-12)** — `limit` wires `MAX_PAGE`. The order is applied in SQL, so the cap takes the
+   * newest `limit` rows rather than an arbitrary `limit`.
+   */
+  listAll(userId: string, limit?: number): Promise<Learning[]> {
+    const q = this.db
       .select()
       .from(learnings)
       .where(eq(learnings.userId, userId))
-      .orderBy(desc(learnings.capturedAt), desc(learnings.id))
-      .all();
+      .orderBy(desc(learnings.capturedAt), desc(learnings.id));
+    return limit === undefined ? q.all() : q.limit(limit).all();
   }
 
   /**

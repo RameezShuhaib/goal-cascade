@@ -31,7 +31,12 @@ export interface EmptyCopy {
  *
  * **The future line is the load-bearing one.** *"Nothing planned this far out yet — that's expected"* says
  * both facts a user needs in one clause: the screen is empty, and the emptiness is the truth rather than a
- * failure. Every future variant says it and no past or present variant does.
+ * failure. **Four of the five horizons carry it verbatim; Weekly says the same thing in its own words** —
+ * *"This week hasn't been laid out. You can plan it now, or leave it."* — because "this far out" is false
+ * about next week, which is days away and the one future period a person genuinely might plan right now.
+ * The invariant to hold is the *reassurance*, not the sentence: **no future variant may read as a
+ * failure, and no past or present variant offers that reassurance**, because for those two the emptiness
+ * really is the whole story.
  */
 export function emptyCopy(lens: Horizon, label: string, isCurrent: boolean, isPast: boolean): EmptyCopy {
   if (lens === 'Life') {
@@ -120,5 +125,11 @@ export const UNSORTED_NOTE = "These aren't under a Life goal yet.";
 export const implicitWeeklyGoalNote = (title: string, week: string): string =>
   `This starts a weekly goal "${title}" for the week of ${week}. You can rename it after.`;
 
-/** The rule, wherever it must be said. Never "leaves hold tasks" (R-goal-37). */
+/**
+ * The rule, wherever it must be said. Never "leaves hold tasks" (R-goal-37).
+ *
+ * `lib/errorCopy.ts` is the one place it *is* said — the `NOT_A_WEEKLY_GOAL` refusal — and it imports
+ * this rather than repeating the literal, which is what it used to do. A constant that exists to hold a
+ * sentence, sitting beside a hardcoded copy of that sentence, is a rule with two definitions.
+ */
 export const TASKS_LIVE_ON_WEEKLY_GOALS = 'Tasks live on weekly goals.';

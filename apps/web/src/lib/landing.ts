@@ -28,5 +28,3 @@ export function parseLanding(search: string): UrlLanding {
   };
 }
 
-/** True when the query string carries an auth landing and nothing else should be read from it. */
-export const hasLanding = (l: UrlLanding): boolean => l.verified || !!l.reset;

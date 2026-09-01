@@ -26,7 +26,8 @@ describe('Weekly lens — this week, and what carried into it (R-lens-12)', () =
     const band = screen.getByTestId('carried-band');
     // The two cases are never mixed: a carried goal is in the band and nowhere else.
     expect(within(band).getByText('Sort out the long-run route')).toBeInTheDocument();
-    expect(within(band).getByText('from week of Mon 10 Aug')).toBeInTheDocument();
+    // R-nav-24 — the server's shape (`Week of 10 Aug`), lowercased into the sentence. No weekday.
+    expect(within(band).getByText('from week of 10 Aug')).toBeInTheDocument();
     expect(within(band).getByText('Carried')).toBeInTheDocument();
 
     // The band is below the week's own goals — the whole point of the label is that they are not confused.

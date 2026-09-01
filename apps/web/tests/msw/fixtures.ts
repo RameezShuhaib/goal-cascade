@@ -392,7 +392,7 @@ export const detailOf = (
 
 export const backlogResponse = () => ({ items: [backlogItem()], nextCursor: null, serverNow: NOW });
 export const tasksResponse = () => ({ week: week(), tasks: [task()], nextCursor: null, serverNow: NOW });
-export const learningsResponse = () => ({ learnings: [learning()], serverNow: NOW });
+export const learningsResponse = () => ({ learnings: [learning()], nextCursor: null, serverNow: NOW });
 export const preferencesResponse = () => ({ preferences: preferences(), serverNow: NOW });
 export const goalResponse = (over: Partial<GoalView> = {}) => ({ goal: goal(over), serverNow: NOW });
 export const taskResponse = (over: Partial<TaskDetailView> = {}) => ({ task: taskDetail(over), serverNow: NOW });

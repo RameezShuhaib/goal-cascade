@@ -172,6 +172,32 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
     expect(screen.getByText('This month went unplanned. History stays as it was.')).toBeInTheDocument();
   });
 
+  it('R-nav-25: the create button waits for the read, so it can never fire with an empty period key', async () => {
+    /**
+     * Regression. The guard here was `view !== undefined`, and `view` is `data?.period ?? null` — never
+     * `undefined`, so the test was always true and the button rendered *during the read*, when `view` is
+     * `null` for want of a response. Clicking it then opened the create sheet with `periodKey: ''`, which
+     * is a Life goal's key (R-goal-3) on a lens that is not Life. Typecheck cannot see an always-true
+     * comparison, so the guard is pinned here instead.
+     */
+    server.use(http.get('/api/goals', () => new Promise<never>(() => {})));
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+
+    // The lens chrome is up — this is a real pending render, not an unmounted one.
+    expect(await screen.findByRole('button', { name: /Later month/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Monthly goal' })).not.toBeInTheDocument();
+  });
+
+  it('R-lens-2: the Life lens still offers create once its read lands, though it has no period', async () => {
+    // The other half of the guard above: `period` is legitimately `null` on Life *after* the read, and
+    // `''` is the correct key there. Guarding on `view` instead of `data` would have hidden this button.
+    withLens(F.lens({ lens: 'Life', items: F.lifeGoals() }));
+    renderApp(<AppShell />, { route: '/life' });
+
+    // A populated lens, so the empty state's own CTA is not on screen to be confused with this one.
+    expect(await screen.findByRole('button', { name: '+ Life goal' })).toBeInTheDocument();
+  });
+
   it('R-lens-26: the forward chevron carries a dot when a later period holds something', async () => {
     withLens({ ...F.lensFor('Monthly'), hasForwardContent: true });
     renderApp(<AppShell />, { route: '/month/2026-08' });

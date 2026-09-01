@@ -576,3 +576,151 @@ Stated plainly, because an audit that overstates its reach is worse than one wit
   RECONCILIATION pointed at it.
 - **No history was rewritten or verified** beyond confirming that migrations and build logs are the
   only places retired names survive.
+
+---
+
+## Fixes
+
+Applied by a separate pass, as the header asks. Suite after: **559 api / 289 web / 43 shared** (floor was
+549 / 283 / 43), typecheck clean, `npm run build -w @goal-cascade/web` emits `dist/sw.js` with its
+13-entry precache manifest.
+
+**26 fixed · 2 rebutted · 1 skipped**, of the 6 must-fix and 21 should-fix. Of the 11 *consider* items,
+6 done and 7 skipped, listed at the end.
+
+Every deletion under S6 / S9 / S11 / S12 / S13 was re-verified against dynamic references before it was
+made — string keys, DI tokens, `export *` barrels, namespace imports, config files, and tests that read
+source as text. **That check overturned two rows**, below.
+
+### Must fix
+
+| # | Verdict | What was done |
+|---|---|---|
+| M1 | **fixed** | `BUSINESS-RULES.md:26` — the picker clauses are gone: the two chevrons are the whole period control, the label opens the Zoom sheet, and forward content is a dot on the forward chevron (R-lens-26). |
+| M2 | **fixed** | `BUSINESS-RULES.md:14` — the heading names the horizon, the period is a read-only chip from the current lens, and only the parent is chosen. Matches `GoalModals.tsx:27-32`. |
+| M3 | **fixed** | `BUSINESS-RULES.md:30` — the real per-horizon copy is quoted. **Related, also fixed:** `SPEC.md` `S-lens-11-1` and the §6 `R-nav-5/17` ledger row both still asserted the pre-reconciliation badge; both are now amended in place with a `⚠` marker rather than silently rewritten. |
+| — | — | **`apps/api/src/api/mcp/business-rules.ts` regenerated** from the amended document, same escaping, in the same commit. `tests/mcp/verbatim.test.ts` was run to confirm byte-equality before anything else was touched. |
+| M4 | **fixed** | `MCP-TOOL-SURFACE.md` §§1–4 and 6–8 rewritten to the A2 surface against a full inventory of the live registry (37 tools, 9 resources, 4 prompts, 26 error codes). §5 is preserved **byte-for-byte** — the file was split around it and reassembled, and the pin re-run. The four plan/focus tools, `only="leaves"`, `list_goals`, `goalcascade://tree*`, `week_history_weeks` and the four deleted error codes are now tombstones with successors rather than specifications. `prompts.ts:5` no longer claims to be *"reproduced from §4"*: §4 is a design summary that says so, and `prompts.ts` is the text. |
+| — | — | **The test that should have caught it.** See *"On not widening the pin"* below. |
+| M5 | **fixed** | `LensScreen.tsx:95` — the guard is now `data !== undefined`, not `view !== undefined`. Two regression tests in `lenses.test.tsx`: one renders with a never-resolving `/api/goals` and asserts the create button is absent while the lens chrome is up; the other asserts the **Life** lens still offers it after the read, since `view` is legitimately `null` there and `''` is the right key (R-goal-3). Confirmed the first fails against the old guard before keeping the fix. |
+| M6 | **fixed** | `TabBar.tsx:30` consumes `var(--safe-bottom, 0px)` on the fixed wrapper, so the bar's background still reaches the screen edge. `tests/pwa/manifest.test.ts` now asserts the consumer, not just the declaration — declaring a property for a named consumer that ignores it is what shipped. |
+
+### Should fix
+
+| # | Verdict | What was done |
+|---|---|---|
+| S1 | **fixed** | `showCarried = lens === 'Weekly' && data.carried.length > 0`, hoisted and used for both the band and the "this week" sentence below it. |
+| S2 | **fixed** | Added `weekOfLabel` — `Week of 31 Aug`, the server's exact `PeriodView.label` shape — and used it for the task page's back button; the five embedded *"week of …"* sites take `shortDate`. `weekLabel`'s weekday form stays where BUSINESS-RULES pins it (`since Mon 24 Aug`) and its doc now forbids it after the words "week of". Six assertions that pinned `Week of Mon …` were corrected, citing **R-nav-24**; `routes.test.tsx` had held both spellings of one week 60 lines apart. |
+| S3 | **fixed** | `GET /api/learnings` is capped. `LearningsQuery` (`?limit=`, ≤ `MAX_PAGE`), `LearningsResponse.nextCursor`, `ILearningRepo.listAll(userId, limit?)` with the limit in SQL under the existing order, and the same `limit + 1` probe `BacklogService.list` uses. The MCP tool and resource surface `next_cursor` like their three neighbours. Two API tests: the cap truncates newest-first and sets the cursor, and `?limit=201` is a 422. |
+| S4 | **fixed** | `resources.ts:90` now says life goals are *one of the two* unscoped reads and the one an account never outgrows — true after S3, and it names the other. |
+| S5 | **fixed** | `addWeeksTo` deleted; `goal.service.ts` imports `addWeeks` from `domain/weeks`, which it already imported from. |
+| S6 | **fixed, 14 of 16** | Deleted: `validationFailed`, `SIGNUP_NOT_ALLOWED_STATUS`, `usePatchBacklogItem`, `hasLanding`, `OWNER_KEYS`, `subscribeServerClock`, `serverSkewMs` (with the now-dead notify branch in `recordServerNow`), `canPromptInstall`, `resetInstallPrompt`, `longerHorizons`, `pulseBadge`, `softL`/`softC`/`softInk`, the `PERIOD_UNIT` import-and-re-export in `LensScreen`. `ApiClient.patchBacklogItem` kept, as the finding asks. `AUTH_RATE_LIMIT_MAX_WINDOW_MS` kept — it is S10's cluster and is now wired (below). **Two rows rebutted; see below.** |
+| S7 | **fixed** | `errorCopy.ts` imports `TASKS_LIVE_ON_WEEKLY_GOALS` instead of repeating the literal. |
+| S8 | **fixed** | `warn` deleted with `pickerRow`'s `'dis'` arm (narrowed to `'ok' \| 'sel'`); `dot` lost `dim`; `hChip` lost `active`. All call sites updated. The `AgentAccess.tsx` comment that referred to `warn` now says why it is gone. |
+| S9 | **fixed, with one kept** | Deleted `useInstallState`, `canPromptInstall`, `resetInstallPrompt`, `getSnapshot`, `subscribe`, the subscriber set, `InstallState`, and — contrary to the finding's *"keep `detectPlatform`"* — `detectPlatform` and `Platform` too: `tests/setup.ts` only **mentions** `detectPlatform` in a comment, so their sole reader was the deleted snapshot. **`promptInstall` is kept**, against the finding: it is the only reader of the captured event, and without it `captureInstallPrompt` files the event where nothing can reach it, which is worse than either extreme. |
+| S10 | **fixed — decided: keep the seam, prove it, do not route it** | An internal route would be the same defect one level up: an admin endpoint nothing calls, on a single-user deployment with no operator and no cron. Instead `tests/ops-sweep.test.ts` resolves all three ports from the real container and exercises `purgeBefore` against real D1 — including boundary cases that prove the delete is scoped rather than a table wipe — and it is the first caller `AUTH_RATE_LIMIT_MAX_WINDOW_MS` has ever had. The decision is recorded on the method itself. |
+| S11 | **fixed** | `IUserRepo.findByEmail` and `IGoalRepo.listLifeGoals` deleted with their D1 implementations. The `listAll` tombstone's replacement table had a `listLifeGoals` row; it now points at `listByLens`. |
+| S12 | **fixed** | `tokens.ts`'s 15-symbol re-export deleted (`export { DB }` kept), and `ENV` deleted from both the token module and `container.ts`. |
+| S13 | **fixed** | `@tanstack/query-sync-storage-persister` and `@cloudflare/workers-types` removed; `npm install` re-run and the full suite re-verified after. |
+| S14 | **fixed** | Docstring rewritten: `NotImplementedError` is the fixture that proves the 501 envelope renders, which is the only way to test a status no route emits. `NOT_IMPLEMENTED` stays in `ERROR_STATUS` on separate, stated grounds. |
+| S15 | **fixed** | One `CollapsibleHeader`, used by the group headers and the carried band. The band's missing `aria-label` is fixed by construction — it now reads *"Carried, N goals from earlier weeks. Collapse band."* instead of *"Carried, expanded"*. |
+| S16 | **fixed** | The live region announces the **rendered** group count, filtered the same way `Body` filters. |
+| S17 | **fixed by documenting** | Whether `why`, the backlog line, the stale-plan line and the empty-task line belong on a carried card is a product call, so the behaviour is unchanged and each omission now carries its reason. One of the four is not a judgement at all: the `Nothing on this yet.` line is **unreachable** there, because a goal is in the carried band only if it holds an open task visible in the week. |
+| S18 | **fixed** | `faint` is **deleted**, not demoted. All six uses were text — the audit found four; `AgentAccess.tsx:289` and `auth/ui.tsx:148` are two more — and a token that may not carry text and carries nothing else has no job. All six moved to `T.mut`. `contrast.test.ts` now **derives** the list of text tokens from the palette instead of naming two, so a new one arrives already measured; `disabled` is the one exemption (WCAG 1.4.3) and is asserted to stay quieter than `mut` so "exempt" cannot drift into "used for live text". Mutation-checked: reinstating `faint` fails with the audit's own 1.91:1. |
+| S19 | **fixed by amending the comment** | The Weekly copy is right — *"this far out"* is false about a week that is days away — so the invariant was what was wrong. It now states the property that actually holds (no future variant reads as a failure; no past or present variant offers that reassurance) and names Weekly as the deliberate rewording. |
+| S20 | **fixed** | All twelve rows. `http.ts` no longer claims the tasks read is a lens input; `GoalDetailScreen` no longer promises a `+ Add` branch that was never written; `ThemeContext` and `business-rules.ts` now name the tests that exist (`tests/pwa/manifest.test.ts`, `tests/mcp/verbatim.test.ts`); `prompts.ts`, `resources.ts:70` and `verbatim.test.ts:18` corrected with M4; `ui.ts`'s `quote` comment fixed **without deleting the live token**; `updateToast.ts` and `auth/ui.tsx` keep their reasoning and lose the retired example. |
+| S21 | **skipped** | See below. |
+
+### Rebutted — the finding's evidence was wrong
+
+Both are S6 rows, and both fail the table's own stated criterion (*"exactly one hit, its own declaration"*).
+
+- **`useTasks` (`queries.ts:138`) — not dead by the criterion given.** It has a second hit:
+  `tests/api/queries.test.tsx:4,21` imports and renders it, in the test that pins session-gated fetching
+  and `['tasks', -1]` cache addressing. Deleting the export means deleting a passing test of real caching
+  behaviour, for a route (`GET /tasks`) that is still live and still serves the MCP surface. The
+  production consumer is genuinely gone and the row is right about *that* — so the code is left alone and
+  the misleading comment above it was fixed instead (S20, row 1), which is where the actual harm was.
+- **`TASKS_LIVE_ON_WEEKLY_GOALS` (`copy.ts:124`) — alive as of this pass.** S7 asks for exactly the
+  import that makes it live, so it cannot also be deleted as dead. The two rows contradict each other;
+  S7 is the correct one and was applied.
+
+### Skipped
+
+- **S21 — 3.5 GB of stale agent worktrees.** Not done, and not a judgement call: **this pass is executing
+  inside `.claude/worktrees/`.** Other agents may hold live worktrees there, and deleting another agent's
+  working tree is destructive and irreversible. The directory is gitignored, so no commit can fix it
+  either. It is an operator action — `git worktree prune` plus `rm -rf` on the stale copies, from the
+  shared checkout, when no agent is running. The hazard the finding describes is real and stands.
+
+### Consider — 6 done, 7 skipped
+
+**Done:**
+
+- **C2** — `return YEAR_RE.test(key) ? key : key` is now `return key`, with a note that this function
+  renders what it is given rather than validating it. Both branches were identical.
+- **C5, the half that is a latent bug** — `TaskPage`'s `/^\/week\/…$/` now builds its pattern from
+  `LENS_SEGMENT.Weekly`. A segment rename would have made it return `null` **silently**, sending the back
+  button to the task's origin week instead of the week you came from. `AppShell`'s hardcoded paths are
+  left alone — that is C5's other half and a router refactor.
+- **C6** — one `<CarryLabel>`, used by `TaskRow` and `TaskPage`. This is the only place R-task-43's signed
+  age becomes something a person sees, and it was enforced in two spellings.
+- **C7** — `CardShell` takes `role="group"` when it has a label. On a bare `<div>` the implicit role is
+  `generic` and ARIA-in-HTML does not honour a name on it, so the Monthly card's planned-ness line was not
+  in the card's accessible name while a comment said it was.
+- **C11** — the two uncheck surfaces differ deliberately; only one said so. `TaskPage` now records that
+  R-task-21's prompt is absent because the `cond` field is inline three lines below, and a sheet offering
+  an edit you can see behind it is the modal the redesign removed.
+- **C12** — done only for the two rows M3 named (`S-lens-11-1`, the `R-nav-5/17` ledger row). The full §6
+  sweep is skipped, below.
+
+**Skipped, with the reason:**
+
+- **C1** — shared period maths across the API/web boundary. A `packages/shared` extraction of three
+  regex sets and two functions is the structural refactor this pass was told not to undertake under a
+  *consider* heading. Nothing has diverged; the argument for doing it is real and it wants its own change.
+- **C3** — folding `useOwnerToday` into `lib/weekClock.ts` is a module move with no behavioural content;
+  same reason as C1, and lower value.
+- **C4** — `ZoomOnRoute`'s missing fallback. The finding says outright that nothing breaks (the server
+  picks), and moving the fallback between components is a behavioural change to zoom-anchor lifecycle that
+  wants its own test pass.
+- **C5, the `AppShell` half** — routing every hardcoded path through `routes.ts` is a refactor of the
+  route table; the silently-failing half was fixed instead.
+- **C8** — unconsumed test hooks. `docs/work/18-finish-redesign/build.md` claims `data-empty-state` is
+  what makes the empty states checkable; removing it means deciding whether to re-point that claim or
+  rewrite three tests to use it. Neither is cheap, and nothing is wrong today.
+- **C10** — `capturedLabel` mixing the server instant with device-local calendar components. The finding
+  flags its own low confidence and says it may be deliberate; picking a clock here changes what "Today"
+  means for a travelling user, which is a product decision, not a cleanup.
+- **C13** — depth 5 holding by construction. Adding a `MAX_DEPTH` constant that nothing enforces would be
+  a second, weaker statement of a rule the 5-member `HORIZONS` plus the strict-rank-decrease check already
+  makes unbreakable. Ungreppable is a real cost; a decorative constant is not the fix.
+
+### On not widening the pin — M4's second half
+
+`verbatim.test.ts:20` split on §5 and pinned only the fence inside it, so §§1–4 and 6–8 rotted for a
+release while the pin stayed green. The finding is right that this is worse than no pin.
+
+**Widening the byte-pin to the whole file would not have caught it, and would be the wrong instrument.**
+§5 is pinnable because `SERVER_INSTRUCTIONS` is a literal copy of it — there is a second string to
+compare against. Nothing in `src` is a copy of the rest of the document, so a whole-file pin could only
+compare the file to itself: it would assert that the document had not changed, fail on every legitimate
+edit, and still say nothing about whether the document is *true*.
+
+So the whole file is guarded by a different instrument, `apps/api/tests/mcp/surface.test.ts`, which
+checks the property that actually matters — **the document does not specify things the server does not
+have** — over every block of the file:
+
+1. Every tool the document gives a heading to is advertised by the live server.
+2. Every `goalcascade://` URI in the §3 table is registered.
+3. Every error code §6 teaches a recovery for exists in `ERROR_STATUS`.
+4. §4 names exactly the four prompts the server registers.
+5. Every retired name — the four plan tools, `list_goals`, `NOT_A_LEAF`, `BRANCH_NOT_ACTIVE`,
+   `WEEK_NOT_CURRENT`, `GOAL_HAS_OPEN_TASKS`, `is_leaf`, `active_leaves`, `goalcascade://tree` and the
+   rest — appears **only** in a markdown block that also marks it as gone. A tombstone is allowed; a
+   fresh sentence specifying one as current is not.
+
+Each check carries a floor assertion (`documented.length > 25`, `codes.length > 12`, …) so a restructured
+document fails loudly instead of passing by matching nothing. Verified by mutation: renaming a live tool
+heading to `set_goal_focus` fails checks 1 and 5 independently. `verbatim.test.ts` keeps its §5 pin and
+now states in the test itself that it covers §5 and only §5, and why.

@@ -51,7 +51,18 @@ export class D1RateLimitStore implements IAuthRateLimitRepo {
     return { allowed: false, retryAfter: Math.max(1, Math.ceil((current.lastRequest + windowMs - Date.now()) / 1000)) };
   };
 
-  /** Prune counters that can no longer deny anything (nothing calls it on a schedule here: this product has no cron, so it exists for an ops/internal sweep). */
+  /**
+   * Prune counters that can no longer deny anything. Nothing calls it on a schedule: this product has no
+   * cron, so it exists for an ops/internal sweep.
+   *
+   * ⚠ **Decided once, and kept.** This and its two siblings (`IIdempotencyRepo`, `IEmailOutboxRepo`) were
+   * registered, implemented and unreachable end to end — no caller, and the DI binding below was never
+   * resolved. The alternative was an internal route to exercise them, which is the same defect one level
+   * up: an admin endpoint nothing calls, on a single-user deployment with no operator. Instead
+   * `tests/ops-sweep.test.ts` resolves all three from the real container and runs them against real D1,
+   * so the seam is proven rather than merely present. It is also the only caller of
+   * `AUTH_RATE_LIMIT_MAX_WINDOW_MS`, which computes exactly the cutoff this takes.
+   */
   async purgeBefore(lastRequestBeforeMs: number): Promise<number> {
     const r = await this.db.delete(authRateLimits).where(lt(authRateLimits.lastRequest, lastRequestBeforeMs)).run();
     return r.meta.changes ?? 0;

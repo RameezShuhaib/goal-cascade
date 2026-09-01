@@ -27,10 +27,6 @@ export function rank(horizon: Horizon): number {
   return HORIZONS.indexOf(horizon);
 }
 
-/** Horizons strictly longer than `horizon` — the only legal parents of a goal at it (R-goal-5). */
-export function longerHorizons(horizon: Horizon): Horizon[] {
-  return HORIZONS.filter((h) => rank(h) < rank(horizon));
-}
 
 const QUARTER_RE = /^(\d{4})-Q([1-4])$/;
 const MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;

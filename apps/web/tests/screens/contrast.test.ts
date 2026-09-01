@@ -95,4 +95,51 @@ describe('Palette — muted text meets WCAG AA on every surface it is drawn on',
       for (const [, bg] of surfaces(T)) expect(contrastRatio(T.ink, bg)).toBeGreaterThanOrEqual(AA);
     });
   }
+
+  /**
+   * **Every token used for text, not the two that were remembered.**
+   *
+   * This file measured `mut`, `ink` and the reorder control's `body`, and that was the whole of it —
+   * so `faint` (light `#b5b5ad`: **2.06:1** on a card, **1.91:1** on the page) carried completed task
+   * titles, "Done Fri 28 Aug" and the gray carry age at 11.5px, in both themes, unmeasured. `cards.tsx`
+   * had a comment forbidding exactly that, one file away from four violations of it. A comment is not a
+   * mechanism; a list you have to remember to extend is barely one.
+   *
+   * So the list is derived instead: every token whose value is a plain hex is a colour that could be
+   * text, and is measured. `faint` no longer exists — it was deleted rather than darkened, because
+   * every one of its six uses was text and it had no other job — and if it or anything like it comes
+   * back, it arrives already measured.
+   *
+   * **`disabled` is the one deliberate exemption**, per WCAG 2.x: 1.4.3 exempts inactive controls, and
+   * a disabled control that meets AA is a disabled control that does not look disabled. It is asserted
+   * to be *below* `mut` so that "exempt" cannot quietly become "used for live text".
+   */
+  const TEXT_EXEMPT = new Set(['paper', 'card', 'cardSoft', 'line', 'lineSoft', 'border', 'disabled', 'accentSoft']);
+
+  for (const [theme, T] of [
+    ['light', LIGHT],
+    ['dark', DARK],
+  ] as const) {
+    const textTokens = (Object.entries(T) as [string, unknown][]).filter(
+      ([name, v]) => typeof v === 'string' && /^#[0-9a-f]{3,6}$/i.test(v) && !TEXT_EXEMPT.has(name),
+    ) as [string, string][];
+
+    it(`${theme}: every hex token that could carry text clears AA on both surfaces`, () => {
+      // If this drops to nothing the filter has broken and the suite would pass by measuring zero tokens.
+      expect(textTokens.length, 'no text tokens matched — has the palette moved to oklch()?').toBeGreaterThan(1);
+      for (const [name, hex] of textTokens) {
+        for (const [where, bg] of surfaces(T)) {
+          const ratio = contrastRatio(hex, bg);
+          expect(
+            ratio,
+            `${theme} \`${name}\` ${hex} on ${where} (${bg}) is ${ratio.toFixed(2)}:1 — under AA. Either darken/lighten it, or stop drawing text in it.`,
+          ).toBeGreaterThanOrEqual(AA);
+        }
+      }
+    });
+
+    it(`${theme}: disabled is exempt from AA and must stay quieter than mut, so it cannot pass as live text`, () => {
+      expect(contrastRatio(T.disabled, T.card)).toBeLessThan(contrastRatio(T.mut, T.card));
+    });
+  }
 });
