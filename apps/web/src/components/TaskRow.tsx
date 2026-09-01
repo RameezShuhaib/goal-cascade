@@ -34,9 +34,6 @@ export function TaskRow({ t, week }: { t: TaskView; week: number }) {
   const complete = useCompleteTask();
   const uncheck = useUncheckTask();
 
-  const age = t.carryWeeks;
-  const showCarry = !t.done && age >= 1;
-  const sev = age >= 2 ? 'chip' : 'gray';
 
   const toggle = () => {
     if (t.done) {
@@ -86,18 +83,12 @@ export function TaskRow({ t, week }: { t: TaskView; week: number }) {
           onClick={() => navigate(taskPath(t.id), { state: { from } })}
           style={{ flex: 1, minWidth: 0, textAlign: 'left', border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
         >
-          <div style={{ fontSize: 15, fontWeight: 600, ...(t.done ? { color: S.T.faint, textDecoration: 'line-through' } : { color: S.T.ink }) }}>
+          <div style={{ fontSize: 15, fontWeight: 600, ...(t.done ? { color: S.T.mut, textDecoration: 'line-through' } : { color: S.T.ink }) }}>
             {t.title}
           </div>
           {t.cond && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 2 }}>Done when: {t.cond}</div>}
-          {t.done && t.doneAt && <div style={{ fontSize: 12, color: S.T.faint, marginTop: 2 }}>Done {instantLabel(t.doneAt)}</div>}
-          {showCarry && (
-            <div style={{ marginTop: 4 }}>
-              <span style={S.carryLabel(sev)}>
-                {sev === 'chip' ? `${age} weeks · since ${shortDate(t.originWeekStart)}` : `since ${weekLabel(t.originWeekStart)}`}
-              </span>
-            </div>
-          )}
+          {t.done && t.doneAt && <div style={{ fontSize: 12, color: S.T.mut, marginTop: 2 }}>Done {instantLabel(t.doneAt)}</div>}
+          <CarryLabel task={t} />
         </button>
       </div>
       {promptOpen && <UncheckPrompt task={t} />}
@@ -143,6 +134,32 @@ function UncheckPrompt({ task }: { task: TaskView }) {
           Skip
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * **R-task-11 / R-task-43 — the carry label, in one place.**
+ *
+ * It was written twice, in two spellings that happened to agree: `TaskRow` computed `sev` first and
+ * branched on it, `TaskPage` branched on `age >= 2` inline. Both encode the same three rules — nothing
+ * at `<= 0`, grey `since <Mon d Mmm>` at 1, the red `N weeks · since <d Mmm>` chip at 2 or more — and
+ * this is **the only place in the product where R-task-43's signed age turns into something a person
+ * sees**. A rule enforced twice is a rule that will be corrected once.
+ *
+ * The sign is the whole point: `carryWeeks` is negative for work planned into a future week, so a plan
+ * never ages and the one escalation in this product never fires at it (R-lens-11).
+ */
+export function CarryLabel({ task }: { task: TaskView }) {
+  const S = useSkin();
+  const age = task.carryWeeks;
+  if (task.done || age < 1) return null;
+  const sev = age >= 2 ? 'chip' : 'gray';
+  return (
+    <div style={{ marginTop: 4 }}>
+      <span style={S.carryLabel(sev)}>
+        {sev === 'chip' ? `${age} weeks · since ${shortDate(task.originWeekStart)}` : `since ${weekLabel(task.originWeekStart)}`}
+      </span>
     </div>
   );
 }

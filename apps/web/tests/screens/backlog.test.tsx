@@ -27,7 +27,8 @@ describe('The Backlog page (R-backlog-13)', () => {
     // every item rather than resolved from whichever lens pages the client happened to be holding.
     expect(await screen.findByText('Be strong at 60 › Lift three times a week')).toBeInTheDocument();
     // D-12 — the week the task was LIVE in, an absolute Monday, not "this week".
-    expect(screen.getByText('from week of Mon 24 Aug')).toBeInTheDocument();
+    // R-nav-24 — one spelling of a week, and it is the server's.
+    expect(screen.getByText('from week of 24 Aug')).toBeInTheDocument();
   });
 
   it('S-backlog-13-1 (retired D-27 `Elsewhere`): an item on a goal in ANY period gets its own exact header', async () => {

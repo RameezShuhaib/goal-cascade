@@ -7,7 +7,7 @@ import { useSkin } from '../skin';
 import { weekForMonth } from '../utils/periodKeys';
 import { TaskRow } from '../components/TaskRow';
 import { goalPath } from '../routes';
-import { weekLabel } from '../utils/dates';
+import { shortDate } from '../utils/dates';
 import { plural } from '../utils/tree';
 import { plannedNess, stalePlanLine } from './copy';
 
@@ -31,7 +31,13 @@ import { plannedNess, stalePlanLine } from './copy';
 function CardShell({ children, onOpen, label }: { children: ReactNode; onOpen?: () => void; label?: string }) {
   const S = useSkin();
   return (
-    <div style={{ ...S.card, padding: '14px 16px' }} data-testid="lens-card" aria-label={label}>
+    /*
+     * `role="group"` is what makes the `aria-label` real. On a bare `<div>` the implicit role is
+     * `generic`, and ARIA-in-HTML does not honour an accessible name on it — so the Monthly card's
+     * planned-ness line was NOT being folded into the card's name, while the comment further down said
+     * it was. A name with no role is a name nothing reads.
+     */
+    <div style={{ ...S.card, padding: '14px 16px' }} data-testid="lens-card" role={label ? 'group' : undefined} aria-label={label}>
       {onOpen ? (
         <button
           type="button"
@@ -53,8 +59,10 @@ function CardShell({ children, onOpen, label }: { children: ReactNode; onOpen?: 
  * A button opening that parent's detail page, which is the only way to walk up one step now that there is
  * no tree. You can never walk *down* into a subtree, which is the thing that was cluttered.
  *
- * `T.mut` at 12.5px and **never** `faint`, which fails AA in both themes and may not carry anything
- * load-bearing. It re-uses the `Muted` register the backlog line and the staleness line already sit in, so
+ * `T.mut` at 12.5px. (`faint` is **deleted**: it failed AA in both themes — 2.06:1 on a light card —
+ * and every one of its six uses was text, so a token that may not carry text and carried nothing else had
+ * no job left. `tests/screens/contrast.test.ts` now measures every text token, so the rule is a
+ * mechanism rather than a comment.) It re-uses the `Muted` register the backlog line and the staleness line already sit in, so
  * it adds no colour token and cannot fail `contrast.test.ts`.
  *
  * **At most one name.** The full breadcrumb path is the tree wearing a different hat (R-lens-1); today's
@@ -94,7 +102,7 @@ function Title({ goal }: { goal: GoalView }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
       {/* R-goal-15 — the pulse dot. Never dimmed: no goal is muted or greyed anywhere any more (R-goal-38). */}
-      <span style={S.dot(goal.pulse, false)} />
+      <span style={S.dot(goal.pulse)} />
       <span style={{ fontSize: 15.5, fontWeight: 700, color: S.T.ink, minWidth: 0 }}>{goal.title}</span>
     </div>
   );
@@ -102,7 +110,7 @@ function Title({ goal }: { goal: GoalView }) {
 
 const Muted = ({ children }: { children: ReactNode }) => {
   const S = useSkin();
-  // `T.mut`, never `faint`: `faint` fails AA in both themes and may carry nothing load-bearing.
+  // `T.mut`. `faint` is deleted — it failed AA in both themes and every use of it was load-bearing text.
   return <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 3 }}>{children}</div>;
 };
 
@@ -295,6 +303,23 @@ export function WeeklyCard({ goal, tasks, week, canCreate, parent }: { goal: Goa
  * **It offers no `+ Task` and no `Pull from backlog`, ever** (R-lens-12, R-task-41): adding new work to a
  * past week's goal is back-dating. Carried work is finished, moved to the backlog or cancelled where it
  * stands.
+ *
+ * **The four other things `WeeklyCard` renders and this one does not, each with its reason.** They were
+ * undocumented, which is how the next person "fixes" the divergence in the wrong direction:
+ *
+ *  - **`goal.why`** — the motivation is unchanged since the week it was written, and it is one tap away on
+ *    the goal page. This card answers a narrower question: *which week did this come from, and what is
+ *    still open*. The `from week of …` line takes that slot, and two muted lines under one title is the
+ *    clutter R-nav-27 is about.
+ *  - **`BacklogLine`** — the backlog count is an invitation to pull, and this card offers no pull. A number
+ *    you cannot act on is a number for its own sake, and BUSINESS-RULES lists the only four numbers in the
+ *    product; this would be a fifth.
+ *  - **`stalePlanLine`** — `planned N weeks ago` measures a plan against the arrival of its own week
+ *    (R-goal-43). A carried goal's week arrived and passed, so the number would only restate the
+ *    `from week of …` line directly above it, and restate it as a complaint.
+ *  - **the `Nothing on this yet.` empty line** — **unreachable here.** A goal is in the carried band only
+ *    because it still holds an open task visible in this week (R-lens-12 case 2), so `tasks` is never
+ *    empty. Rendering the line would be writing copy no one can see.
  */
 export function CarriedCard({ goal, tasks, week, parent }: { goal: GoalView; tasks: TaskView[]; week: number; parent?: GoalRefView }) {
   const S = useSkin();
@@ -307,7 +332,7 @@ export function CarriedCard({ goal, tasks, week, parent }: { goal: GoalView; tas
         style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none', padding: 0, cursor: 'pointer', minWidth: 0, fontFamily: 'inherit' }}
       >
         <Title goal={goal} />
-        <Muted>from week of {weekLabel(goal.periodKey)}</Muted>
+        <Muted>from week of {shortDate(goal.periodKey)}</Muted>
       </button>
       {/* R-lens-23 — a carried goal is still an item in this lens, and it still hangs off something. */}
       <ParentLine parent={parent} />

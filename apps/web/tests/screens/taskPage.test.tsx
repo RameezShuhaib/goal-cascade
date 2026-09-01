@@ -43,7 +43,13 @@ describe('The task page — a route, not a sheet (S-task-45-1)', () => {
 
   it('R-task-45: the back control NAMES where you came from, and three ways all lead there', async () => {
     const { user } = await openFromLens();
-    const back = screen.getByRole('button', { name: '‹ Week of Mon 31 Aug' });
+        /**
+     * ⚠ R-nav-24 — this asserted `Week of Mon 31 Aug`, the server's canonical period label with a
+     * weekday spliced into it. R-nav-24 gives the server the human form (`PeriodView.label`), and the
+     * lens one tap away reads `Week of 31 Aug`: the same week, named two ways, one navigation apart.
+     * The weekday form is the CARRY label (`since Mon 24 Aug`) and stays exactly where it was.
+     */
+    const back = screen.getByRole('button', { name: '‹ Week of 31 Aug' });
     await user.click(back);
     expect(await screen.findByText('Three easy runs and one long run')).toBeInTheDocument();
 
@@ -65,7 +71,7 @@ describe('The task page — a route, not a sheet (S-task-45-1)', () => {
     await screen.findByRole('heading', { level: 1, name: 'Find a route with no traffic lights' });
 
     // Never the current week: landing somewhere the task is not visible would read as a broken link.
-    await user.click(screen.getByRole('button', { name: '‹ Week of Mon 10 Aug' }));
+    await user.click(screen.getByRole('button', { name: '‹ Week of 10 Aug' }));
     /**
      * R-lens-14 — arriving here settles through TWO reads, not one: the lens loads `2026-08-10`, then
      * rewrites the address bar to the server's own canonical period key (`replace`) and loads THAT. The

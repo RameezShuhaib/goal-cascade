@@ -29,14 +29,40 @@ export function addWeeks(weekStart: string, weeks: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** `Mon 24 Aug` — a week, named by its Monday. Takes the absolute `weekStart` the server sent. */
+/**
+ * `Mon 24 Aug` — a week, named by its Monday, **with the weekday**. Takes the absolute `weekStart` the
+ * server sent.
+ *
+ * This is the **carry-label** form and only that: `since Mon 24 Aug`, which `docs/BUSINESS-RULES.md`
+ * pins verbatim. The weekday earns its place there because the sentence is about a day work has been
+ * open since.
+ *
+ * ⚠ **Never put this after the words "week of".** That phrase names a *period*, and the period's label
+ * is the server's (`PeriodView.label`, `Week of 31 Aug`); splicing a weekday into it produced
+ * `Week of Mon 31 Aug` on the task page's back button while the lens one tap away read `Week of 31 Aug`
+ * — the same week, named two ways, one screen apart. Use `weekOfLabel` for that, which is the server's
+ * shape by construction.
+ */
 export function weekLabel(weekStart: string): string {
   return fmt(dateOnly(weekStart), { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-/** `24 Aug` — the short form used inside the red carry chip. */
+/** `24 Aug` — the short form used inside the red carry chip, and the date half of a period's week label. */
 export function shortDate(weekStart: string): string {
   return fmt(dateOnly(weekStart), { day: 'numeric', month: 'short' });
+}
+
+/**
+ * `Week of 31 Aug` — **the server's own week label**, rendered client-side.
+ *
+ * It is deliberately byte-identical to what `domain/periods.labelOf('Weekly', key)` sends on
+ * `PeriodView.label`, because the client sometimes has to name a week the server did not label for it
+ * (a task's `originWeekStart`, an item's `fromWeekStart`). `routes.ts` states the rule — periods are
+ * machine-formatted in the URL and human-formatted on screen — and this is the one client spelling of
+ * the human form. One concept, one shape.
+ */
+export function weekOfLabel(weekStart: string): string {
+  return `Week of ${shortDate(weekStart)}`;
 }
 
 /** `Fri 28 Aug` — an instant (`doneAt`, `capturedAt`), in the viewer's own zone. */

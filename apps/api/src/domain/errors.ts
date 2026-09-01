@@ -19,11 +19,15 @@ export class DomainError extends Error {
   }
 }
 
-/** Convenience constructors for the most common codes. */
+/**
+ * Convenience constructors for the most common codes.
+ *
+ * ⚠ `validationFailed` is deleted. `VALIDATION_FAILED` is the most-thrown code in the API and not one of
+ * its ~30 throw sites used the helper — they all pass `details` and construct `DomainError` directly,
+ * which reads no worse. A convenience nobody reached for was not convenient.
+ */
 export const notFound = (what = 'resource') => new DomainError('NOT_FOUND', `${what} not found`);
 export const forbidden = (message = 'forbidden') => new DomainError('FORBIDDEN', message);
-export const validationFailed = (message: string, details?: Record<string, unknown>) =>
-  new DomainError('VALIDATION_FAILED', message, details);
 
 /**
  * Raised by `GuardedBatch` when a guarded statement's precondition no longer holds: a concurrent writer
@@ -49,12 +53,16 @@ export class ConcurrencyError extends DomainError {
 }
 
 /**
- * Thrown by the handler stubs the foundation ships; renders as 501 NOT_IMPLEMENTED.
+ * Renders as 501 NOT_IMPLEMENTED.
  *
- * Every route in `api/routes/` is registered, origin-checked, session-gated, idempotency-wrapped and
- * schema-validated NOW; a feature agent fills in the service behind it, not the route. A 501 from one of
- * these means "the contract is agreed and the plumbing works, the behaviour is not written yet" — it is
- * never a state a shipped client can reach.
+ * ⚠ **Nothing in `src` constructs this any more, and that is the finished state, not a gap.** It was
+ * thrown by the handler stubs the foundation shipped — every route registered, origin-checked,
+ * session-gated and schema-validated before its service existed — and every one of those stubs is now
+ * implemented. `tests/error-handler.test.ts` asserts exactly that: no endpoint answers 501.
+ *
+ * **What it is now is the fixture that proves the 501 envelope renders**, which is the only way to test a
+ * status no route emits. It is kept for that and for nothing else; `NOT_IMPLEMENTED` stays in
+ * `ERROR_STATUS` on separate grounds — it is contract surface the client's status table needs.
  */
 export class NotImplementedError extends DomainError {
   constructor(what: string) {

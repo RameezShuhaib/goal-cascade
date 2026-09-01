@@ -1,57 +1,31 @@
-import { useSyncExternalStore } from 'react';
-
 /**
- * Install state. `beforeinstallprompt` fires once, early, and is gone if nobody called `preventDefault()` on
- * it — which is why capture happens in `pwa/boot.ts` at module load and not in a component effect. What is
- * captured here is what any "Add to Home Screen" affordance later replays.
+ * Install-prompt capture. `beforeinstallprompt` fires once, early, and is gone if nobody called
+ * `preventDefault()` on it — which is why capture happens in `pwa/boot.ts` at module load and not in a
+ * component effect.
  *
- * iOS never fires the event at all (Safari has no programmatic install), so a prompt on iOS has to be
- * instructions, not a button — hence `isIOS` and `isStandalone` alongside `canPrompt`.
+ * ⚠ **The store half of this module is deleted.** It shipped a full `useSyncExternalStore` —
+ * `useInstallState`, `canPromptInstall`, `resetInstallPrompt`, `getSnapshot`, `subscribe`, a memoised
+ * snapshot and a subscriber set — and `docs/work/02-pwa/build.md` said it was *"available if an 'Add to
+ * Home Screen' affordance is added"*. None was, in four subsequent work packages, and with no subscriber
+ * the notify loop iterated a permanently empty set on every event. `detectPlatform` and the `Platform`
+ * type went with it: their only reader was that snapshot.
+ *
+ * **Two things stay, and neither is dead code kept warm.** `captureInstallPrompt` has a caller
+ * (`pwa/boot.ts`) and a deadline — the event arrives shortly after load and is unrecoverable once
+ * discarded, so the listener must exist before any affordance does. `promptInstall` stays because it is
+ * the only reader of what that listener saved: delete it and the capture becomes a `preventDefault()`
+ * that files the event somewhere nothing can reach, which is worse than either keeping it or dropping
+ * the whole module. iOS never fires the event at all, so an iOS affordance would be instructions rather
+ * than a button — that is a UI decision to make when the affordance is written, not a platform probe to
+ * keep running until then.
  */
-export interface Platform {
-  isIOS: boolean;
-  isStandalone: boolean;
-}
-
-export interface InstallState extends Platform {
-  /** A `beforeinstallprompt` event was captured and can be replayed via `promptInstall()`. */
-  canPrompt: boolean;
-  promptInstall: () => Promise<'accepted' | 'dismissed' | 'unavailable'>;
-}
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
-type NavLike = Partial<Pick<Navigator, 'userAgent' | 'platform' | 'maxTouchPoints'>> & { standalone?: boolean };
-type WinLike = { matchMedia?: (q: string) => { matches: boolean } };
-
-export function detectPlatform(nav: NavLike = navigator, win: WinLike = window as unknown as WinLike): Platform {
-  const ua = nav.userAgent ?? '';
-  // iPadOS 13+ reports a Mac UA; the touch points give it away.
-  const isIOS = /iPhone|iPad|iPod/i.test(ua) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
-  let displayStandalone = false;
-  try {
-    displayStandalone = win.matchMedia?.('(display-mode: standalone)').matches ?? false;
-  } catch {
-    displayStandalone = false;
-  }
-  // `navigator.standalone` is the iOS-only signal; `display-mode` is everyone else's.
-  const isStandalone = nav.standalone === true || displayStandalone;
-  return { isIOS, isStandalone };
-}
-
-// ---- beforeinstallprompt capture (module store) -------------------------------
-
 let deferredPrompt: BeforeInstallPromptEvent | null = null;
-let installed = false;
-let version = 0;
-const subscribers = new Set<() => void>();
-const notify = () => {
-  version++;
-  for (const s of subscribers) s();
-};
 
 /**
  * Must run at boot, before the browser fires the event (shortly after load). Called from `pwa/boot.ts`.
@@ -66,20 +40,18 @@ function onBeforeInstallPrompt(e: Event) {
   // Without this the browser shows its own mini-infobar and the event is not replayable.
   e.preventDefault();
   deferredPrompt = e as BeforeInstallPromptEvent;
-  notify();
-}
-function onAppInstalled() {
-  deferredPrompt = null;
-  installed = true;
-  notify();
 }
 
+function onAppInstalled() {
+  deferredPrompt = null;
+}
+
+/** Replay the captured prompt. The one reader of `deferredPrompt`, and what an affordance would call. */
 export async function promptInstall(): Promise<'accepted' | 'dismissed' | 'unavailable'> {
   const p = deferredPrompt;
   if (!p) return 'unavailable';
   // A captured event is single-use: clear it before prompting, or a second tap throws.
   deferredPrompt = null;
-  notify();
   try {
     await p.prompt();
     const { outcome } = await p.userChoice;
@@ -87,42 +59,4 @@ export async function promptInstall(): Promise<'accepted' | 'dismissed' | 'unava
   } catch {
     return 'dismissed';
   }
-}
-
-export function canPromptInstall(): boolean {
-  return deferredPrompt !== null;
-}
-
-/** Test hook. */
-export function resetInstallPrompt(): void {
-  deferredPrompt = null;
-  installed = false;
-  notify();
-}
-
-const subscribe = (cb: () => void) => {
-  subscribers.add(cb);
-  return () => {
-    subscribers.delete(cb);
-  };
-};
-
-// `useSyncExternalStore` calls the getter on every render and compares by identity, so the snapshot must be
-// memoised on a version counter — returning a fresh object each time is an infinite render loop.
-let snapshot: { version: number; state: InstallState } | null = null;
-function getSnapshot(): InstallState {
-  if (snapshot && snapshot.version === version) return snapshot.state;
-  const platform = detectPlatform();
-  const state: InstallState = {
-    ...platform,
-    isStandalone: platform.isStandalone || installed,
-    canPrompt: deferredPrompt !== null,
-    promptInstall,
-  };
-  snapshot = { version, state };
-  return state;
-}
-
-export function useInstallState(): InstallState {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

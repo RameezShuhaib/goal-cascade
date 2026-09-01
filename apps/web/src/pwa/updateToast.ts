@@ -6,7 +6,9 @@
  *
  * With `registerType: 'autoUpdate'` the new worker takes control immediately, but the *running page* is still
  * the old build. vite-plugin-pwa would reload for us; we take that over via `onNeedReload` and wait for a tap
- * instead — reloading under someone who is mid-sentence writing a weekly focus loses their text.
+ * instead — reloading under someone who is mid-sentence in a task's description or a goal's `why` loses
+ * their text. (The example was "writing a weekly focus"; the focus sentence is deleted, R-rm-2. The
+ * reasoning is unchanged — there are still unsaved textareas on screen.)
  *
  * Colours are `colors.ink` / `colors.paper` / `colors.line` from `src/ui.ts`, inlined because this file must
  * not import a React module. `bottom` clears the fixed tab bar (56px) plus the home indicator.

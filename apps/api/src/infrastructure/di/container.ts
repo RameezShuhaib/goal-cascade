@@ -50,7 +50,7 @@ import {
   D1UserRepo,
 } from '../persistence';
 import { createDb, type Db } from '../persistence/db';
-import { DB, ENV } from './tokens';
+import { DB } from './tokens';
 
 /**
  * The ONE seam for fakes. Tests pass this to swap ports (e.g. `c.registerInstance(IClock, new FakeClock(...))`).
@@ -67,7 +67,6 @@ export type ContainerOverrides = (c: DependencyContainer) => void;
 export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrides): DependencyContainer {
   const c = container.createChildContainer();
 
-  c.registerInstance(ENV, env);
   c.registerInstance(DB, createDb(env.DB));
   c.registerInstance(IClock, new SystemClock());
   c.registerInstance(IIdGenerator, new UlidGenerator());

@@ -39,8 +39,9 @@ export function AuthFrame({ children }: { children: ReactNode }) {
 }
 
 /**
- * The wordmark. "Goal" in Manrope 800, "Cascade" in the Newsreader italic that the rest of the app uses for
- * a goal's `why` and a weekly focus sentence — the one place the product speaks rather than labels.
+ * The wordmark. "Goal" in Manrope 800, "Cascade" in the Newsreader italic that the rest of the app uses
+ * for a goal's `why` — the one place the product speaks rather than labels. (It also named the weekly
+ * focus sentence, which is deleted, R-rm-2. `why` is the whole of that register now.)
  */
 export function Wordmark() {
   const T = useTheme();
@@ -145,7 +146,7 @@ export function TextField({ label, value, onChange, type = 'text', autoComplete,
         }}
       />
       {note && (
-        <span id={noteId} style={{ fontSize: 12, fontWeight: error ? 700 : 400, color: error ? T.redText : T.faint }}>
+        <span id={noteId} style={{ fontSize: 12, fontWeight: error ? 700 : 400, color: error ? T.redText : T.mut }}>
           {note}
         </span>
       )}

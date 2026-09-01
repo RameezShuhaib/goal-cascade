@@ -29,7 +29,8 @@ import type { WriteStmt } from './statement';
 
 export interface IUserRepo {
   findById(id: string): Promise<AuthUser | null>;
-  findByEmail(email: string): Promise<AuthUser | null>;
+  // ⚠ `findByEmail` is deleted: no caller. Better Auth owns every lookup by address (sign-in, the
+  // allowlist, verification), through its own adapter and not through this port.
 }
 export const IUserRepo = Symbol.for('goal-cascade.IUserRepo');
 
@@ -65,7 +66,7 @@ export type WeeklyUnderParent = { parentId: string; periodKey: string };
  * |---|---|---|
  * | a lens page | `listByLens` | one indexed seek on `ix_goals_lens` |
  * | grouping, the Life-root walk, parent lines | `listInterior` | one read of `horizon <> 'Weekly'` |
- * | the Life lens | `listLifeGoals` | bounded by the number of Life lines |
+ * | the Life lens | `listByLens` again | the same path, with `periodKey = ''` |
  * | the carried band's goals | `listByIds` | chunked, bounded by open work |
  * | the move/delete guards | `subtreeIds` | one recursive CTE; **zero rows for a Weekly goal** |
  * | the create guard | `findById` | **one row** — it compares two ranks |
@@ -77,8 +78,9 @@ export interface IGoalRepo {
   listByLens(userId: string, key: LensKey, page: { limit: number; cursor?: string }): Promise<GoalPage>;
   /** R-lens-27 — every goal whose horizon is not `Weekly`. Grows with the plan, not with use. */
   listInterior(userId: string): Promise<Goal[]>;
-  /** R-lens-2 — every Life goal. The one list guaranteed complete, and the one lens with no period. */
-  listLifeGoals(userId: string): Promise<Goal[]>;
+  // ⚠ `listLifeGoals` is deleted — superseded, not merely unused. The Life lens is served by the same
+  // `listByLens` path as the other four (`GoalService.lens`), which is the point of there being one lens
+  // read; a dedicated method for one horizon is the second implementation that drifts from the first.
   /** R-lens-12 — the goals behind a week's open tasks, for the carried band. Chunked. */
   listByIds(userId: string, ids: readonly string[]): Promise<Goal[]>;
   /**
@@ -285,7 +287,8 @@ export const IBacklogLinkRepo = Symbol.for('goal-cascade.IBacklogLinkRepo');
 
 export interface ILearningRepo {
   findById(userId: string, id: string): Promise<Learning | null>;
-  listAll(userId: string): Promise<Learning[]>;
+  /** ⚠ **A2 (Q-12)** — `limit` wires `MAX_PAGE`. Unbounded before, which made Q-12's cap untrue here. */
+  listAll(userId: string, limit?: number): Promise<Learning[]>;
   /** R-learning-5 — the learnings on a Life root's whole line. */
   listByGoals(userId: string, goalIds: readonly string[]): Promise<Learning[]>;
   insertStmt(learning: Learning): WriteStmt;

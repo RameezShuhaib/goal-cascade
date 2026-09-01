@@ -262,7 +262,16 @@ export const BacklogResponse = z.object({
   nextCursor: z.string().nullable(),
   serverNow: Iso,
 });
-export const LearningsResponse = z.object({ learnings: z.array(LearningView), serverNow: Iso });
+/**
+ * ⚠ **A2 (Q-12)** — `nextCursor` added. This list was the one that never got the page cap, so it was
+ * also the one with nowhere to say "there is more". It carries the id of the last row on the page, the
+ * same shape `BacklogResponse` uses.
+ */
+export const LearningsResponse = z.object({
+  learnings: z.array(LearningView),
+  nextCursor: z.string().nullable(),
+  serverNow: Iso,
+});
 
 export const HealthResponse = z.object({ ok: z.boolean(), app: z.string(), now: z.string() });
 

@@ -37,6 +37,7 @@ export function isSignupAllowed(env: AppEnv, email: string): boolean {
  * The message is deliberately about the product ("this deployment is single-user"), not about whether
  * the given address exists anywhere.
  */
-export const SIGNUP_NOT_ALLOWED_STATUS = 403;
+// ⚠ `SIGNUP_NOT_ALLOWED_STATUS = 403` is deleted: it was never read. The status comes from Better Auth's
+// own `APIError('FORBIDDEN')`, so a second declaration of it here could only ever disagree.
 export const SIGNUP_NOT_ALLOWED_CODE = 'SIGNUP_NOT_ALLOWED';
 export const SIGNUP_NOT_ALLOWED_MESSAGE = 'sign-up is not open: this deployment is single-user';

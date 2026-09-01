@@ -1,4 +1,4 @@
-import { API_BASE, ENDPOINTS as E, LearningsResponse } from '@goal-cascade/shared';
+import { API_BASE, ENDPOINTS as E, LearningsResponse, MAX_PAGE } from '@goal-cascade/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, signedInOwner } from '../helpers/app';
 import { deleteGoalAndUntag, seedGoal, type Fixture } from '../backlog/fixtures';
@@ -29,10 +29,15 @@ async function capture(text: string, goalId: string | null = null, applied = fal
   return ((await res.json()) as { learning: { id: string; goalId: string | null; applied: boolean; version: number } }).learning;
 }
 
+async function page1(limit?: number) {
+  const q = limit === undefined ? '' : `?limit=${limit}`;
+  const res = await t.fetch(`${API_BASE}${E.learnings}${q}`, { cookie: f.cookie });
+  expect(res.status, await res.clone().text()).toBe(200);
+  return LearningsResponse.parse(await res.json());
+}
+
 async function learnings() {
-  const res = await t.fetch(`${API_BASE}${E.learnings}`, { cookie: f.cookie });
-  expect(res.status).toBe(200);
-  return LearningsResponse.parse(await res.json()).learnings;
+  return (await page1()).learnings;
 }
 
 describe('learnings', () => {
@@ -123,6 +128,40 @@ describe('learnings', () => {
     const after = (await learnings()).find((l) => l.id === learning.id);
     expect(after).toBeDefined();
     expect(after!.goalId).toBeNull();
+  });
+
+  /**
+   * ⚠ **A2 (Q-12)** — the page cap. This was the ONE list endpoint `MAX_PAGE` never reached: the read
+   * was an unbounded `SELECT * FROM learnings WHERE user_id = ?` and the response had no `nextCursor`
+   * to say there was more, so an account at Q-12's own 5,000-learning ceiling got 5,000 rows at once.
+   */
+  it('Q-12 — the list is capped and says when it is truncated', async () => {
+    // Later than every other capture in this file: the suite shares one account, and this asserts order.
+    t.clock.set('2026-09-10T09:00:00.000Z');
+    await capture('Cap one');
+    t.clock.set('2026-09-11T09:00:00.000Z');
+    await capture('Cap two');
+    t.clock.set('2026-09-12T09:00:00.000Z');
+    await capture('Cap three');
+
+    const page = await page1(2);
+    expect(page.learnings).toHaveLength(2);
+    // Newest first, so the cap takes the NEWEST two rather than an arbitrary two (R-learning-2 / Q-7).
+    expect(page.learnings[0]!.text).toBe('Cap three');
+    expect(page.learnings[1]!.text).toBe('Cap two');
+    // The cursor is the signal that a page was left behind — the last id on this page, as in BacklogResponse.
+    expect(page.nextCursor).toBe(page.learnings[1]!.id);
+
+    // Unlimited means MAX_PAGE, not "all rows". This account is far under it, so nothing is truncated.
+    const all = await page1();
+    expect(all.nextCursor).toBeNull();
+    expect(all.learnings.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('Q-12 — MAX_PAGE is the ceiling a client may ask for, not a suggestion', async () => {
+    const res = await t.fetch(`${API_BASE}${E.learnings}?limit=${MAX_PAGE + 1}`, { cookie: f.cookie });
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('VALIDATION_FAILED');
   });
 
   it('R-learning-1 — a learning is never work: there is no convert-to-task endpoint for one', async () => {

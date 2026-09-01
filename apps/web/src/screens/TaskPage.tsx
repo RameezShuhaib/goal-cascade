@@ -6,8 +6,9 @@ import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { TopActions } from '../components/TopActions';
 import { FieldError, Loading, LoadError, commandError } from '../components/states';
-import { instantLabel, shortDate, weekLabel } from '../utils/dates';
-import { goalPath, lensPath } from '../routes';
+import { CarryLabel } from '../components/TaskRow';
+import { instantLabel, weekOfLabel } from '../utils/dates';
+import { goalPath, LENS_SEGMENT, lensPath } from '../routes';
 import { hostOf } from '../utils/tree';
 
 /**
@@ -61,7 +62,7 @@ export function TaskPage() {
   }, [task?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const backTo = from ?? lensPath('Weekly', task?.originWeekStart);
-  const backLabel = task ? `Week of ${weekLabel(fromWeek ?? task.originWeekStart)}` : 'Back';
+  const backLabel = task ? weekOfLabel(fromWeek ?? task.originWeekStart) : 'Back';
 
   const fields = draft ?? { title: task?.title ?? '', cond: task?.cond ?? '', description: task?.description ?? '' };
   const dirty =
@@ -132,6 +133,13 @@ export function TaskPage() {
 
   const toggle = () => {
     if (task.done) {
+      /**
+       * R-task-21's "Update the done-condition?" prompt is **deliberately absent here**, and present on
+       * `TaskRow`. The prompt exists because a row has nowhere to edit `cond`; this page has the field
+       * inline, three lines down, already focusable. Opening a sheet to offer an edit the user can see
+       * behind the sheet is the kind of modal the redesign removed. The rule is satisfied either way —
+       * the edit is skippable and offered — so the two surfaces differ in how, not whether.
+       */
       uncheck.mutate({ id: task.id, version: task.version });
       return;
     }
@@ -210,14 +218,8 @@ export function TaskPage() {
             )}
           </div>
           {/* R-task-43 — signed. `<= 0` is work that is not due yet and renders nothing at all. */}
-          {!task.done && age >= 1 && (
-            <div style={{ marginTop: 4 }}>
-              <span style={S.carryLabel(age >= 2 ? 'chip' : 'gray')}>
-                {age >= 2 ? `${age} weeks · since ${shortDate(task.originWeekStart)}` : `since ${weekLabel(task.originWeekStart)}`}
-              </span>
-            </div>
-          )}
-          {task.done && task.doneAt && <div style={{ fontSize: 12.5, color: S.T.faint, marginTop: 2 }}>Done {instantLabel(task.doneAt)}</div>}
+          <CarryLabel task={task} />
+          {task.done && task.doneAt && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 2 }}>Done {instantLabel(task.doneAt)}</div>}
         </div>
       </div>
 
@@ -337,8 +339,15 @@ export function TaskPage() {
   );
 }
 
-/** `/week/2026-08-31` → `2026-08-31`. The absolute Monday the page was opened from (D-1), or null. */
+/**
+ * `/week/2026-08-31` → `2026-08-31`. The absolute Monday the page was opened from (D-1), or null.
+ *
+ * The segment comes from `LENS_SEGMENT.Weekly` rather than being spelled `/week/` here. `routes.ts`
+ * claims to hold the URL shapes in one module, and a hardcoded copy fails **silently**: this would
+ * return `null`, the page would fall back to the task's origin week instead of the week you came from,
+ * and no test or type would notice.
+ */
 function mondayInPath(path: string | null): string | null {
-  const m = path ? /^\/week\/(\d{4}-\d{2}-\d{2})$/.exec(path) : null;
+  const m = path ? new RegExp(`^/${LENS_SEGMENT.Weekly}/(\\d{4}-\\d{2}-\\d{2})$`).exec(path) : null;
   return m ? m[1]! : null;
 }

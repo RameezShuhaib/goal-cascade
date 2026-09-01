@@ -65,7 +65,9 @@ export function GoalDetailScreen() {
         {/*
          * R-nav-25 — one primary action per page, and the mapping is the horizon's: `+ Weekly goal` on a
          * Monthly goal (Q-20 — a detail page is not a lens, so this is where laying out a week from above
-         * still lives), `+ Task` on a Weekly goal, `+ Add` on Yearly/Quarterly, none on Life.
+         * still lives), `+ Task` on a Weekly goal, and **nothing on Life, Yearly or Quarterly**. The
+         * comment used to promise `+ Add` on Yearly/Quarterly; no such branch was ever written, and
+         * backlog capture on those two is the global `+` drawer's job, which reaches any goal.
          */}
         <TopActions>
           {goal.horizon === 'Monthly' && (
@@ -97,7 +99,7 @@ export function GoalDetailScreen() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
         <h1 style={{ margin: 0, fontSize: 23, fontWeight: 800, letterSpacing: '-0.01em', color: S.T.ink }}>{goal.title}</h1>
         {/* The horizon chip survives HERE and only here: on a detail page the horizon is ambiguous. */}
-        <span style={S.hChip(false)}>
+        <span style={S.hChip()}>
           {goal.horizon.toUpperCase()}
           {goal.period ? ' · ' + goal.period.toUpperCase() : ''}
         </span>
@@ -155,9 +157,9 @@ export function GoalDetailScreen() {
                   fontFamily: 'inherit',
                 }}
               >
-                <span style={S.dot(ch.pulse, false)} />
+                <span style={S.dot(ch.pulse)} />
                 <span style={{ flex: 1, fontSize: 14.5, fontWeight: 700, color: S.T.ink, minWidth: 0 }}>{ch.title}</span>
-                <span style={S.hChip(false)}>{ch.period || ch.horizon.toUpperCase()}</span>
+                <span style={S.hChip()}>{ch.period || ch.horizon.toUpperCase()}</span>
               </button>
             ))}
           </div>

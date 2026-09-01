@@ -28,7 +28,7 @@ export function registerCaptureTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'Insights that might change the plan',
       description:
-        'Insights that might change the plan, newest first, with their Life-goal tag (null = "Unsorted") and the `applied` ("changed the plan") badge. Not a journal, and never converted into work — there is no tool that turns a learning into a task or a backlog item.',
+        'Insights that might change the plan, newest first, with their Life-goal tag (null = "Unsorted") and the `applied` ("changed the plan") badge. Paged like every other list: at most 200, with `next_cursor` set when more remain. Not a journal, and never converted into work — there is no tool that turns a learning into a task or a backlog item.',
       inputSchema: z.object({}).strict(),
     },
     async () =>
@@ -36,6 +36,7 @@ export function registerCaptureTools(server: McpServer, deps: McpDeps): void {
         const [res, titles] = await Promise.all([dc.resolve(LearningService).list(ctx), lifeTitles()]);
         return ok({
           learnings: res.learnings.map((l) => ({ ...l, goal_title: l.goalId ? (titles.get(l.goalId)?.title ?? null) : null })),
+          next_cursor: res.nextCursor,
           server_now: res.serverNow,
         });
       }),

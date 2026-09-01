@@ -44,21 +44,13 @@ export const keys = {
 };
 
 /**
- * Every read model that belongs to the signed-in owner — i.e. everything except `['me']`. A sign-out or a
- * 401 must drop all of them: they are persisted to localStorage for 24h and hold this person's goals,
- * tasks and private notes.
+ * ⚠ `OWNER_KEYS` — a hand-maintained list of "every read model that belongs to the signed-in owner", for
+ * a sign-out or a 401 to drop — is deleted. It was never wired: `auth/purge.ts` calls
+ * `wipePersistedCache()`, which removes the whole persisted cache by key prefix and therefore covers
+ * every owner key without being told about any of them. A list that has to be extended by hand each time
+ * a query key is added, sitting beside a mechanism that needs no such list, is the version of this that
+ * silently misses one.
  */
-export const OWNER_KEYS: readonly (readonly unknown[])[] = [
-  keys.goalsAll,
-  ['goal'],
-  keys.zoomAll,
-  keys.tasksAll,
-  ['task'],
-  keys.backlogAll,
-  keys.learnings,
-  keys.agentToken,
-  ['bootstrap'],
-];
 
 /**
  * localStorage key prefix of the persisted query cache (`main.tsx`). The real key is `<prefix>:<userId>`,

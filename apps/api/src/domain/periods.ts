@@ -96,7 +96,10 @@ export function isPeriodKey(horizon: Horizon, key: string): boolean {
  */
 export function labelOf(horizon: Horizon, key: string): string {
   if (horizon === 'Life' || key === '') return '';
-  if (horizon === 'Yearly') return YEAR_RE.test(key) ? key : key;
+  // A yearly period's key IS its label (`2026`), well-formed or not — this function renders what it is
+  // given rather than validating it (see above). This read `YEAR_RE.test(key) ? key : key`, which
+  // evaluated the regex and discarded the answer: a lost branch, not a rule.
+  if (horizon === 'Yearly') return key;
   const q = QUARTER_RE.exec(key);
   if (horizon === 'Quarterly' && q) return `Q${q[2]} ${q[1]}`;
   const m = MONTH_RE.exec(key);

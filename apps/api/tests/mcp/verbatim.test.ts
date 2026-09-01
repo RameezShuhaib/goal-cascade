@@ -13,9 +13,14 @@ describe('the two verbatim strings really are verbatim', () => {
   it('the server instructions block matches MCP-TOOL-SURFACE.md §5 exactly', () => {
     /**
      * This is the highest-leverage string in the feature: it is the entire briefing a connecting agent
-     * gets about the horizon hierarchy, the leaf/active/dormant model, the week model and the three
-     * task exits. The design document is its source of truth, and "close enough" is how the MCP surface
-     * and the product start telling users different things.
+     * gets about the horizon hierarchy, the five horizons, the week model and the three task exits.
+     * The design document is its source of truth, and "close enough" is how the MCP surface and the
+     * product start telling users different things.
+     *
+     * **This pin covers §5 and only §5**, because §5 is the only part of that document reproduced in
+     * `src`. The rest of the file is guarded by `surface.test.ts` instead — a pin here would have
+     * implied a coverage it never had, which is exactly how §§1–4 and 6–8 rotted while this stayed
+     * green.
      */
     const section = toolSurfaceMd.split('## 5. Server instructions block')[1];
     expect(section, 'MCP-TOOL-SURFACE.md §5 not found — did the document restructure?').toBeTruthy();

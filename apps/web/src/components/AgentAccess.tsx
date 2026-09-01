@@ -286,7 +286,7 @@ export function AgentAccess() {
                 onChange={(e) => setPassword(e.target.value)}
                 style={S.input}
               />
-              <span style={{ fontSize: 12, color: S.T.faint }}>Confirming it&rsquo;s you, before a new credential is made.</span>
+              <span style={{ fontSize: 12, color: S.T.mut }}>Confirming it&rsquo;s you, before a new credential is made.</span>
               <FieldError>{create.error ? refusalCopy(create.error) : null}</FieldError>
               <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                 <button type="submit" style={{ ...S.btn(true), flex: 1 }} disabled={!password || busy}>
@@ -461,8 +461,8 @@ function CopyRow({
         <p style={{ fontSize: 12, color: S.T.mut, margin: '5px 0 0 0', lineHeight: 1.45 }}>Copied to the clipboard.</p>
       )}
       {state === 'unavailable' && (
-        // `S.body`, not the amber `S.warn`: this is an instruction that must be read at 12px, and `warn` is
-        // tuned for a one-word row label rather than for a sentence that has to clear 4.5:1 on `paper`.
+        // `S.body`: this is an instruction that must be read at 12px. It once said "not the amber
+        // `S.warn`" — `warn` is deleted, with the disabled move-sheet reasons that were its only consumer.
         <p style={{ fontSize: 12, fontWeight: 600, color: S.body, margin: '5px 0 0 0', lineHeight: 1.45 }}>
           Couldn&rsquo;t reach the clipboard. It&rsquo;s selected above — press ⌘C, or Ctrl+C, to copy it.
         </p>

@@ -27,7 +27,22 @@ export function TabBar() {
   const onGoals = !onLearnings && (first === 'goal' || first === 'task' || Object.values(LENS_SEGMENT).includes(first) || first === '');
 
   return (
-    <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20, background: S.T.card, borderTop: `1px solid ${S.T.line}` }}>
+    // `--safe-bottom` is published by `index.html` for exactly this element — it is `position: fixed`, so
+    // `#root`'s padding cannot move it. Without this the 56px buttons sit under a notched phone's home
+    // indicator once the app is installed. The padding goes on the fixed wrapper, not the inner row, so
+    // the bar's background still runs to the bottom edge of the screen.
+    <div
+      style={{
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 20,
+        background: S.T.card,
+        borderTop: `1px solid ${S.T.line}`,
+        paddingBottom: 'var(--safe-bottom, 0px)',
+      }}
+    >
       <div style={{ maxWidth: 640, margin: '0 auto', display: 'flex' }}>
         <button type="button" style={S.navBtn(onGoals)} onClick={() => navigate(lensPath(ui.lastLens))}>
           Goals

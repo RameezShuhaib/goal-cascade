@@ -7,7 +7,7 @@ import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { TopActions } from '../components/TopActions';
 import { Empty, Loading, LoadError } from '../components/states';
-import { firstDayOf, PERIOD_UNIT, rank, stepPeriod, validKeyFor } from '../utils/periodKeys';
+import { firstDayOf, rank, stepPeriod, validKeyFor } from '../utils/periodKeys';
 import { lensPath } from '../routes';
 import { LensRow, OffNowRow } from './LensRow';
 import { CarriedCard, LifeCard, MonthlyCard, PlainCard, WeeklyCard } from './cards';
@@ -92,7 +92,15 @@ export function LensScreen({ lens }: { lens: Horizon }) {
       {/* Row 1 — the cluster (R-nav-25): the theme toggle, the account button, one primary action. */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', gap: 10 }}>
         <TopActions>
-          {canCreate && view !== undefined && (
+          {/*
+           * The guard is on `data`, not on `view`. `view` is `?? null`-coalesced above, so it is never
+           * `undefined` and a `view !== undefined` test is always true — it would render this button
+           * while the read is still pending, when `view` is `null` for a different reason, and fire
+           * `openSheet` with `periodKey: ''`. On the **Life** lens `view` is legitimately `null` after
+           * the read lands (R-lens-2) and `''` is the right key there (R-goal-3 refuses a Life goal
+           * that carries a period), so the two cases must be told apart by the query, not the value.
+           */}
+          {canCreate && data !== undefined && (
             <button
               type="button"
               style={S.topBtn}
@@ -141,7 +149,14 @@ export function LensScreen({ lens }: { lens: Horizon }) {
  */
 function Announcement({ lens, label, data }: { lens: Horizon; label: string; data: { groups: LifeGroupView[]; items: GoalView[]; carried: GoalView[] } | undefined }) {
   if (!data) return null;
-  const groups = data.groups.length;
+  /**
+   * The **rendered** group count, not `data.groups.length`. The server builds `groups` from
+   * `[...items, ...carried]`, and `Body` renders only the groups that have items (R-lens-19), so on the
+   * Weekly lens a life line present *only* through carried work is in `groups` and never gets a header.
+   * Announcing the raw length told a screen-reader user "3 groups" where a sighted user could count two.
+   * The announcement has to describe the screen, not the payload.
+   */
+  const groups = data.groups.filter((g) => data.items.some((i) => i.lifeRootId === g.id)).length;
   const carried = data.carried.length;
   const text =
     `${label}. ${data.items.length} goal${data.items.length === 1 ? '' : 's'}` +
@@ -245,6 +260,15 @@ function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: Lens
   );
 
   /**
+   * One condition, used twice. The sentence below the band hardcodes **"this week"**, so it must carry the
+   * same lens guard the band does — it read `data.items.length === 0` alone, and only stayed correct
+   * because the SERVER never populates `carried` outside the Weekly lens (`goal.service.ts` sends
+   * `weekTasks = []` at every other horizon). A client-side sentence resting on a server-side invariant is
+   * one refactor away from appearing on the Quarterly lens.
+   */
+  const showCarried = lens === 'Weekly' && data.carried.length > 0;
+
+  /**
    * R-lens-23 — the parent lines, indexed once per render. The client holds no tree and walks no ancestor
    * chain (R-lens-16); this is a `Map` over the payload's own `parents` array.
    */
@@ -302,10 +326,10 @@ function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: Lens
           showHeader={rendered.length > 1}
         />
       ))}
-      {lens === 'Weekly' && data.carried.length > 0 && (
+      {showCarried && (
         <CarriedBand goals={data.carried} tasks={data.tasks} weekOffset={weekOffset} periodKey={data.period?.periodKey ?? ''} parents={parents} />
       )}
-      {data.items.length === 0 && (
+      {showCarried && data.items.length === 0 && (
         <div style={{ ...S.dashed, padding: '22px 20px', textAlign: 'center', fontSize: 13.5, color: S.T.mut }}>
           {/* §7.2 — the band renders with no plan above it, and the screen has to say so rather than look broken. */}
           Nothing planned for this week — the work below is still carrying.
@@ -325,6 +349,45 @@ function CreateButton({ lens, periodKey, lifeGoalId }: { lens: Horizon; periodKe
       onClick={() => ui.openSheet({ kind: 'goalForm', editId: null, horizon: lens, periodKey, lifeGoalId: lifeGoalId ?? null })}
     >
       {createLabel(lens)}
+    </button>
+  );
+}
+
+/**
+ * §8.2 — **one collapsible section header, used by both the group headers and the carried band.**
+ *
+ * These were byte-identical buttons in two places, and they had already drifted: the band's copy carried
+ * no `aria-label`, so a screen reader heard "Carried, expanded" with no Expand/Collapse verb, while the
+ * group header three hundred lines away explained in a comment exactly why one is needed. Two spellings
+ * of one control is how that happens, so there is one now.
+ *
+ * `label` is what the eye reads and `name` is what the platform reads; the `▾`/`▸` marker is
+ * `aria-hidden` because `aria-expanded` already carries the state, and hearing both is hearing it twice.
+ */
+function CollapsibleHeader({
+  collapsed,
+  onToggle,
+  name,
+  what,
+  label,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  name: string;
+  what: 'group' | 'band';
+  label: string;
+}) {
+  const S = useSkin();
+  return (
+    <button
+      type="button"
+      aria-expanded={!collapsed}
+      aria-label={`${name}. ${collapsed ? 'Expand' : 'Collapse'} ${what}.`}
+      onClick={onToggle}
+      style={{ ...S.sectionLabel, display: 'flex', alignItems: 'center', gap: 7, width: '100%', minHeight: 44, border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+    >
+      <span aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
+      <span>{label}</span>
     </button>
   );
 }
@@ -369,20 +432,17 @@ function Group({
   return (
     <div>
       {showHeader && (
-        <button
-          type="button"
-          aria-expanded={!collapsed}
+        <CollapsibleHeader
+          collapsed={collapsed}
+          onToggle={() => ui.toggleCollapsed(key)}
           // §8.2 — the visible label is short; the accessible name spells the count's scope out in full,
           // so the screen stays quiet and the screen reader stays precise. R-lens-4 anchors the count to
           // one week, so the words are "this week" at every horizon.
-          aria-label={`${group.title}${count > 0 ? `, ${count} open task${count === 1 ? '' : 's'} this week` : ''}. ${collapsed ? 'Expand' : 'Collapse'} group.`}
-          onClick={() => ui.toggleCollapsed(key)}
-          style={{ ...S.sectionLabel, display: 'flex', alignItems: 'center', gap: 7, width: '100%', minHeight: 44, border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
-        >
-          <span aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
-          {/* R-lens-4 — a ZERO count is never rendered, in the label or in the accessible name. */}
-          <span>{count > 0 ? `${group.title} · ${count} open` : group.title}</span>
-        </button>
+          name={`${group.title}${count > 0 ? `, ${count} open task${count === 1 ? '' : 's'} this week` : ''}`}
+          what="group"
+          // R-lens-4 — a ZERO count is never rendered, in the label or in the accessible name.
+          label={count > 0 ? `${group.title} · ${count} open` : group.title}
+        />
       )}
       {showHeader && group.id === null && !collapsed && (
         <div style={{ fontSize: 12.5, color: S.T.mut, margin: '2px 0 6px 0' }}>{UNSORTED_NOTE}</div>
@@ -507,15 +567,16 @@ function CarriedBand({
   const collapsed = !!ui.collapsed[key];
   return (
     <div data-testid="carried-band" style={{ borderTop: `1px solid ${S.T.line}`, paddingTop: 12 }}>
-      <button
-        type="button"
-        aria-expanded={!collapsed}
-        onClick={() => ui.toggleCollapsed(key)}
-        style={{ ...S.sectionLabel, display: 'flex', alignItems: 'center', gap: 7, width: '100%', minHeight: 44, border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
-      >
-        <span aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
-        <span>Carried</span>
-      </button>
+      <CollapsibleHeader
+        collapsed={collapsed}
+        onToggle={() => ui.toggleCollapsed(key)}
+        // R-lens-12 — the accessible name says what the band holds. The visible word is the single
+        // "Carried" and the marker is `aria-hidden`, so without this a screen reader got "Carried,
+        // expanded" and no verb at all. That is precisely what the copy-pasted version did.
+        name={`Carried, ${goals.length} goal${goals.length === 1 ? '' : 's'} from earlier weeks`}
+        what="band"
+        label="Carried"
+      />
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 7 }}>
           {goals.map((g) => (
@@ -527,4 +588,3 @@ function CarriedBand({
   );
 }
 
-export { PERIOD_UNIT };

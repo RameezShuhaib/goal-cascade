@@ -15,10 +15,17 @@ import * as F from '../msw/fixtures';
  * period-scoped lens, **every field of the form except the title is already known.**
  */
 
+/**
+ * `findAllByRole(...)[0]` throughout: the cluster row's create and each group foot's create share a name,
+ * and DOM order puts the cluster row first (it is row 1). These used to read `findByRole`, which resolved
+ * against a single match only because the cluster button rendered **during the read** — the always-true
+ * `view !== undefined` guard in `LensScreen`. With that fixed both affordances appear on the same tick, so
+ * the intended one is now named rather than won by a race.
+ */
 describe('Creating a goal (§6.7)', () => {
   it('the heading names the horizon, and the period is a read-only chip with its reason', async () => {
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: '+ Quarterly goal' }));
+    await user.click((await screen.findAllByRole('button', { name: '+ Quarterly goal' }))[0]!);
 
     const sheet = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
     // The horizon picker is gone entirely — the heading says it.
@@ -31,7 +38,7 @@ describe('Creating a goal (§6.7)', () => {
 
   it('S-goal-5-1: the parent picker lists only legal parents in the enclosing period', async () => {
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: '+ Quarterly goal' }));
+    await user.click((await screen.findAllByRole('button', { name: '+ Quarterly goal' }))[0]!);
     const sheet = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
 
     // A Quarterly goal's legal parents are the Life goals and the Yearly goals of the enclosing year.
@@ -85,7 +92,7 @@ describe('Creating a goal (§6.7)', () => {
   it('§6.7: with nothing to hang it on, the sheet closes the loop in one tap', async () => {
     server.use(http.get('/api/goals', ({ request }) => HttpResponse.json(F.lens({ lens: (new URL(request.url).searchParams.get('lens') ?? 'Weekly') as 'Life', items: [] }))));
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: '+ Quarterly goal' }));
+    await user.click((await screen.findAllByRole('button', { name: '+ Quarterly goal' }))[0]!);
 
     const sheet = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
     expect(await within(sheet).findByText('Nothing to hang this on yet — a quarterly goal needs a Life or Yearly goal above it.')).toBeInTheDocument();
@@ -99,7 +106,7 @@ describe('Creating a goal (§6.7)', () => {
   it('S-goal-29-1 / R-goal-36: a refusal is stated at the form, never swallowed', async () => {
     server.use(http.post('/api/goals', () => apiError('PERIOD_IN_PAST')));
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: '+ Quarterly goal' }));
+    await user.click((await screen.findAllByRole('button', { name: '+ Quarterly goal' }))[0]!);
     const sheet = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
     await user.click(await within(sheet).findByRole('button', { name: /Get back under 80kg/ }));
     await user.type(within(sheet).getByLabelText('Goal title'), 'Something');
@@ -130,7 +137,7 @@ describe('Creating a task from a Monthly goal — the two-step, made one (R-task
     const sheet = await screen.findByRole('dialog', { name: 'New task' });
     // Nothing may be created invisibly (R-task-49).
     expect(
-      await within(sheet).findByText('This starts a weekly goal "Lift three times a week" for the week of Mon 31 Aug. You can rename it after.'),
+      await within(sheet).findByText('This starts a weekly goal "Lift three times a week" for the week of 31 Aug. You can rename it after.'),
     ).toBeInTheDocument();
 
     await user.type(within(sheet).getByLabelText('What needs doing?'), 'Tuesday easy 6k');
@@ -154,7 +161,8 @@ describe('Creating a task from a Monthly goal — the two-step, made one (R-task
 
     // Named after: the toast names the week, and the live region names the goal that was made for it.
     const toast = await screen.findByRole('status');
-    expect(toast).toHaveTextContent('Added to week of Mon 31 Aug');
+    // R-nav-24 — the toast and the lens title three lines below now name the week identically.
+    expect(toast).toHaveTextContent('Added to week of 31 Aug');
     expect(toast).toHaveTextContent('under Lift three times a week');
     // R-nav-19 / R-task-41 — and the app MOVES to that week. Staying put would read as a lost write.
     expect(await screen.findByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' })).toBeInTheDocument();

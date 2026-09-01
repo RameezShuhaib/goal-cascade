@@ -99,15 +99,6 @@ export class D1GoalRepo implements IGoalRepo {
       .all();
   }
 
-  /** Every Life goal. The Life lens is the only unscoped read, and it is bounded by the number of lines. */
-  listLifeGoals(userId: string): Promise<Goal[]> {
-    return this.db
-      .select()
-      .from(goals)
-      .where(and(eq(goals.userId, userId), eq(goals.horizon, 'Life')))
-      .orderBy(asc(goals.createdAt), asc(goals.id))
-      .all();
-  }
 
   /**
    * The goals behind a set of ids — the Weekly lens's carried band reads it from the week's open tasks

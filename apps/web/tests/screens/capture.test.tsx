@@ -17,7 +17,7 @@ import * as F from '../msw/fixtures';
  * (R-learning-2), so it is the same list by a cheaper route.
  */
 function withCapture({ learnings = [] as LearningView[] } = {}) {
-  server.use(http.get('/api/learnings', () => HttpResponse.json({ learnings, serverNow: F.NOW })));
+  server.use(http.get('/api/learnings', () => HttpResponse.json({ learnings, nextCursor: null, serverNow: F.NOW })));
 }
 
 const go = async (user: ReturnType<typeof renderApp>['user'], tab: 'Learnings') =>
@@ -46,7 +46,7 @@ describe('Learnings', () => {
     const state = { applied: false };
     withCapture({ learnings: [F.learning({ goalId: F.L })] });
     server.use(
-      http.get('/api/learnings', () => HttpResponse.json({ learnings: [F.learning({ goalId: F.L, applied: state.applied })], serverNow: F.NOW })),
+      http.get('/api/learnings', () => HttpResponse.json({ learnings: [F.learning({ goalId: F.L, applied: state.applied })], nextCursor: null, serverNow: F.NOW })),
       http.patch('/api/learnings/:id', () => {
         state.applied = true;
         return HttpResponse.json({ learning: F.learning({ goalId: F.L, applied: true }), serverNow: F.NOW });

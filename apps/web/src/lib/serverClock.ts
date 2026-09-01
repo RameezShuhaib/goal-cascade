@@ -9,26 +9,18 @@
  * should use the server's.
  */
 let skewMs = 0;
-const listeners = new Set<() => void>();
 
+/**
+ * ⚠ `subscribeServerClock` and `serverSkewMs` are deleted, and the half-second change detection went with
+ * them: nothing ever subscribed, so the notify loop walked an empty set on every response and the
+ * `changed` comparison computed an answer no one read. `nowMs` reads `skewMs` directly, which is the only
+ * way the skew has ever been consumed.
+ */
 export function recordServerNow(iso: string): void {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return;
-  const next = t - Date.now();
-  const changed = Math.abs(next - skewMs) > 500;
-  skewMs = next;
-  if (changed) for (const l of listeners) l();
+  skewMs = t - Date.now();
 }
-
-/** Notified when the skew moves by more than half a second (first response, clock drift). */
-export function subscribeServerClock(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
-
-export const serverSkewMs = (): number => skewMs;
 
 /** Current time in epoch ms, corrected to the server clock. */
 export const nowMs = (): number => Date.now() + skewMs;

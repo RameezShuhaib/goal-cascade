@@ -84,7 +84,9 @@ describe('Routes — back and forward (S-nav-24-1)', () => {
     await user.click(await screen.findByText('Tuesday easy 6k'));
     await screen.findByRole('heading', { level: 1, name: 'Book the Tuesday slot' });
 
-    expect(screen.getByRole('button', { name: '‹ Week of Mon 24 Aug' })).toBeInTheDocument();
+    // ⚠ R-nav-24 — was `Week of Mon 24 Aug`. This file asserts the SERVER's label (`Week of 31 Aug`) 60
+    // lines up, so it held both spellings of one week at once; the back button now uses the server's.
+    expect(screen.getByRole('button', { name: '‹ Week of 24 Aug' })).toBeInTheDocument();
     history.back();
     expect(await screen.findByRole('button', { name: 'Weekly lens, Week of 24 Aug. Change lens or period.' })).toBeInTheDocument();
   });
