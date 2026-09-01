@@ -40,8 +40,24 @@ export function useParentOptions(horizon: Horizon, periodKey: string, lifeGoalId
   }, [life.data, yearly.data, quarterly.data, monthly.data, horizon, lifeGoalId]);
 
   const queries = [life, yearly, quarterly, monthly].filter((_, i) => needs((['Life', 'Yearly', 'Quarterly', 'Monthly'] as const)[i]!));
+
+  /**
+   * ⚠ **R-nav-31** — the raw pages, for the one caller that needs more than the ids: `GoalPicker` groups
+   * its rows under the Life goals in `LensResponse.groups` (a field on the wire that no picker read until
+   * now) and says so when a page came back with a `nextCursor`. **Every picker in this app was capped at
+   * `MAX_PAGE` and said nothing**, which is the one failure worse than a slow list.
+   */
+  const pages = useMemo(
+    () => queries.map((q) => q.data),
+    // A fixed-length dependency list: `queries` itself is one to four entries depending on the horizon,
+    // and a dependency array that changes length between renders is a bug React only warns about.
+    [life.data, yearly.data, quarterly.data, monthly.data, horizon],
+  );
+
   return {
     options,
+    pages,
+    truncated: queries.some((q) => q.data?.nextCursor != null),
     isPending: queries.some((q) => q.isPending),
     error: queries.find((q) => q.error)?.error ?? null,
   };

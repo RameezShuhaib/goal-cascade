@@ -8,6 +8,7 @@ import {
   useLens,
   usePatchLearning,
 } from '../api/queries';
+import { GoalPicker } from '../components/GoalPicker';
 import { TopActions } from '../components/TopActions';
 import { Empty, FieldError, Loading, LoadError, commandError } from '../components/states';
 import { useSkin } from '../skin';
@@ -16,7 +17,7 @@ import { node } from '../utils/tree';
 
 /**
  * Learnings — the capture surface. A learning tags a LIFE goal or nothing (R-learning-2); a non-Life tag
- * is refused with `409 NOT_A_LIFE_GOAL`, so the chip row offers Life goals only and the server is the
+ * is refused with `409 NOT_A_LIFE_GOAL`, so the picker offers Life goals only and the server is the
  * guard behind it.
  */
 
@@ -41,19 +42,18 @@ function groupByLife<T extends { goalId: string | null }>(goals: GoalView[], lis
   return groups;
 }
 
-/** R-learning-2 — `No goal` plus one chip per Life goal. Nothing else is a valid tag. */
-function LifeGoalChips({ goals, value, onPick }: { goals: GoalView[]; value: string | null; onPick: (id: string | null) => void }) {
-  const S = useSkin();
+/**
+ * R-learning-2 — `No goal` plus one row per Life goal. Nothing else is a valid tag, and the server
+ * refuses anything else with `NOT_A_LIFE_GOAL`.
+ *
+ * ⚠ **R-nav-31** — a wall of `chipBtn` pills became the one goal picker in `lifeLine` mode. A Life-goal
+ * list is the one that does not group (every row would be its own header), so it renders flat, with
+ * `No goal` leading it exactly as the chip row had it.
+ */
+function LifeGoalPicker({ value, onPick }: { value: string | null; onPick: (id: string | null) => void }) {
   return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-      <button type="button" style={S.chipBtn(value === null)} onClick={() => onPick(null)}>
-        No goal
-      </button>
-      {goals.map((g) => (
-        <button key={g.id} type="button" style={S.chipBtn(value === g.id)} onClick={() => onPick(g.id)}>
-          {g.title}
-        </button>
-      ))}
+    <div style={{ marginTop: 10 }}>
+      <GoalPicker mode={{ kind: 'lifeLine' }} value={value} onChange={onPick} extra={{ label: 'No goal' }} listLabel="Life goals" />
     </div>
   );
 }
@@ -117,7 +117,7 @@ export function LearningsScreen() {
           placeholder="What did you learn?"
           style={{ ...S.input, background: S.T.cardSoft }}
         />
-        <LifeGoalChips goals={goals} value={tag} onPick={setTag} />
+        <LifeGoalPicker value={tag} onPick={setTag} />
         <FieldError>{commandError(create.error)}</FieldError>
         <button type="button" style={S.saveBtn(!text.trim() || create.isPending)} disabled={!text.trim() || create.isPending} onClick={capture}>
           Capture it
@@ -139,7 +139,7 @@ export function LearningsScreen() {
             title={grp.title}
             items={grp.items}
             render={(it) => (
-              <LearningCard key={it.id} learning={it} goals={goals} selected={selected === it.id} onSelect={setSelected} />
+              <LearningCard key={it.id} learning={it} selected={selected === it.id} onSelect={setSelected} />
             )}
           />
         ))}
@@ -150,12 +150,10 @@ export function LearningsScreen() {
 
 function LearningCard({
   learning,
-  goals,
   selected,
   onSelect,
 }: {
   learning: LearningView;
-  goals: GoalView[];
   selected: boolean;
   onSelect: (id: string | null) => void;
 }) {
@@ -188,31 +186,12 @@ function LearningCard({
         </div>
       </button>
 
+      {/* R-learning-3 / S-learning-3-1 — re-tag to another Life goal, or back to Unsorted with `null`. */}
       {selected && attaching && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-          {/* R-learning-3 / S-learning-3-1 — re-tag to another Life goal, or back to Unsorted with `null`. */}
-          <button
-            type="button"
-            style={S.chipBtn(learning.goalId === null)}
-            onClick={() =>
-              attach.mutate({ id: learning.id, goalId: null, version: learning.version }, { onSuccess: () => { setAttaching(false); onSelect(null); } })
-            }
-          >
-            No goal
-          </button>
-          {goals.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              style={S.chipBtn(learning.goalId === g.id)}
-              onClick={() =>
-                attach.mutate({ id: learning.id, goalId: g.id, version: learning.version }, { onSuccess: () => { setAttaching(false); onSelect(null); } })
-              }
-            >
-              {g.title}
-            </button>
-          ))}
-        </div>
+        <LifeGoalPicker
+          value={learning.goalId}
+          onPick={(id) => attach.mutate({ id: learning.id, goalId: id, version: learning.version }, { onSuccess: () => { setAttaching(false); onSelect(null); } })}
+        />
       )}
 
       {selected && !attaching && (

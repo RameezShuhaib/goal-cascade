@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { BacklogItemView } from '@goal-cascade/shared';
 import type { ReorderControlProps, ReorderMenu } from './ReorderableList';
 import { useUI } from '../context/UIContext';
-import { useDeleteBacklogItem, useLens, useMoveBacklogItem } from '../api/queries';
+import { useDeleteBacklogItem, useMoveBacklogItem } from '../api/queries';
+import { GoalPicker } from './GoalPicker';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { capturedLabel, shortDate } from '../utils/dates';
@@ -50,11 +51,8 @@ export function BacklogItemCard({
   const [moving, setMoving] = useState(false);
 
   // R-backlog-2/10 — a move target is a Yearly, Quarterly or Monthly goal: never Life, and never Weekly.
-  // Only read when the picker is actually open.
-  const yearly = useLens('Yearly', undefined, moving);
-  const quarterly = useLens('Quarterly', undefined, moving);
-  const monthly = useLens('Monthly', undefined, moving);
-  const targets = [...(yearly.data?.items ?? []), ...(quarterly.data?.items ?? []), ...(monthly.data?.items ?? [])].filter((g) => g.id !== item.goalId);
+  // The picker mounts only while `moving`, so its reads fire only when the list is actually open.
+  const exclude = useMemo(() => [item.goalId], [item.goalId]);
 
   const body = (
     <>
@@ -75,31 +73,33 @@ export function BacklogItemCard({
         {/* R-task-15 / D-12 — the week the task was LIVE in, an absolute Monday, not "this week". */}
         {item.fromWeekStart && <div style={{ fontSize: 11.5, color: S.T.mut, marginTop: 2 }}>from week of {shortDate(item.fromWeekStart)}</div>}
       </button>
+      {/*
+       * ⚠ **R-nav-31** — this was an inline `chipBtn` row **with no selected state at all**, and it is
+       * the site §7.8 names when it says a picker per surface kept in sync by convention is how the app
+       * ended up with seven of them. It is the same component the sheets use, inline: a row IS the move,
+       * so nothing here is "chosen and then confirmed".
+       */}
       {selected && moving && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-          {targets.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              style={S.chipBtn(false)}
-              disabled={move.isPending}
-              onClick={() =>
-                move.mutate(
-                  { id: item.id, goalId: g.id, version: item.version },
-                  {
-                    onSuccess: () => {
-                      setMoving(false);
-                      onSelect(null);
-                      ui.showToast(`Moved to ${g.title}`);
-                    },
+        <div style={{ marginTop: 10 }}>
+          <GoalPicker
+            mode={{ kind: 'backlogHost', exclude }}
+            value={null}
+            onChange={(id, title) =>
+              id &&
+              move.mutate(
+                { id: item.id, goalId: id, version: item.version },
+                {
+                  onSuccess: () => {
+                    setMoving(false);
+                    onSelect(null);
+                    ui.showToast(`Moved to ${title ?? 'another goal'}`);
                   },
-                )
-              }
-            >
-              {g.title}
-            </button>
-          ))}
-          {targets.length === 0 && <div style={{ fontSize: 13, color: S.T.mut }}>No other goal can hold it.</div>}
+                },
+              )
+            }
+            empty="No other goal can hold it."
+            listLabel="Goals that can hold this item"
+          />
         </div>
       )}
 

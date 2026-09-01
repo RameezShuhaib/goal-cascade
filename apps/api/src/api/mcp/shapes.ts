@@ -1,5 +1,4 @@
-import type { GoalView, Horizon, TaskDetailView, TaskView, WeekView } from '@goal-cascade/shared';
-import { HORIZONS } from '@goal-cascade/shared';
+import type { GoalView, TaskDetailView, TaskView, WeekView } from '@goal-cascade/shared';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { DependencyContainer } from 'tsyringe';
 import type { RequestContext } from '../../application/context';
@@ -201,61 +200,9 @@ export function requireGoal(goals: readonly GoalView[], goalId: string): GoalVie
 // ─────────────────────────────────────────────────────────────────────────────
 // find_goal — the ONE place fuzziness is allowed, and it is read-only
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Case- and diacritic-insensitive normalisation. Without the diacritic fold, "Séjour" and "Sejour" are
- * different goals to the matcher and identical to the user, which is exactly the kind of near-miss that
- * makes an agent act on the wrong branch.
- */
-function fold(s: string): string {
-  return s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
-export type GoalMatch = { goal: GoalView; score: number; matchedOn: string };
-
-/**
- * Rank goals against a phrase the user said.
- *
- * The ladder is deliberately coarse and ordered by how much the match tells you: an exact title is
- * certainty, a `why` substring is a hint. Ties break toward the SHORTER horizon (the more specific goal
- * — "my fitness goal" almost always means the thing being worked on, not the Life root), then oldest
- * first for stability.
- *
- * This is the only fuzzy matching on the whole surface, it is read-only, and it reports `ambiguous` so
- * the model is told when to ask rather than guess. Mutating tools take ids and nothing else.
- */
-export function rankGoals(goals: readonly GoalView[], query: string): GoalMatch[] {
-  const q = fold(query);
-  if (q === '') return [];
-  const out: GoalMatch[] = [];
-  for (const g of goals) {
-    const title = fold(g.title);
-    const why = fold(g.why);
-    let score = 0;
-    let matchedOn = '';
-    if (title === q) [score, matchedOn] = [1, 'title'];
-    else if (title.startsWith(q)) [score, matchedOn] = [0.9, 'title-prefix'];
-    else if (title.includes(q)) [score, matchedOn] = [0.75, 'title'];
-    else if (why.includes(q)) [score, matchedOn] = [0.35, 'why'];
-    if (score > 0) out.push({ goal: g, score, matchedOn });
-  }
-  // ⚠ **A2** — the rank comes from the shared `HORIZONS` array rather than an inline four-member literal.
-  // That literal was one of the four copies of the horizon list, and it would have silently ranked every
-  // Weekly goal as `-1` — below Life — the moment the fifth horizon shipped (the delta's silent break #4).
-  const rankOf = (g: GoalView) => (HORIZONS as readonly Horizon[]).indexOf(g.horizon);
-  return out.sort(
-    (a, b) =>
-      b.score - a.score ||
-      rankOf(b.goal) - rankOf(a.goal) ||
-      (a.goal.createdAt < b.goal.createdAt ? -1 : a.goal.createdAt > b.goal.createdAt ? 1 : 0),
-  );
-}
-
-/** Two candidates within 0.15 of each other is not a ranking, it is a question for the user. */
-export function isAmbiguous(matches: readonly GoalMatch[]): boolean {
-  return matches.length >= 2 && matches[0]!.score - matches[1]!.score < 0.15;
-}
+//
+// ⚠ **R-nav-31 — `fold`, `GoalMatch`, `rankGoals` and `isAmbiguous` MOVED to
+// `packages/shared/src/search/rank-goals.ts`.** The web app's one goal picker ranks its options with the
+// same function, so a phrase the owner types and a phrase the assistant is given resolve in the same
+// order. `tools/goals.ts` imports them from `@goal-cascade/shared`; nothing here re-exports them, because
+// a re-export would let a second copy grow back behind this file's name.

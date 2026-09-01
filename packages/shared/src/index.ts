@@ -14,3 +14,9 @@ export * from './calendar/period-view';
 export * from './commands';
 export * from './read-models';
 export * from './endpoints';
+/**
+ * ⚠ **R-nav-31** — the second body of behaviour to move here, and for the same reason as the first:
+ * `find_goal`'s ranking is now the goal picker's ranking, so a phrase typed by the owner and a phrase
+ * said to the assistant resolve in one order. `search → common` only; it is a leaf of the DAG.
+ */
+export * from './search/rank-goals';
