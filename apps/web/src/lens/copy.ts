@@ -19,6 +19,33 @@ export const createLabel = (lens: Horizon): string => `+ ${lens} goal`;
 export const offNowBadge = (lens: Horizon, isPast: boolean): string =>
   isPast ? `Past ${PERIOD_UNIT[lens]} — still editable` : `Future ${PERIOD_UNIT[lens]} — planning ahead`;
 
+/**
+ * R-lens-28 — **the period's full name: what it is called, and what it actually spans.**
+ *
+ * `Sep 2026 · Mon 7 Sep – Sun 4 Oct`. The name alone over-promises — a week is keyed by its Monday
+ * (R-goal-33), so `Sep 2026` is the weeks beginning 7, 14, 21 and 28 Sep and reads as 1–30 September.
+ *
+ * On screen the two halves sit on **two lines inside the one title button** (`LensRow`), not on one; this
+ * is the form the accessible name and the live region use, where a line break carries nothing and a `·`
+ * does. Both halves are the SERVER's strings (`PeriodView.label` / `.weekRange`) — the client formats no
+ * date here, because it holds no Monday rule to format one with (D-1).
+ */
+export const periodTitle = (label: string, weekRange: string): string => (weekRange ? `${label} · ${weekRange}` : label);
+
+/**
+ * R-lens-29 — the flag for *the current period is not the one holding this week*.
+ *
+ * It fires for the first few days of a month, quarter or year and no other time: on Tue 1 Sep 2026 the
+ * Monthly lens opens on `Sep 2026`, whose weeks begin on the 7th, while the week the owner is living in
+ * began Mon 31 Aug and is August's. The lens is right and looks broken, which is a labelling defect and
+ * not a model one (RECONCILIATION ★C-19), so the screen says the true thing in one quiet line.
+ *
+ * It names the period rather than the week, because the period is where the tap goes. `Go there` is the
+ * short visible verb; the row gives the button an accessible name that spells the destination out.
+ */
+export const weekElsewhereBadge = (label: string): string => `This week is in ${label}`;
+export const weekElsewhereAction = (label: string): string => `Go to ${label}`;
+
 export interface EmptyCopy {
   title: string;
   body: string;

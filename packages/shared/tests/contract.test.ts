@@ -23,6 +23,7 @@ import {
   Iso,
   PatchGoalRequest,
   PeriodKey,
+  PeriodView,
   TASK_SOURCES,
   TasksQuery,
   Ulid,
@@ -280,6 +281,29 @@ describe('A2: five horizons and canonical periods', () => {
     // …and a Weekly key that is not a Monday.
     expect(CreateGoalRequest.safeParse({ title: 'W', horizon: 'Weekly', parentId: parent, periodKey: '2026-09-01' }).success).toBe(false);
     expect(PeriodKey.safeParse('2026-13').success).toBe(false);
+  });
+
+  it('⚠ A4 (R-lens-28/29): a PeriodView carries what it SPANS and where the current week is', () => {
+    const base = { periodKey: '2026-09', label: 'Sep 2026', isCurrent: true, isPast: false, hasWork: true };
+    // Both fields are REQUIRED, so a server that computes the label and forgets the range breaks at the
+    // boundary rather than shipping a period that quietly over-promises again. That is the whole point of
+    // parsing on both sides.
+    expect(PeriodView.safeParse(base).success).toBe(false);
+    expect(PeriodView.safeParse({ ...base, weekRange: 'Mon 7 Sep – Sun 4 Oct' }).success).toBe(false);
+
+    const seam = PeriodView.safeParse({
+      ...base,
+      weekRange: 'Mon 7 Sep – Sun 4 Oct',
+      currentWeekPeriod: { periodKey: '2026-08', label: 'Aug 2026' },
+    });
+    expect(seam.success).toBe(true);
+    // `null` is the ordinary case — this period holds the week containing today — and it is a real
+    // `null`, not an absent key, because absence would be indistinguishable from a stale client.
+    expect(PeriodView.safeParse({ ...base, weekRange: 'Mon 3 Aug – Sun 6 Sep', currentWeekPeriod: null }).success).toBe(true);
+    // The destination is a canonical key like any other (R-goal-33), so it is validated like any other.
+    expect(
+      PeriodView.safeParse({ ...base, weekRange: '', currentWeekPeriod: { periodKey: '2026-13', label: 'nope' } }).success,
+    ).toBe(false);
   });
 
   it('Q-12: the three caps that are actually enforced — and no lifetime goal cap', () => {

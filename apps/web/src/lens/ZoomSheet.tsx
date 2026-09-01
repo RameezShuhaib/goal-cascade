@@ -56,8 +56,19 @@ export function ZoomSheet({ lens, anchor, offNow }: { lens: Horizon; anchor: str
                 onClick={() => go(row.lens, row.periodKey)}
               >
                 <span style={{ minWidth: 84, fontWeight: 800 }}>{row.lens}</span>
-                <span style={{ flex: 1, minWidth: 0, color: S.T.mut, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {row.label}
+                {/*
+                 * R-lens-28 — the destination's **name over its span**. The sheet's whole argument over a
+                 * five-way strip is that you see where you would land before you commit (R-lens-17), and
+                 * `Sep 2026` is not where you would land — `Mon 7 Sep – Sun 4 Oct` is. There is no chrome
+                 * budget inside a sheet, so this is the one place the two can sit unabbreviated.
+                 */}
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                  <span style={{ display: 'block', color: S.T.mut, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.label}</span>
+                  {row.weekRange && (
+                    <span style={{ display: 'block', color: S.T.mut, fontWeight: 500, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {row.weekRange}
+                    </span>
+                  )}
                 </span>
                 {/* A zero count is omitted, not rendered — the app already omits zero counts. */}
                 {row.count > 0 && <span style={{ fontWeight: 800, color: S.T.ink }}>{row.count}</span>}

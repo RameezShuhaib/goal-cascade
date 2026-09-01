@@ -107,7 +107,7 @@ describe('Lenses — the chrome budget (R-nav-27)', () => {
     await screen.findByText('Lift three times a week');
 
     // Row 1 — the cluster. Row 2 — `‹ Aug 2026 ▾ ›`. And that is all that is unconditional.
-    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
     // The cluster's create button and the per-group one are the same label by design (§6.7): one asks
     // "add to this period", the other "add to this line in this period", and both are the same act.
     expect(screen.getAllByRole('button', { name: '+ Monthly goal' }).length).toBeGreaterThan(0);
@@ -146,7 +146,7 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
     await user.click(later);
 
     // The clamp that used to pin every forward step to "now" is deleted, not relaxed.
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Sep 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Monthly lens, Sep 2026 · Mon 7 Sep – Sun 4 Oct. Change lens or period.' })).toBeInTheDocument();
   });
 
   it('R-lens-21 / R-lens-11: a future period is badged as planning ahead, never as late, and offers Now ›', async () => {
@@ -299,7 +299,7 @@ describe('Lenses — the one gesture, and its keyboard equal (R-lens-25)', () =>
     screen.getByTestId('lens-body').focus();
     await user.type(screen.getByTestId('lens-body'), '{ArrowLeft}');
 
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Jul 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Monthly lens, Jul 2026 · Mon 6 Jul – Sun 2 Aug. Change lens or period.' })).toBeInTheDocument();
   });
 
   it('Shift+↓ zooms in one altitude, and Shift+↑ zooms back out', async () => {
@@ -309,7 +309,7 @@ describe('Lenses — the one gesture, and its keyboard equal (R-lens-25)', () =>
 
     withLens(F.lensFor('Monthly'));
     await user.type(screen.getByTestId('lens-body'), '{Shift>}{ArrowDown}{/Shift}');
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
   });
 
   it('and a shortcut never fires while a field has focus — the arrows belong to the caret there', async () => {
@@ -320,7 +320,7 @@ describe('Lenses — the one gesture, and its keyboard equal (R-lens-25)', () =>
 
     const field = within(sheet).getByLabelText('What needs doing, someday?');
     await user.type(field, 'abc{ArrowLeft}{ArrowLeft}');
-    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
   });
 
   it('R-lens-25: the Life lens has no periods, so it has no gesture and no arrow shortcut either', async () => {
@@ -348,7 +348,7 @@ describe('Lenses — the Zoom sheet (R-lens-17, R-lens-22)', () => {
   it('the title opens a ladder of five, each naming where it would land, with zero counts omitted', async () => {
     withLens(F.lensFor('Quarterly'));
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026. Change lens or period.' }));
+    await user.click(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.' }));
 
     const sheet = await screen.findByRole('dialog', { name: 'Change lens' });
     expect(within(sheet).getByText('everything')).toBeInTheDocument();
@@ -363,19 +363,19 @@ describe('Lenses — the Zoom sheet (R-lens-17, R-lens-22)', () => {
   it('S-lens-9-3: choosing a row navigates to that lens at the period the SERVER computed', async () => {
     withLens(F.lensFor('Quarterly'));
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026. Change lens or period.' }));
+    await user.click(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.' }));
 
     withLens(F.lensFor('Monthly'));
     await user.click(within(await screen.findByRole('dialog', { name: 'Change lens' })).getByRole('button', { name: /Monthly/ }));
 
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('R-lens-17: `Jump to now` is offered only when the period is not the current one', async () => {
     withLens(F.lensFor('Monthly'));
     const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
-    await user.click(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' }));
+    await user.click(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' }));
     expect(within(await screen.findByRole('dialog', { name: 'Change lens' })).queryByRole('button', { name: 'Jump to now' })).not.toBeInTheDocument();
   });
 });
@@ -480,5 +480,160 @@ describe('R-lens-24 — three empty states, and they are distinguishable', () =>
       expect(await screen.findByText(headline)).toBeInTheDocument();
       unmount();
     }
+  });
+});
+
+/**
+ * ⚠ **A4 (R-lens-28, R-lens-29)** — the label that stopped over-promising, and the flag beneath it.
+ *
+ * The owner opened the Monthly lens on Tue 1 Sep 2026, read `Sep 2026`, and could not find the week they
+ * were living in. Both facts were true: a week belongs to its Monday's month (R-goal-33), so the week of
+ * Mon 31 Aug is August's and `Sep 2026` begins on the 7th. The model is right; the label was the defect.
+ */
+describe('R-lens-28 — the lens title says what the period actually spans', () => {
+  it('the Monthly lens prints the range beneath the month, and names both in one accessible name', async () => {
+    withLens(F.lensFor('Monthly'));
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+    await screen.findByText('Lift three times a week');
+
+    // Two lines, one control: the eye reads `Aug 2026` over `Mon 3 Aug – Sun 6 Sep`…
+    expect(screen.getByText('Mon 3 Aug – Sun 6 Sep')).toBeInTheDocument();
+    // …and the platform reads both, because the range line itself is `aria-hidden` (hearing it twice is
+    // worse than not hearing it). The `·` is what a line break cannot carry.
+    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+  });
+
+  it('today’s real case: viewing Sep 2026 shows Mon 7 Sep – Sun 4 Oct', async () => {
+    withLens(
+      F.lens({
+        lens: 'Monthly',
+        period: F.period({ periodKey: '2026-09', currentWeekPeriod: { periodKey: '2026-08', label: 'Aug 2026' } }),
+        items: [],
+      }),
+    );
+    renderApp(<AppShell />, { route: '/month/2026-09' });
+
+    // The month named `Sep 2026` runs from the 7th to the 4th of October, and now says so.
+    expect(await screen.findByText('Mon 7 Sep – Sun 4 Oct')).toBeInTheDocument();
+  });
+
+  it('the Quarterly and Yearly lenses carry it too — the seam is theirs as much as the month’s', async () => {
+    withLens(F.lensFor('Quarterly'));
+    const { unmount } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+    expect(await screen.findByText('Mon 6 Jul – Sun 4 Oct')).toBeInTheDocument();
+    unmount();
+
+    withLens(F.lensFor('Yearly'));
+    renderApp(<AppShell />, { route: '/year/2026' });
+    // A year always spans two calendar years, so both are spelled out or the far end is unreadable.
+    expect(await screen.findByText('Mon 5 Jan 2026 – Sun 3 Jan 2027')).toBeInTheDocument();
+  });
+
+  it('the Weekly and Life lenses print no range — neither label over-promises', async () => {
+    withLens(F.lensFor('Weekly'));
+    const { unmount } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    await screen.findByText('Three easy runs and one long run');
+    // `Week of 31 Aug` already names a specific Monday, and a week is unambiguously the seven days from
+    // it. A range under it would restate the title, which is chrome (R-nav-27).
+    expect(screen.queryByText('Mon 31 Aug – Sun 6 Sep')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' })).toBeInTheDocument();
+    unmount();
+
+    withLens(F.lens({ lens: 'Life', items: F.lifeGoals(), groups: [] }));
+    renderApp(<AppShell />, { route: '/life' });
+    expect(await screen.findByRole('button', { name: 'Life lens, Life. Change lens or period.' })).toBeInTheDocument();
+  });
+
+  it('R-lens-22: the Zoom sheet shows every row’s span, so the destination is the whole destination', async () => {
+    withLens(F.lensFor('Quarterly'));
+    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+    await user.click(await screen.findByRole('button', { name: /^Quarterly lens, Q3 2026/ }));
+
+    const sheet = await screen.findByRole('dialog', { name: 'Change lens' });
+    expect(within(sheet).getByText('Mon 5 Jan 2026 – Sun 3 Jan 2027')).toBeInTheDocument();
+    expect(within(sheet).getByText('Mon 6 Jul – Sun 4 Oct')).toBeInTheDocument();
+    expect(within(sheet).getByText('Mon 3 Aug – Sun 6 Sep')).toBeInTheDocument();
+    expect(within(sheet).getByText('Mon 31 Aug – Sun 6 Sep')).toBeInTheDocument();
+    // The Life row spans everything, and `everything` has no dates to print.
+    expect(within(sheet).getByText('everything')).toBeInTheDocument();
+  });
+});
+
+describe('R-lens-29 — the flag for "this week is somewhere else"', () => {
+  /** Tue 1 Sep 2026: the Monthly lens's current period is `Sep 2026` and this week is August's. */
+  const seam = () =>
+    withLens(
+      F.lens({
+        lens: 'Monthly',
+        period: F.period({ periodKey: '2026-09', currentWeekPeriod: { periodKey: '2026-08', label: 'Aug 2026' } }),
+        items: [],
+      }),
+    );
+
+  it('says where this week is, and offers one tap to it', async () => {
+    seam();
+    renderApp(<AppShell />, { route: '/month/2026-09' });
+
+    expect(await screen.findByText('This week is in Aug 2026')).toBeInTheDocument();
+    // The visible verb is short because the pill one gap away already names the month for the eye; the
+    // accessible name spells the destination out, because a screen reader hears the button alone.
+    expect(screen.getByRole('button', { name: 'Go to Aug 2026' })).toHaveTextContent('Go there ›');
+    // §8.2 — and the live region carries it, because a visible row is not something to go looking for.
+    expect(screen.getByText(/This week is in Aug 2026\.$/)).toBeInTheDocument();
+  });
+
+  it('the jump lands on the period that holds today’s week', async () => {
+    seam();
+    const { user } = renderApp(<AppShell />, { route: '/month/2026-09' });
+    await screen.findByText('This week is in Aug 2026');
+
+    withLens(F.lensFor('Monthly'));
+    await user.click(screen.getByRole('button', { name: 'Go to Aug 2026' }));
+
+    // `Aug 2026`, the month whose weeks include Mon 31 Aug — and NOT `lensPath(lens)` with no period,
+    // which would ask for the current one and land straight back on September.
+    expect(await screen.findByRole('button', { name: /^Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep\./ })).toBeInTheDocument();
+    expect(screen.queryByText('This week is in Aug 2026')).not.toBeInTheDocument();
+  });
+
+  it('it does not render when the period holds this week — which is every other day of the month', async () => {
+    withLens(F.lensFor('Monthly'));
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+    await screen.findByText('Lift three times a week');
+
+    expect(screen.queryByTestId('week-elsewhere-row')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^This week is in/)).not.toBeInTheDocument();
+  });
+
+  it('R-nav-27: it takes the off-now row’s place and never adds a third row of chrome', async () => {
+    // A future period carries `currentWeekPeriod` too — the server states the fact on every period it
+    // describes — but `Future month — planning ahead` is what belongs in that row there, and printing
+    // both would be the third unconditional row R-nav-27 refuses.
+    withLens(
+      F.lens({
+        lens: 'Monthly',
+        period: F.period({
+          periodKey: '2026-11',
+          label: 'Nov 2026',
+          isCurrent: false,
+          weekRange: 'Mon 2 Nov – Sun 6 Dec',
+          currentWeekPeriod: { periodKey: '2026-08', label: 'Aug 2026' },
+        }),
+        items: [],
+      }),
+    );
+    renderApp(<AppShell />, { route: '/month/2026-11' });
+
+    expect(await screen.findByText('Future month — planning ahead')).toBeInTheDocument();
+    expect(screen.queryByTestId('week-elsewhere-row')).not.toBeInTheDocument();
+    // …and the range is still printed, because a future period over-promises exactly as much.
+    expect(screen.getByText('Mon 2 Nov – Sun 6 Dec')).toBeInTheDocument();
+  });
+
+  it('the Weekly lens can never flag: a week always holds its own week', async () => {
+    withLens(F.lensFor('Weekly'));
+    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    await screen.findByText('Three easy runs and one long run');
+    expect(screen.queryByTestId('week-elsewhere-row')).not.toBeInTheDocument();
   });
 });

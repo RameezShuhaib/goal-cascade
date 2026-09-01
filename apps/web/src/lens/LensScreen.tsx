@@ -9,9 +9,18 @@ import { TopActions } from '../components/TopActions';
 import { Empty, Loading, LoadError } from '../components/states';
 import { firstDayOf, rank, stepPeriod, validKeyFor } from '../utils/periodKeys';
 import { lensPath } from '../routes';
-import { LensRow, OffNowRow } from './LensRow';
+import { LensRow, OffNowRow, WeekElsewhereRow } from './LensRow';
 import { CarriedCard, LifeCard, MonthlyCard, PlainCard, WeeklyCard } from './cards';
-import { createLabel, emptyCopy, horizonEmptyCopy, offNowBadge, UNSORTED_NOTE } from './copy';
+import {
+  createLabel,
+  emptyCopy,
+  horizonEmptyCopy,
+  offNowBadge,
+  periodTitle,
+  UNSORTED_NOTE,
+  weekElsewhereAction,
+  weekElsewhereBadge,
+} from './copy';
 
 /**
  * **A lens: a flat list of every goal at one horizon in one period, grouped by the Life goal each belongs
@@ -87,6 +96,22 @@ export function LensScreen({ lens }: { lens: Horizon }) {
   const canCreate = !view?.isPast;
   const weekOffset = lens === 'Weekly' && view ? clock.offsetOf(view.periodKey) : 0;
 
+  /**
+   * R-lens-29 — the period on screen is the current one **and still does not hold the week you are in**.
+   *
+   * `PeriodView.currentWeekPeriod` is the server's statement of where the current week actually is, and
+   * is `null` whenever it is here. This screen adds the one clause the server deliberately does not: it
+   * says so only on the CURRENT period, which is exactly where `offNow` is false — so the two notices are
+   * mutually exclusive and share R-lens-21's one conditional row rather than adding a second (R-nav-27).
+   *
+   * ⚠ **Why the lens still opens on the calendar period** (R-lens-8, unchanged). Defaulting the Monthly
+   * lens to the month holding the current week would open it, today, on `Aug 2026` — a period the same
+   * payload calls `isPast`, which strips every create affordance (R-goal-36, R-nav-25) and badges it
+   * `Past month — still editable`. That is a worse landing than an honest label: you would arrive
+   * somewhere you cannot plan. The flag carries the weight instead, and the jump is one tap.
+   */
+  const elsewhere = view && view.isCurrent ? view.currentWeekPeriod : null;
+
   return (
     <div style={S.page} data-screen-label={`${lens} lens`}>
       {/* Row 1 — the cluster (R-nav-25): the theme toggle, the account button, one primary action. */}
@@ -121,10 +146,33 @@ export function LensScreen({ lens }: { lens: Horizon }) {
         onZoom={() => ui.openSheet({ kind: 'zoom' })}
       />
 
-      {/* Row 3 — conditional, and only conditional (R-lens-21, R-nav-27). */}
-      {offNow && view && <OffNowRow badge={offNowBadge(lens, view.isPast)} onNow={() => navigate(lensPath(lens))} />}
+      {/*
+       * Row 3 — conditional, and only conditional (R-lens-21, R-nav-27). **Two occupants, never two
+       * rows**: `offNow` is `!isCurrent` and `elsewhere` is only ever set when `isCurrent`, so the
+       * `else` is a fact about the data and not a preference about layout.
+       */}
+      {offNow && view ? (
+        <OffNowRow badge={offNowBadge(lens, view.isPast)} onNow={() => navigate(lensPath(lens))} />
+      ) : (
+        elsewhere && (
+          <WeekElsewhereRow
+            badge={weekElsewhereBadge(elsewhere.label)}
+            actionLabel={weekElsewhereAction(elsewhere.label)}
+            // The destination is the SERVER's key, navigated to explicitly — `lensPath(lens)` with no
+            // period would ask for the current one and land straight back here (R-lens-14).
+            onGo={() => navigate(lensPath(lens, elsewhere.periodKey))}
+          />
+        )
+      )}
 
-      <Announcement lens={lens} label={view?.label ?? 'Life'} data={data} />
+      <Announcement
+        lens={lens}
+        // R-lens-28 — a screen reader hears the span too, because the range line is `aria-hidden` in the
+        // title and a period change leaves focus on the chevron, which re-reads nothing (§8.2).
+        label={view ? periodTitle(view.label, lens === 'Weekly' ? '' : view.weekRange) : 'Life'}
+        elsewhere={elsewhere?.label ?? null}
+        data={data}
+      />
 
       {pending && <Loading label="Loading…" />}
       {failed && <LoadError error={failed} what="this lens" onRetry={() => void q.refetch()} />}
@@ -147,7 +195,18 @@ export function LensScreen({ lens }: { lens: Horizon }) {
  * carries the whole thing — including the carried band's count, which a sighted user can see and a screen
  * reader otherwise could not.
  */
-function Announcement({ lens, label, data }: { lens: Horizon; label: string; data: { groups: LifeGroupView[]; items: GoalView[]; carried: GoalView[] } | undefined }) {
+function Announcement({
+  lens,
+  label,
+  elsewhere,
+  data,
+}: {
+  lens: Horizon;
+  label: string;
+  /** R-lens-29 — the period holding the current week, when it is not this one. */
+  elsewhere: string | null;
+  data: { groups: LifeGroupView[]; items: GoalView[]; carried: GoalView[] } | undefined;
+}) {
   if (!data) return null;
   /**
    * The **rendered** group count, not `data.groups.length`. The server builds `groups` from
@@ -162,7 +221,9 @@ function Announcement({ lens, label, data }: { lens: Horizon; label: string; dat
     `${label}. ${data.items.length} goal${data.items.length === 1 ? '' : 's'}` +
     (lens === 'Life' ? '' : ` in ${groups} group${groups === 1 ? '' : 's'}`) +
     (carried > 0 ? `, ${carried} carried` : '') +
-    '.';
+    '.' +
+    // R-lens-29 — the flag is a visible row a screen reader would otherwise have to go looking for.
+    (elsewhere ? ` ${weekElsewhereBadge(elsewhere)}.` : '');
   return (
     <div aria-live="polite" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>
       {text}

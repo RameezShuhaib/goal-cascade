@@ -251,11 +251,35 @@ const LABELS: Record<string, string> = {
   [NEXT_MONDAY]: 'Week of 7 Sep',
 };
 
+/**
+ * R-lens-28 — the whole weeks each period holds, exactly as `domain/periods.weekRangeOf` computes them.
+ *
+ * These are the real answers for the real keys, checked against the Monday rule (a week belongs to its
+ * Monday's period): `Aug 2026` runs to Sun 6 Sep because Mon 31 Aug is August's, and `Sep 2026` starts on
+ * the 7th for the same reason. A fixture that made these up would be testing the fixture.
+ */
+const RANGES: Record<string, string> = {
+  '2026': 'Mon 5 Jan 2026 – Sun 3 Jan 2027',
+  '2026-Q3': 'Mon 6 Jul – Sun 4 Oct',
+  '2026-Q4': 'Mon 5 Oct 2026 – Sun 3 Jan 2027',
+  '2026-07': 'Mon 6 Jul – Sun 2 Aug',
+  '2026-08': 'Mon 3 Aug – Sun 6 Sep',
+  '2026-09': 'Mon 7 Sep – Sun 4 Oct',
+  [THIS_MONDAY]: 'Mon 31 Aug – Sun 6 Sep',
+  [LAST_MONDAY]: 'Mon 24 Aug – Sun 30 Aug',
+  [THREE_WEEKS_AGO]: 'Mon 10 Aug – Sun 16 Aug',
+  [NEXT_MONDAY]: 'Mon 7 Sep – Sun 13 Sep',
+};
+
 export const period = (over: Partial<PeriodView> & { periodKey: string }): PeriodView => ({
   label: LABELS[over.periodKey] ?? over.periodKey,
   isCurrent: true,
   isPast: false,
   hasWork: true,
+  weekRange: RANGES[over.periodKey] ?? '',
+  // R-lens-29 — `null` is the ordinary case: this period holds the week containing today. The fixtures'
+  // clock is Mon 31 Aug 2026, which is inside `2026-08`, `2026-Q3` and `2026`, so every default is honest.
+  currentWeekPeriod: null,
   ...over,
 });
 
@@ -347,11 +371,12 @@ export function weeklyLens(periodKey = THIS_MONDAY): LensResponse {
 export const zoomResponse = (over: Partial<ZoomResponse> = {}): ZoomResponse => ({
   anchor: '2026-08-31',
   rows: [
-    { lens: 'Life', periodKey: null, label: 'everything', count: 2, isCurrent: false },
-    { lens: 'Yearly', periodKey: '2026', label: '2026', count: 2, isCurrent: true },
-    { lens: 'Quarterly', periodKey: '2026-Q3', label: 'Q3 2026', count: 1, isCurrent: true },
-    { lens: 'Monthly', periodKey: '2026-08', label: 'Aug 2026', count: 2, isCurrent: true },
-    { lens: 'Weekly', periodKey: THIS_MONDAY, label: 'Week of 31 Aug', count: 1, isCurrent: true },
+    // R-lens-28 — the Life row spans everything and carries no range; the other four carry their own.
+    { lens: 'Life', periodKey: null, label: 'everything', weekRange: '', count: 2, isCurrent: false },
+    { lens: 'Yearly', periodKey: '2026', label: '2026', weekRange: RANGES['2026']!, count: 2, isCurrent: true },
+    { lens: 'Quarterly', periodKey: '2026-Q3', label: 'Q3 2026', weekRange: RANGES['2026-Q3']!, count: 1, isCurrent: true },
+    { lens: 'Monthly', periodKey: '2026-08', label: 'Aug 2026', weekRange: RANGES['2026-08']!, count: 2, isCurrent: true },
+    { lens: 'Weekly', periodKey: THIS_MONDAY, label: 'Week of 31 Aug', weekRange: RANGES[THIS_MONDAY]!, count: 1, isCurrent: true },
   ],
   serverNow: NOW,
   ...over,

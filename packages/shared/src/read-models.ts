@@ -163,6 +163,13 @@ export const ZoomRowView = z.object({
   /** `null` on the Life row. */
   periodKey: PeriodKey.nullable(),
   label: z.string(),
+  /**
+   * ⚠ **A4, new (R-lens-28)** — the whole weeks that period contains, `''` on the Life row.
+   *
+   * The sheet's promise is that you see the destination before you commit (R-lens-22), and `Sep 2026`
+   * is not the whole destination — the range is what says which weeks you would actually land among.
+   */
+  weekRange: z.string(),
   count: z.int().nonnegative(),
   isCurrent: z.boolean(),
 });

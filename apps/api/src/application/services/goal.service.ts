@@ -42,7 +42,9 @@ import {
   labelOf,
   lastMondayIn,
   periodKeyOf,
+  periodKeyOfCurrentWeek,
   replanPeriods,
+  weekRangeOf,
   zoomTo,
 } from '../../domain/periods';
 import { addWeeks, dateInTimezone, offsetOf, weekStartOf, weeksBetween } from '../../domain/weeks';
@@ -283,6 +285,8 @@ export class GoalService {
       periodKey: k.horizon === 'Life' ? null : k.periodKey,
       // The Life row reads `everything`: it has no period, and saying so beats an empty cell.
       label: k.horizon === 'Life' ? 'everything' : labelOf(k.horizon, k.periodKey),
+      // R-lens-28 — the destination's real span. `''` on the Life row, which spans everything.
+      weekRange: weekRangeOf(k.horizon, k.periodKey),
       count: at.get(`${k.horizon}|${k.periodKey}`) ?? 0,
       isCurrent: k.horizon !== 'Life' && k.periodKey === periodKeyOf(k.horizon, today),
     }));
@@ -938,14 +942,25 @@ export class GoalService {
     return groups;
   }
 
+  /**
+   * ⚠ **A4 (R-lens-28, R-lens-29)** — two fields join `label` here, and both are the same seam.
+   *
+   * A week belongs to its Monday's period, so `periodKeyOf(horizon, today)` — the CURRENT period, and
+   * still the one a lens opens on (R-lens-8, deliberately unchanged) — is not always the period holding
+   * the week the owner is living in. `weekRange` says what this period really spans and
+   * `currentWeekPeriod` says where the current week actually is, `null` when it is here.
+   */
   private periodView(horizon: Horizon, periodKey: string, today: string, hasWork: boolean): PeriodView {
     const current = periodKeyOf(horizon, today);
+    const weekIn = periodKeyOfCurrentWeek(horizon, today);
     return {
       periodKey,
       label: labelOf(horizon, periodKey),
       isCurrent: periodKey === current,
       isPast: periodKey < current,
       hasWork,
+      weekRange: weekRangeOf(horizon, periodKey),
+      currentWeekPeriod: weekIn === periodKey ? null : { periodKey: weekIn, label: labelOf(horizon, weekIn) },
     };
   }
 

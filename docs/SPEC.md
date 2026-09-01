@@ -311,11 +311,11 @@ The entity is removed outright: no migration, no conversion, no export. The owne
 *Added after `docs/work/14-redesign/UX-PLAN.md` landed. Every rule here answers a flow the UX plan
 specifies; the reasoning and the conflicts they resolve are in `docs/work/14-redesign/RECONCILIATION.md`.*
 
-- **R-lens-17 (the lens control is the title)** — There is no persistent lens switcher. The lens row carries `‹`, the period title, `›`; the title is a **button** that opens the **Zoom sheet** (heading `Change lens`) — a vertical ladder of the five horizons, each row naming the exact period it would land on (R-lens-9) and its count (R-lens-22), the current lens marked `aria-current="true"`, with `Jump to now` in the footer when the selected period is not the current one. *Supersedes R-lens-13.*
+- **R-lens-17 (the lens control is the title)** ⚠ **modified by A4 — the title carries a second line, and its accessible name carries the span (R-lens-28)** — There is no persistent lens switcher. The lens row carries `‹`, the period title, `›`; the title is a **button** that opens the **Zoom sheet** (heading `Change lens`) — a vertical ladder of the five horizons, each row naming the exact period it would land on (R-lens-9) and its count (R-lens-22), the current lens marked `aria-current="true"`, with `Jump to now` in the footer when the selected period is not the current one. *Supersedes R-lens-13.*
   - **Altitude is a vertical idea and time is a horizontal one; the two dimensions never share a widget and never compete for width.** One control per dimension is also what makes D-24 unrepresentable rather than merely guarded against.
   - On the **Life** lens both chevrons render **disabled, not hidden** (`aria-disabled` plus the real `disabled` attribute, described `Life has no periods`), so the control does not change shape between lenses and the thumb lands in the same place every time. A control that vanishes moves everything after it in the tab order.
   - The sheet is the existing `Sheet` (R-nav-15's contract, focus-trapped, `aria-labelledby` its `<h2>`); focus returns to the title button on close. Selection is announced, never merely coloured.
-  - The lens title's accessible name is `<Horizon> lens, <period>. Change lens or period.`
+  - The lens title's accessible name is `<Horizon> lens, <period>. Change lens or period.` ⚠ **A4** — `<period>` is now the period's **full** name, `<label> · <weekRange>`, on every lens that has a range (R-lens-28): `Monthly lens, Sep 2026 · Mon 7 Sep – Sun 4 Oct. Change lens or period.` The visible second line is `aria-hidden`, because hearing it twice is worse than not hearing it.
 - **R-lens-18 (the zoom anchor)** — The lens shell holds one **anchor date** for the session, and R-lens-9 maps it into each destination period.
   - **Cold start:** the server's today in the owner's timezone (R-auth-5), never the device clock.
   - **Stepping** the period with `‹`/`›` moves the anchor to the **first day of the newly selected period**, unless today falls inside it, in which case the anchor is today.
@@ -333,10 +333,11 @@ specifies; the reasoning and the conflicts they resolve are in `docs/work/14-red
   - The group carries **no count** and is **never collapsed by default**.
   - Each item gains one extra action, `Put under a Life goal…`, opening the existing Move sheet with the Life goals pre-listed.
   - **This state is not reachable through the product**: R-goal-4 and `checkCreate` refuse a parentless non-Life goal, so a root-less goal is a data-integrity fact, not an ordinary one. It must surface rather than silently drop a row from a view.
-- **R-lens-21 (the off-now row)** — When, and only when, the selected period is not the one containing today, one conditional row renders below the lens row: R-lens-11's badge on the left and a **`Now ›`** link button on the right.
+- **R-lens-21 (the off-now row)** ⚠ **modified by A4 — the row gains a second, mutually exclusive occupant (R-lens-29)** — When, and only when, the selected period is not the one containing today, one conditional row renders below the lens row: R-lens-11's badge on the left and a **`Now ›`** link button on the right.
   - It is the escape hatch unbounded forward navigation requires (R-lens-7): without it, fourteen months out is fourteen taps home.
   - The current period is unbadged and the row does not render, which is what keeps the shell at two unconditional rows (R-nav-27).
-- **R-lens-22 (the Zoom sheet's counts)** — Each Zoom-sheet row shows the number of **goals** at that horizon in the period that row would land on; the Life row reads `everything`. A zero count is omitted, not rendered (the app already omits zero counts).
+  - ⚠ **A4** — on the current period the same row may instead carry R-lens-29's `This week is in <period>`. The two conditions are complements (`not current` / `current`), so the row still has at most one occupant and the shell still has two unconditional rows.
+- **R-lens-22 (the Zoom sheet's counts)** ⚠ **modified by A4 — each row also carries its period's span (R-lens-28)** — Each Zoom-sheet row shows the number of **goals** at that horizon in the period that row would land on; the Life row reads `everything`. A zero count is omitted, not rendered (the app already omits zero counts).
   - **It is one read, not five.** A single grouped query over `ix_goals_lens` — four horizon/period seeks plus the Life count — serves the whole sheet. It must never be five lens reads and must never fetch rows in order to count them (R-lens-27).
   - It counts goals and nothing else. It is the only count in the sheet, and it is what makes the promise "you see the destination before you commit" true.
 - **R-lens-23 (the parent line on an item)** — An item in a lens shows its **immediate parent** as one muted line — `under Run a sub-2h half marathon in 2026` — **unless that parent is the group's own Life goal**, in which case nothing renders.
@@ -369,6 +370,25 @@ specifies; the reasoning and the conflicts they resolve are in `docs/work/14-red
   - `assertWeeklyGoal` reads **one row**: `horizon = 'Weekly'` (R-goal-39), never leaf-ness (R-goal-37), so it needs no tree at all.
   - `IGoalRepo.listAll` is **deleted**, not left unused — an unused whole-table read is one refactor away from being a used one, and the R-rm-* discipline exists for exactly this.
   - The index this requires is `ix_goals_lens (user_id, horizon, period_key, created_at, id)`; it does not exist today. See `docs/work/14-redesign/RECONCILIATION.md` §3 for the measurements, the query shapes and the migration note.
+
+#### Amendment 4 — a period's label says what it spans
+
+*The owner opened the Monthly lens on Tue 1 Sep 2026, read `Sep 2026`, and could not find the week they were living in: **"why is Sep 2026 this month? look the last Month week hadn't completed yet? is this right or wrong? this is confusing, i think for monthly we need to note it as a range."** It is right. **The model does not change** — ★C-19 settled it, and the alternative made one week belong to two months and put three consumers in disagreement. What was wrong is the label, which promises a calendar month and delivers four whole weeks.*
+
+- **R-lens-28 (a period's label is its name AND its span)** — Every period-scoped lens except **Weekly** renders, beneath the title, the **whole weeks the period contains**: `Sep 2026` over `Mon 7 Sep – Sun 4 Oct`. The pair is one string wherever a line break cannot carry it — `Sep 2026 · Mon 7 Sep – Sun 4 Oct` — which is the title button's accessible name and the live region's announcement.
+  - **The span follows from R-goal-33 and nothing else.** A week is keyed by its **Monday**, so a period holds exactly the weeks whose Monday falls inside it: the first is the first such Monday and the last runs to that Monday's Sunday. `Sep 2026` is therefore the four weeks beginning 7, 14, 21 and 28 Sep — it excludes the week of Mon 31 Aug and ends four days into October. This is the broadcast-calendar convention, and its rule is that the range is published **beside** the name and never instead of it.
+  - **Years appear only when the two ends disagree about one** — `Mon 7 Dec 2026 – Sun 3 Jan 2027`, where the title's own `Dec 2026` cannot disambiguate the far end. A Yearly range always spans two calendar years and therefore always prints both.
+  - **The Weekly lens is exempt, and that is a finding rather than an omission.** `Week of 31 Aug` names a specific Monday and a week is unambiguously the seven days from it, so the label is already honest; a range beneath it would restate the title, which is chrome (R-nav-27).
+  - **It is computed once, server-side** (`PeriodView.weekRange`, `ZoomRowView.weekRange`) and rendered by the client, because the client holds no Monday rule and must not acquire one (D-1). The Zoom sheet carries it on every row, where the promise is that you see the destination before you commit (R-lens-22).
+  - **It is a second LINE, never a second ROW** (R-nav-27). It sits inside the existing title button, carries no control, no tap target and no tab stop, so the shell still has exactly two unconditional rows. It could not go on the first line: at 21px `Sep 2026 · Mon 7 Sep – Sun 4 Oct` is 32 characters and ellipsises the range away at 360px, and a half-shown range is a wrong one.
+- **R-lens-29 (when the current period does not hold the current week, the lens says so)** ⚠ **R-lens-21's row gains a second occupant; R-lens-8's default deliberately does NOT change** — When the period on screen is the **current** one (R-goal-34) and still does not contain the week containing today, one conditional row renders: a muted pill reading `This week is in <period>` and a link to that period.
+  - **It fires for the opening days of a period and no other time**, at any horizon: on Tue 1 Sep 2026 the Monthly lens shows it; on Fri 1 Jan 2027 the Yearly, Quarterly and Monthly lenses show it at once, because that week began Mon 28 Dec. It can never fire on Weekly — a week holds its own week — or on Life, which has no period.
+  - **It takes R-lens-21's row and adds none.** The off-now row renders only when the period is *not* current and this renders only when it *is*, so the two are mutually exclusive by construction and the conditional row has two occupants. A screen showing both would be the third unconditional row R-nav-27 refuses.
+  - **It is not an escalation.** Same pill, same muted grey, same register as the badge it replaces. A period that legitimately begins next week is a fact about the calendar, not a problem with the plan (R-lens-11).
+  - **The jump names the period explicitly** — the key the server sent, not "the current period", which would ask for the one already on screen and land straight back.
+  - **Why R-lens-8 is unchanged.** Defaulting the Monthly lens to the period holding the current week would open it, on 1 Sep 2026, on `Aug 2026` — a period the same payload calls `isPast`, which removes every create affordance (R-goal-36, R-nav-25) and badges it `Past month — still editable`. Landing somewhere you cannot plan is worse than landing somewhere honestly labelled, so the label and the flag carry the weight and the default stays the calendar period.
+  - **The wire states the fact unconditionally; the client decides when to say it.** `PeriodView.currentWeekPeriod` is populated on every period that does not hold the current week and is `null` when it does; the "only on the current period" clause is the UI's, so no chrome decision lives on the server.
+  - An **agent** reads the same two fields (`week_range`, `current_week_period`) on `list_lens` and `get_period`, and the server-instructions block teaches them, because an agent reasoning about "September" meets exactly the ambiguity the owner did.
 
 
 ### ~~Plan (weekly focus)~~ ⚠ **A2 — RETIRED IN FULL (R-rm-2, R-rm-3)**
@@ -1046,6 +1066,23 @@ Every scenario below asserts `weekly_focus` behaviour. Two survive as re-pointed
 - **S-goal-48-7** (R-goal-48, unhappy — the server's refusal renders in place) — *When* a create from the capture is refused. *Then* the message is rendered from the **code** (Q-10) in an inline `alert` under the field, the typed title is still there, the capture stays open, and nothing navigates. The same copy also reaches the toast, exactly as it does from the create sheet — one error path, not a second one for this control.
 - **S-nav-29-1** (R-nav-29, unhappy — one path, not two) — *Given* a **Monthly** goal. *Then* its detail page renders no `+ Weekly goal` anywhere, and the `Sub-goals` section's `+ Sub-goal` is the only create for the horizon below. *And given* a **Weekly** goal. *Then* `+ Task` is still its one primary action.
 
+### Amendment 4 — period ranges and the week that is elsewhere
+
+- **S-lens-28-1** (R-lens-28, happy — the case that was reported) — *Given* today is Tue 1 Sep 2026. *When* the Monthly lens is opened. *Then* the period is `2026-09`, it is the current one, and the title reads `Sep 2026` over `Mon 7 Sep – Sun 4 Oct` — not 1–30 September. *And* the title button's accessible name is `Monthly lens, Sep 2026 · Mon 7 Sep – Sun 4 Oct. Change lens or period.`
+- **S-lens-28-2** (R-lens-28, happy — a month whose 1st is a Monday has no leading gap) — *Given* `2026-06`, whose 1st is a Monday. *Then* the range reads `Mon 1 Jun – Sun 5 Jul` and begins on the 1st itself. *And given* `2027-02`, whose 1st is a Monday and which holds exactly four weeks. *Then* it reads `Mon 1 Feb – Sun 28 Feb` and ends on the last day of the month.
+- **S-lens-28-3** (R-lens-28, happy — five weeks are five weeks) — *Given* `2026-08`, which holds the Mondays 3, 10, 17, 24 and 31 Aug. *Then* the range reads `Mon 3 Aug – Sun 6 Sep`: five weeks, the last of them running into September, because that week's Monday is August's.
+- **S-lens-28-4** (R-lens-28, happy — December into January) — *Given* `2026-12`. *Then* the range reads `Mon 7 Dec 2026 – Sun 3 Jan 2027`, with both years spelled out because the two ends disagree about one. *And given* `2027-01`. *Then* it reads `Mon 4 Jan – Sun 31 Jan`, with no year at either end. *And given* the Yearly period `2026`. *Then* `Mon 5 Jan 2026 – Sun 3 Jan 2027`.
+- **S-lens-28-5** (R-lens-28, happy — a quarter whose first Monday is in the previous quarter) — *Given* `2026-Q4`, whose 1 Oct is a Thursday in a week beginning Mon 28 Sep. *Then* the range reads `Mon 5 Oct 2026 – Sun 3 Jan 2027`: the quarter opens a week late, because the straddling week is Q3's. *And given* `2026-Q3`. *Then* `Mon 6 Jul – Sun 4 Oct`, whose far end is the same Sunday `Sep 2026`'s is.
+- **S-lens-28-6** (R-lens-28, unhappy — the two lenses with nothing to add) — *Given* the Weekly lens at `2026-08-31`. *Then* the title reads `Week of 31 Aug` and no range renders beneath it, because the label already names a specific Monday. *Given* the Life lens. *Then* no range renders, and its accessible name is `Life lens, Life. Change lens or period.`
+- **S-lens-28-7** (R-lens-28, happy — the Zoom sheet) — *When* the Zoom sheet is opened. *Then* each of the four period rows shows its own span beneath its label, and the Life row shows `everything` with no dates.
+- **S-lens-28-8** (R-lens-28, unhappy — a malformed key does not break a screen) — *Given* a period key that is not canonical for its horizon. *Then* the range is empty and the title renders the label alone; nothing throws and no row is hidden (R-lens-20's principle).
+- **S-lens-29-1** (R-lens-29, happy — the flag, and where it goes) — *Given* today is Tue 1 Sep 2026 and the Monthly lens is on `Sep 2026`. *Then* one row below the title reads `This week is in Aug 2026` with a `Go there ›` link whose accessible name is `Go to Aug 2026`, and the live region announces the same sentence. *When* the link is used. *Then* the lens is at `2026-08`, the month whose weeks include Mon 31 Aug, and the flag is gone.
+- **S-lens-29-2** (R-lens-29, unhappy — it does not fire when the two agree) — *Given* any day on which the current period holds the week containing today — every day of `Aug 2026` from the 3rd, and every Monday at every horizon. *Then* no such row renders at any lens, and `currentWeekPeriod` is `null` on the wire.
+- **S-lens-29-3** (R-lens-29, happy — any lens, any period) — *Given* today is Fri 1 Jan 2027, whose week began Mon 28 Dec 2026. *Then* the Yearly lens flags `2026`, the Quarterly lens flags `Q4 2026` and the Monthly lens flags `Dec 2026`, all three at once. *And* the Weekly and Life lenses never flag: a week holds its own week, and Life has no period.
+- **S-lens-29-4** (R-lens-29, unhappy — never a third row) — *Given* a **future** month, which is not current and whose payload still names where the current week is. *Then* the row carries `Future month — planning ahead` and the week flag does not render at all. There is no screen on which both appear, and the shell never carries three unconditional rows (R-nav-27).
+- **S-lens-29-5** (R-lens-29, happy — the default did not move) — *Given* today is Tue 1 Sep 2026. *When* the Monthly lens is opened with no period in the URL. *Then* it opens on `2026-09`, marked `isCurrent`, with the create affordances present — **not** on `2026-08`, which the same read marks `isPast` and which would offer no create at all (R-goal-36, R-nav-25). The flag is what reconciles the two.
+- **S-lens-29-6** (R-lens-29, happy — an agent is told the same two things) — *When* `list_lens` or `get_period` answers. *Then* each period carries `week_range`, and one that does not hold the current week also carries `current_week_period`. *And* the server-instructions block states both rules, so an agent asked about "September" quotes the span rather than the calendar month.
+
 
 ### Auth
 
@@ -1629,4 +1666,58 @@ the write is `POST /goals` with a `parentId`, and `create_goal` already exposes 
   control, and no count.
 - **R-backlog-11 (`+ Add`)** — unchanged and now has a sibling. The two are deliberately named
   differently: two controls on one page with one accessible name is a control you cannot ask for (D-20).
+
+### Amendment 4 — period ranges, and the week that is somewhere else
+
+The owner opened the Monthly lens on Tue 1 Sep 2026 and could not find the week they were living in:
+*"why is Sep 2026 this month? look the last Month week hadn't completed yet? is this right or wrong?
+this is confusing, i think for monthly we need to note it as a range."*
+
+**The model is right and does not change.** A week is keyed by its Monday everywhere (R-goal-33), so the
+week of Mon 31 Aug is August's and `Sep 2026` is the four weeks beginning 7, 14, 21 and 28 Sep. That was
+decided deliberately in RECONCILIATION ★C-19, against an alternative that made one week belong to two
+months and put R-lens-9's zoom, R-goal-47's planned-ness scope and R-task-49's target week in
+disagreement. **The defect is that the label over-promises**: `Sep 2026` reads as 1–30 September, and the
+period is Mon 7 Sep – Sun 4 Oct. This is the broadcast-calendar model, and this amendment adopts the
+convention those calendars use — publish the range beside the name, never the name alone.
+
+**Added:** 2 rules — `R-lens-28` (the range label), `R-lens-29` (the flag and its jump).
+**Total rules 229 → 231.**
+**Scenarios added:** 14 — `S-lens-28-1 … S-lens-28-8`, `S-lens-29-1 … S-lens-29-6` (264 → **278**).
+**Existing rules superseded or modified:** 3, each marked `⚠` in §2 — `R-lens-17` (its title gains a
+second line and its accessible name gains the span), `R-lens-21` (its conditional row gains a second,
+mutually exclusive occupant), `R-lens-22` (each Zoom row gains its period's span).
+Running totals across all four amendments: **89 rules superseded, retired or modified** (84 by A2, 3 by
+A3, 3 by A4, of which `R-nav-25` was already counted by the reconciliation pass), **32 retired outright**
+(unchanged — A4 retires none).
+**New wire fields:** `PeriodView.weekRange`, `PeriodView.currentWeekPeriod`, `ZoomRowView.weekRange` —
+and the MCP projections `week_range` / `current_week_period` on `list_lens` and `get_period`.
+**No new endpoint, error code, constant, MCP tool or dependency**, and no schema migration: every field
+is derived from a `periodKey` that is already stored.
+
+#### The four questions this amendment had to settle
+
+| Question | Ruling | Rule |
+|---|---|---|
+| Which period should the Monthly lens default to? | **Unchanged — the calendar period containing today.** Defaulting to the period holding the current *week* would open the lens, on 1 Sep 2026, on `Aug 2026`: a period the same payload calls `isPast`, which strips every create affordance (R-goal-36, R-nav-25) and badges it `Past month — still editable`. Landing somewhere you cannot plan is worse than landing somewhere honestly labelled. The label and the flag carry the weight instead. | R-lens-29 |
+| Where does the range go, inside a two-row budget? | **A second LINE inside the existing title button, never a second row.** R-nav-27 budgets *rows of chrome above the first item*, and a row of chrome is one that carries a control; this carries none — no tap target, no tab stop, no focus order change. It could not go on the first line: at 21px `Sep 2026 · Mon 7 Sep – Sun 4 Oct` is 32 characters and ellipsises the range away at 360px, and a half-shown range is a wrong one. | R-lens-28 |
+| Where does the flag go? | **In R-lens-21's row, which it can never share.** The off-now row renders only when the period is *not* current; the flag only when it *is*. The conditions are complements, so the conditional row gains an occupant and the shell gains no row. | R-lens-29 |
+| Server-side or client-side? | **Server-side, beside the period helpers.** The range needs the Monday rule, and the client deliberately holds none (D-1) — `utils/periodKeys.ts` says outright that there is no `weekStartOfDate` in it and there must not be. It is also needed by the MCP surface, so computing it once in `domain/periods.ts` leaves one implementation for three consumers instead of three. | R-lens-28 |
+
+#### Consequences checked and found to hold unchanged
+
+- **R-goal-33 / RECONCILIATION ★C-19 (a week belongs to its Monday's period)** — untouched, and now
+  *stated* rather than merely implied. `firstMondayIn` / `lastMondayIn` become the Monthly case of the
+  general `firstWeekOf` / `lastWeekOf` and delegate to them, so the range the header prints and the scope
+  R-goal-47 counts over are the same two Mondays by construction.
+- **R-lens-8 (where a lens opens)** — deliberately unchanged; see the first question above. A period is
+  still current iff it contains today (R-goal-34), and every past/future judgement still turns on that.
+- **R-goal-34 / R-goal-36 (`isCurrent`, `isPast`, `PERIOD_IN_PAST`)** — untouched. `currentWeekPeriod` is
+  a **statement of fact and never a permission**: nothing about write-eligibility reads it.
+- **R-lens-11 (nothing is styled as late before it is due)** — honoured. The flag is the same muted pill
+  in the same register as the badge it replaces; a period that begins next week is a fact about the
+  calendar, not a problem with the plan, and the red carry chip is still the only escalation.
+- **R-nav-26 (no new numbers)** — honoured. A range is two dates, not a count, and no lens gained one.
+- **R-lens-27 (no read loads the whole goal list)** — untouched. Both fields are pure arithmetic over a
+  key the read already holds; neither costs a row.
 

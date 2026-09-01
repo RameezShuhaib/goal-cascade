@@ -31,6 +31,8 @@ import { addWeeks, weekStartOfDate } from './weeks';
  */
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+/** Monday first, because a week starts on Monday here (D-1) and this indexes off that Monday. */
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
 const YEAR_RE = /^\d{4}$/;
 const QUARTER_RE = /^(\d{4})-Q([1-4])$/;
@@ -109,6 +111,80 @@ export function labelOf(horizon: Horizon, key: string): string {
     return `Week of ${day} ${MONTHS[month - 1]}`;
   }
   return key;
+}
+
+/**
+ * R-lens-28 — **the range label**: the whole weeks the period `key` actually contains, e.g.
+ * `Mon 7 Sep – Sun 4 Oct` for `2026-09`.
+ *
+ * `labelOf` names a period and this one **measures** it, and the pair exists because the name
+ * over-promises on its own. A week belongs to its Monday's month (R-goal-33, RECONCILIATION ★C-19), so
+ * `Sep 2026` is the four weeks beginning 7, 14, 21 and 28 Sep — it does not contain the week of Mon
+ * 31 Aug, and it runs four days past the 30th. `Sep 2026` alone reads as 1–30 September and is
+ * therefore a promise the lens does not keep; this is the broadcast-calendar convention that answers
+ * it, which is to publish the span beside the name and never the name alone.
+ *
+ * **The years appear only when the two ends disagree about one** — `Mon 7 Dec 2026 – Sun 3 Jan 2027`,
+ * where the title's own `Dec 2026` cannot disambiguate the far end, and never otherwise, because a
+ * year repeated three times in one header is the clutter this shell is budgeted against (R-nav-27).
+ *
+ * An unrecognised key measures to `''` rather than throwing, for `labelOf`'s reason: display text that
+ * 500s hides the row it was meant to describe.
+ */
+export function weekRangeOf(horizon: Horizon, key: string): string {
+  if (horizon === 'Life' || key === '' || !isPeriodKey(horizon, key)) return '';
+  const from = firstWeekOf(horizon, key);
+  const to = shiftDays(lastWeekOf(horizon, key), 6);
+  const spansYears = ymd(from).year !== ymd(to).year;
+  return `${dayLabel(from, spansYears)} – ${dayLabel(to, spansYears)}`;
+}
+
+/** `Mon 7 Sep`, or `Mon 7 Sep 2026` — the client's `weekLabel` shape, byte for byte (`utils/dates.ts`). */
+function dayLabel(date: string, withYear: boolean): string {
+  const { year, month, day } = ymd(date);
+  return `${DAYS[dayIndexOf(date)]} ${day} ${MONTHS[month - 1]}${withYear ? ` ${year}` : ''}`;
+}
+
+/**
+ * Monday = 0 … Sunday = 6, **derived from `weeks.ts`'s own Monday** rather than from a second
+ * `getUTCDay()` call. There is one authority on where a week starts and this defers to it.
+ */
+function dayIndexOf(date: string): number {
+  return Math.round((Date.parse(`${date}T00:00:00.000Z`) - Date.parse(`${weekStartOfDate(date)}T00:00:00.000Z`)) / 86_400_000);
+}
+
+/**
+ * R-lens-28 — the **first** week of the period `key`: the first Monday whose own period at that horizon
+ * is `key`. `firstMondayIn` is this at the Monthly horizon and now delegates to it, so the month rule
+ * R-goal-47 scans with and the range the header prints cannot disagree.
+ */
+export function firstWeekOf(horizon: Horizon, key: string): string {
+  if (horizon === 'Weekly') return key;
+  const first = firstDayOf(horizon, key);
+  const monday = weekStartOfDate(first);
+  // `weekStartOfDate` lands in the PREVIOUS period whenever the 1st is not a Monday; that week is the
+  // previous period's by the Monday rule, so step forward one.
+  return monday >= first ? monday : addWeeks(monday, 1);
+}
+
+/** R-lens-28 — the **last** week of `key`: the last Monday whose own period at that horizon is `key`. */
+export function lastWeekOf(horizon: Horizon, key: string): string {
+  if (horizon === 'Weekly') return key;
+  return weekStartOfDate(lastDayOf(horizon, key));
+}
+
+/**
+ * R-lens-29 — the period of `horizon` that holds **the week containing `today`**, which is not always
+ * the period that holds today. On Tue 1 Sep 2026 the current month is `2026-09` and the current week
+ * begins Mon 31 Aug, so this answers `2026-08`: the month the owner's actual week sits in.
+ *
+ * The two only diverge inside a period's opening days, and that gap is the whole of the defect this
+ * exists for — the Monthly lens opens on a month that legitimately excludes the week you are living
+ * in, and nothing on screen said so.
+ */
+export function periodKeyOfCurrentWeek(horizon: Horizon, today: string): string {
+  if (horizon === 'Life') return '';
+  return periodKeyOf(horizon, weekStartOfDate(today));
 }
 
 /**
@@ -220,19 +296,20 @@ export function weekForMonth(monthKey: string, today: string): string {
   return firstMondayIn(monthKey);
 }
 
-/** The first Monday whose own month is `monthKey`. R-lens-9: a week belongs to its Monday's month. */
+/**
+ * The first Monday whose own month is `monthKey`. R-lens-9: a week belongs to its Monday's month.
+ *
+ * The Monthly case of `firstWeekOf`, and it delegates rather than restating: the range R-lens-28 prints
+ * on the header and the scope R-goal-47's planned-ness line counts over are the same two Mondays, and a
+ * second copy of the step-forward clause is how they would come to disagree on one month in seven.
+ */
 export function firstMondayIn(monthKey: string): string {
-  const first = firstDayOf('Monthly', monthKey);
-  const monday = weekStartOfDate(first);
-  // `weekStartOfDate` can land in the PREVIOUS month when the 1st is not a Monday; that week is the
-  // previous month's by the Monday rule, so step forward one.
-  return monday >= first ? monday : addWeeks(monday, 1);
+  return firstWeekOf('Monthly', monthKey);
 }
 
 /** The last Monday whose own month is `monthKey`. The other end of R-goal-47's `BETWEEN` range. */
 export function lastMondayIn(monthKey: string): string {
-  const last = lastDayOf('Monthly', monthKey);
-  return weekStartOfDate(last);
+  return lastWeekOf('Monthly', monthKey);
 }
 
 /**

@@ -42,6 +42,16 @@ no limit in the other direction — you may set goals and tasks as far ahead as 
 weekly goal's week is fixed for good once created: it is not re-plannable, and moving it to another
 parent never changes its week.
 
+WHAT A PERIOD SPANS. A period is the WHOLE WEEKS it contains, and a week belongs to its MONDAY's
+period. So Sep 2026 is the four weeks beginning 7, 14, 21 and 28 September: it runs Mon 7 Sep to Sun
+4 Oct, and it does not contain the week of Mon 31 Aug, which is August's. Every period you are given
+carries week_range — quote that, and never present a month, a quarter or a year as its calendar
+dates. It follows that the current period of a horizon is not always the period holding the week in
+progress: on Tue 1 Sep 2026 the current month is Sep 2026 while this week sits in Aug 2026. Where a
+period carries current_week_period, that is where the week in progress actually is, and the period
+you are reading legitimately excludes it — that is not a bug, not an empty plan, and not a reason to
+move anything.
+
 LENSES. Reading is by lens, not by tree: one horizon, one period, everything at that horizon across
 the whole account, grouped under the life goal each item belongs to. Use list_lens. There is no
 whole-tree read and no filter — grouping is the answer to "show me just this line".

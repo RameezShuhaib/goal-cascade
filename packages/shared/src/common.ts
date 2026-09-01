@@ -344,6 +344,27 @@ export const PeriodView = z.object({
   isPast: z.boolean(),
   /** Whether the selected period holds at least one goal at this horizon. */
   hasWork: z.boolean(),
+  /**
+   * ⚠ **A4, new (R-lens-28)** — the **whole weeks this period contains**, e.g. `Mon 7 Sep – Sun 4 Oct`
+   * for `2026-09`. `label` names the period and this measures it.
+   *
+   * A week is keyed by its Monday (R-goal-33), so `Sep 2026` is the four weeks beginning 7, 14, 21 and
+   * 28 Sep: it excludes the week of Mon 31 Aug and runs four days past the 30th. The name alone reads
+   * as 1–30 September and over-promises; the range is what makes the label honest, and it is computed
+   * here rather than on the client because the client holds no Monday rule at all (D-1).
+   */
+  weekRange: z.string(),
+  /**
+   * ⚠ **A4, new (R-lens-29)** — the period of this same horizon that holds **the week containing
+   * today**, when that is not this one. `null` whenever this period holds it, which is the ordinary
+   * case: the field's mere presence is the fact the UI flags.
+   *
+   * On Tue 1 Sep 2026 the Monthly lens's current period is `2026-09` while the current week begins Mon
+   * 31 Aug, so `2026-09` carries `{ periodKey: '2026-08', label: 'Aug 2026' }`. It is a **statement of
+   * fact, not a chrome decision**: the server says where the week is and the client decides when to say
+   * so (R-lens-29 renders it only on the current period, where the off-now row does not).
+   */
+  currentWeekPeriod: z.object({ periodKey: PeriodKey, label: z.string() }).nullable(),
 });
 
 /**

@@ -17,9 +17,9 @@ import * as F from '../msw/fixtures';
 describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
   it.each([
     ['/life', 'Life lens, Life. Change lens or period.'],
-    ['/year/2026', 'Yearly lens, 2026. Change lens or period.'],
-    ['/quarter/2026-Q3', 'Quarterly lens, Q3 2026. Change lens or period.'],
-    ['/month/2026-08', 'Monthly lens, Aug 2026. Change lens or period.'],
+    ['/year/2026', 'Yearly lens, 2026 · Mon 5 Jan 2026 – Sun 3 Jan 2027. Change lens or period.'],
+    ['/quarter/2026-Q3', 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.'],
+    ['/month/2026-08', 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.'],
     ['/week/2026-08-31', 'Weekly lens, Week of 31 Aug. Change lens or period.'],
   ])('%s opens its lens at its period', async (route, title) => {
     renderApp(<AppShell />, { route });
@@ -30,7 +30,7 @@ describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
     // `/month` is legal and means "whichever month the server says contains today" — the client must never
     // derive that (R-goal-34). The address bar catches up once the read lands, so a copied link is absolute.
     renderApp(<AppShell />, { route: '/month' });
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
     await waitFor(() => expect(new URL(requests('GET', '/api/goals').at(-1)!.url).searchParams.get('lens')).toBe('Monthly'));
     // The fallback read carries NO period: asking for one the client made up is the bug this avoids.
     expect(new URL(requests('GET', '/api/goals')[0]!.url).searchParams.has('period')).toBe(false);
@@ -57,12 +57,12 @@ describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
     // Visit another lens, then come back through the tab: it returns you there, at the current period.
     await user.click(await screen.findByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' }));
     await user.click(await screen.findByRole('button', { name: /Monthly/ }));
-    await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' });
+    await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' });
 
     await user.click(screen.getByRole('button', { name: 'Learnings' }));
     await screen.findByRole('heading', { level: 1, name: 'Learnings' });
     await user.click(screen.getByRole('button', { name: 'Goals' }));
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
   });
 });
 
@@ -73,9 +73,9 @@ describe('Routes — back and forward (S-nav-24-1)', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Rebuild the gym habit' })).toBeInTheDocument();
 
     history.back();
-    expect(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.' })).toBeInTheDocument();
     history.back();
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
   });
 
   it('S-lens-14-2: a task page opened from a past week goes back to that week, not to the current one', async () => {
@@ -110,9 +110,9 @@ describe('Routes — what is deliberately NOT addressable (R-lens-14, S-nav-24-2
 
   it('and the Zoom sheet is an overlay too, not a route', async () => {
     const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
-    await user.click(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' }));
+    await user.click(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' }));
     await screen.findByRole('dialog', { name: 'Change lens' });
     // Still the Monthly lens's URL behind it — the sheet chose nothing yet.
-    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026. Change lens or period.' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
   });
 });

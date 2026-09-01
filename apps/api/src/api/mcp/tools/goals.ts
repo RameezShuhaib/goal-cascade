@@ -37,9 +37,32 @@ const WeekOffsetArg = WeekOffset.default(0);
 const PERIOD_KEY_SHAPES = '2026 (Yearly) | 2026-Q3 (Quarterly) | 2026-09 (Monthly) | a Monday 2026-09-07 (Weekly)';
 const PeriodKeyArg = PeriodKey.describe(PERIOD_KEY_SHAPES);
 
-/** R-goal-34 — a period as the surface shapes it: the canonical key AND its rendered label. */
-function periodOut(p: { periodKey: string; label: string; isCurrent: boolean; isPast: boolean; hasWork: boolean }) {
-  return { period_key: p.periodKey, label: p.label, is_current: p.isCurrent, is_past: p.isPast, has_work: p.hasWork };
+/**
+ * R-goal-34 — a period as the surface shapes it: the canonical key AND its rendered label.
+ *
+ * ⚠ **A4 (R-lens-28, R-lens-29)** — `week_range` and `current_week_period` are here for the reason the
+ * owner hit them in the UI: an agent reasoning about "September" faces exactly the ambiguity the label
+ * created, and would otherwise conclude a lens is broken, or plan this week's work into a month that
+ * does not contain this week. The label alone was the whole answer and it was not enough.
+ */
+function periodOut(p: {
+  periodKey: string;
+  label: string;
+  isCurrent: boolean;
+  isPast: boolean;
+  hasWork: boolean;
+  weekRange: string;
+  currentWeekPeriod: { periodKey: string; label: string } | null;
+}) {
+  return {
+    period_key: p.periodKey,
+    label: p.label,
+    is_current: p.isCurrent,
+    is_past: p.isPast,
+    has_work: p.hasWork,
+    week_range: p.weekRange,
+    current_week_period: p.currentWeekPeriod && { period_key: p.currentWeekPeriod.periodKey, label: p.currentWeekPeriod.label },
+  };
 }
 
 export function registerGoalTools(server: McpServer, deps: McpDeps): void {
@@ -107,7 +130,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'One horizon, one period',
       description:
-        'The main read. Every goal at ONE horizon in ONE period, from all life lines, grouped under the life goal each belongs to. This is how the product is navigated — there is no whole-tree read and no filter, because grouping already answers "just this line". Omit period for the current one. The Life lens has no period: it is simply all of them. On the Weekly lens the result also carries `carried` (goals whose own week has passed but whose open work carries into this one, oldest first) and `tasks`. `has_forward_content` says whether any later period holds anything.',
+        'The main read. Every goal at ONE horizon in ONE period, from all life lines, grouped under the life goal each belongs to. This is how the product is navigated — there is no whole-tree read and no filter, because grouping already answers "just this line". Omit period for the current one. The Life lens has no period: it is simply all of them. On the Weekly lens the result also carries `carried` (goals whose own week has passed but whose open work carries into this one, oldest first) and `tasks`. `has_forward_content` says whether any later period holds anything. READ `period.week_range` BEFORE REASONING ABOUT DATES: a period is the whole weeks it contains, so `Sep 2026` is `Mon 7 Sep – Sun 4 Oct` and not 1–30 September. When `period.current_week_period` is present, the week happening right now belongs to THAT period, not this one — say so rather than reporting this period as empty of current work.',
       inputSchema: z
         .object({
           lens: Horizon.default('Weekly').describe('Life | Yearly | Quarterly | Monthly | Weekly.'),
@@ -149,7 +172,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'The current period at every horizon',
       description:
-        'For an anchor date (default: the server\'s today in the owner\'s timezone), the period each of the five horizons would land on, with how many goals are there. Use it to turn "this quarter" or "next month" into the canonical period key the other tools take — never compute a period from your own clock, and never construct a key by hand.',
+        'For an anchor date (default: the server\'s today in the owner\'s timezone), the period each of the five horizons would land on, with how many goals are there and the whole weeks each one spans (`week_range`). Use it to turn "this quarter" or "next month" into the canonical period key the other tools take — never compute a period from your own clock, and never construct a key by hand. Quote `week_range`, not the label alone, whenever the dates matter: a period is the whole weeks it contains, so on 1 Sep 2026 the Monthly row is `Sep 2026` spanning `Mon 7 Sep – Sun 4 Oct` while the week in progress belongs to `Aug 2026`.',
       inputSchema: z.object({ anchor: z.iso.date().optional().describe('YYYY-MM-DD. Omit for today.') }).strict(),
     },
     async ({ anchor }) =>
@@ -161,6 +184,8 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
             lens: r.lens,
             period_key: r.periodKey,
             label: r.label,
+            // R-lens-28 — the whole weeks that period contains. `Sep 2026` is NOT 1–30 September.
+            week_range: r.weekRange,
             goals: r.count,
             is_current: r.isCurrent,
           })),

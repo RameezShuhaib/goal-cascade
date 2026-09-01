@@ -1,6 +1,7 @@
 import type { Horizon, PeriodView } from '@goal-cascade/shared';
 import { useSkin } from '../skin';
 import { PERIOD_UNIT } from '../utils/periodKeys';
+import { periodTitle } from './copy';
 
 /**
  * R-lens-17 — **the lens control is the title.** One row: `‹`, the period label, `›`.
@@ -36,6 +37,18 @@ export function LensRow({
   const unit = PERIOD_UNIT[lens];
   const isLife = lens === 'Life';
   const label = isLife ? 'Life' : (period?.label ?? '…');
+  /**
+   * R-lens-28 — the range, on the **Yearly, Quarterly and Monthly** lenses only.
+   *
+   * Those three are the ones whose name over-promises: `Sep 2026` reads as 1–30 September and the period
+   * is Mon 7 Sep – Sun 4 Oct. A **week** label does not have the problem — `Week of 31 Aug` already names
+   * a specific Monday and a week is unambiguously the seven days from it — so nothing is appended there;
+   * a range under it would be chrome restating what the title already said. Life spans everything.
+   *
+   * The server sends it (`PeriodView.weekRange`) and the client renders it, because deriving it here
+   * would need a Monday rule this client deliberately does not have (D-1).
+   */
+  const range = isLife || lens === 'Weekly' ? '' : (period?.weekRange ?? '');
 
   const chevron = (dir: -1 | 1) => (
     <button
@@ -82,26 +95,53 @@ export function LensRow({
         onClick={onZoom}
         // R-lens-17 — the title's accessible name IS the lens change announcement: the sheet closes, focus
         // lands here, and the platform reads it. The live region then carries only the payload (§8.2).
-        aria-label={`${lens} lens, ${label}. Change lens or period.`}
+        // R-lens-28 — one name for both lines: a screen reader gets `Sep 2026 · Mon 7 Sep – Sun 4 Oct`.
+        aria-label={`${lens} lens, ${periodTitle(label, range)}. Change lens or period.`}
         style={{
           flex: 1,
           minWidth: 0,
           border: 'none',
           background: 'none',
           padding: 0,
-          fontSize: 21,
-          fontWeight: 800,
-          letterSpacing: '-0.01em',
           color: S.T.ink,
           cursor: 'pointer',
           minHeight: 44,
-          whiteSpace: 'nowrap',
           overflow: 'hidden',
-          textOverflow: 'ellipsis',
           fontFamily: 'inherit',
+          // The two lines are one control, left-aligned as a block — `text-align` is the only thing a
+          // `<button>` needs told, since its default is `center`.
+          textAlign: 'left',
         }}
       >
-        {label} <span aria-hidden="true" style={{ fontSize: 13, color: S.T.mut }}>▾</span>
+        <span
+          style={{
+            display: 'block',
+            fontSize: 21,
+            fontWeight: 800,
+            letterSpacing: '-0.01em',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {label} <span aria-hidden="true" style={{ fontSize: 13, color: S.T.mut }}>▾</span>
+        </span>
+        {/*
+         * R-lens-28 / R-nav-27 — the range is a **second line inside this button**, never a row of its
+         * own. R-nav-27 budgets *rows of chrome above the first item*, and a row of chrome is a row that
+         * carries a control: this adds no control, no tap target and no tab stop, so the shell still
+         * carries exactly two unconditional rows. It could not go on the first line — `Sep 2026 · Mon 7
+         * Sep – Sun 4 Oct` is 32 characters and would ellipsise the range away at 360px, which is worse
+         * than not printing it, because a half-shown range is a wrong one.
+         *
+         * `aria-hidden`, because the button's own name already carries it and hearing it twice is worse
+         * than not hearing it at all.
+         */}
+        {range && (
+          <span aria-hidden="true" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: S.T.mut, letterSpacing: 0, marginTop: 1 }}>
+            {range}
+          </span>
+        )}
       </button>
       {chevron(1)}
       {isLife && (
@@ -121,9 +161,51 @@ export function LensRow({
  * is fourteen taps home.
  */
 export function OffNowRow({ badge, onNow }: { badge: string; onNow: () => void }) {
+  return <NoticeRow badge={badge} action="Now ›" onAction={onNow} />;
+}
+
+/**
+ * R-lens-29 — **this period is the current one and still does not hold the week you are living in.**
+ *
+ * On Tue 1 Sep 2026 the Monthly lens opens on `Sep 2026`, whose first week begins on the 7th, while the
+ * current week began Mon 31 Aug and belongs to August (R-goal-33). The lens is correct and reads as
+ * broken, so one quiet line says where the week is and offers the one tap to it.
+ *
+ * **It occupies R-lens-21's row and never adds one** (R-nav-27), and it can do that because the two are
+ * mutually exclusive by construction: the off-now row renders only when the period is NOT current, and
+ * this renders only when it IS. There is no state in which both are true, so the conditional row has two
+ * occupants and the shell still has two unconditional rows.
+ *
+ * It is not an escalation — same `lineSoft` pill, same muted grey as the badge it replaces. A period
+ * legitimately beginning next week is a fact about the calendar, not a problem with the plan (R-lens-11).
+ */
+export function WeekElsewhereRow({ badge, actionLabel, onGo }: { badge: string; actionLabel: string; onGo: () => void }) {
+  // `Go there ›` visible, `Go to Aug 2026` announced: the pill one gap away already names the month for
+  // the eye, and repeating it in the link is the clutter this shell is budgeted against (R-nav-27).
+  return <NoticeRow badge={badge} action="Go there ›" actionLabel={actionLabel} onAction={onGo} testId="week-elsewhere-row" />;
+}
+
+/**
+ * The one shape both notices take: a muted pill on the left, a link on the right. They were the same
+ * fourteen lines twice over, which is how two rows one screen apart come to disagree about a radius.
+ */
+function NoticeRow({
+  badge,
+  action,
+  actionLabel,
+  onAction,
+  testId,
+}: {
+  badge: string;
+  action: string;
+  /** The accessible name when the visible verb is shorter than the destination it names. */
+  actionLabel?: string;
+  onAction: () => void;
+  testId?: string;
+}) {
   const S = useSkin();
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+    <div data-testid={testId} style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
       <span
         style={{
           display: 'inline-block',
@@ -138,8 +220,8 @@ export function OffNowRow({ badge, onNow }: { badge: string; onNow: () => void }
         {badge}
       </span>
       <span style={{ flex: 1 }} />
-      <button type="button" style={{ ...S.linkBtn, padding: '0 2px' }} onClick={onNow}>
-        Now ›
+      <button type="button" aria-label={actionLabel} style={{ ...S.linkBtn, padding: '0 2px' }} onClick={onAction}>
+        {action}
       </button>
     </div>
   );
