@@ -202,6 +202,26 @@ describe('The `+` drawer (R-backlog-27, D-21)', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Added to this week');
   });
 
+  it('S-backlog-27-3 (A9): with exactly ONE weekly goal the drawer still NAMES it — silence is the defect', async () => {
+    const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    await user.click(await screen.findByRole('button', { name: 'Add' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
+
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
+    await user.click(within(picker).getByRole('option', { name: /^Lift three times a week/ }));
+    await user.click(within(sheet).getByRole('button', { name: 'Add to this week instead' }));
+
+    // The regression: `candidates.length > 1` rendered NOTHING here, so a single destination was used
+    // silently. The owner added three tasks this way and could not find them afterwards — the work was
+    // never lost, only unnamed. One candidate is a destination, not an absence of choice.
+    expect(within(sheet).getByText('WHICH WEEKLY GOAL?')).toBeInTheDocument();
+    // The destination is NAMED, and so is its week — not the bare `Choose a goal` the compact row shows
+    // when nothing is selected, which would have been silence wearing a label.
+    expect(within(sheet).getByText('Three easy runs and one long run')).toBeInTheDocument();
+    expect(within(sheet).getByText(/Week of 31 Aug/)).toBeInTheDocument();
+  });
+
   it('S-backlog-27-1: with none, exactly one BACKLOG item is created instead, and the toast says why', async () => {
     server.use(
       http.get('/api/goals', ({ request }) => {

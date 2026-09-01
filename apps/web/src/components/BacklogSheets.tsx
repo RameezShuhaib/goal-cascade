@@ -97,6 +97,15 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
     listLabel: 'Weekly goals in this week',
   });
   const candidates = weeklyPicker.options;
+  /*
+   * ⚠ **A9** — write the sole candidate into STATE, not just into `target`. Deriving it silently left the
+   * compact row reading `Choose a goal` while the save went somewhere specific, which is the same
+   * unnamed-destination defect one layer down: the block was visible and still said nothing. Written to
+   * state, the row renders the goal's own title and is announced (R-lens-13), and it stays changeable.
+   */
+  useEffect(() => {
+    if (toWeek && chosen === null && candidates.length === 1) setChosen(candidates[0]!.id);
+  }, [toWeek, chosen, candidates]);
   const target = candidates.length === 1 ? candidates[0]!.id : chosen && candidates.some((c) => c.id === chosen) ? chosen : null;
   const close = () => ui.closeSheet();
 
@@ -226,7 +235,14 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
             No weekly goal under {chosenGoal?.title ?? 'this goal'} this week — it will be parked in the Backlog.
           </div>
         )}
-        {toWeek && candidates.length > 1 && (
+        {/*
+          * ⚠ **A9** — `>= 1`, not `> 1`. A single candidate used to render NOTHING and be used silently,
+          * which is the same defect the task sheet just fixed: the owner added three tasks from a Monthly
+          * goal, was never told which Weekly goal took them, and could not find them afterwards. One
+          * candidate is a destination, not an absence of choice, so it renders as a filled row that can
+          * still be changed. The zero case keeps its own note above.
+          */}
+        {toWeek && candidates.length >= 1 && (
           <>
             <div style={{ ...S.fieldLabel, margin: '12px 0 6px 0' }}>WHICH WEEKLY GOAL?</div>
             {weeklyPicker.control}
