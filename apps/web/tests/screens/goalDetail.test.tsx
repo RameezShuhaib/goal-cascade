@@ -94,13 +94,22 @@ describe('Goal detail', () => {
    * horizon of four, a screen-inch away. The assertion is INVERTED rather than deleted, so the duplicate
    * cannot quietly return.
    */
-  it('S-nav-29-1 (retired R-nav-25 / Q-20): a Monthly goal has NO `+ Weekly goal` — the section is the one path', async () => {
+  it('S-nav-29-1 (retired R-nav-25 / Q-20): a Monthly goal offers exactly ONE way to add a week — the section, not the header', async () => {
     withDetail(F.M);
-    renderApp(<AppShell />, { route: `/goal/${F.M}` });
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.M}` });
     await screen.findByRole('heading', { level: 1, name: 'Lift three times a week' });
 
-    expect(screen.queryByRole('button', { name: '+ Weekly goal' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '+ Sub-goal' })).toBeInTheDocument();
+    // R-nav-29 is about there being ONE route to this write, not about the wording. The control is
+    // named for its horizon (`+ Weekly goal`) because a Monthly goal can hold nothing else and the
+    // owner's model is "weekly goals" — so asserting the STRING is absent would test the label and
+    // miss the rule. Assert the rule: exactly one such control, and it is the section's inline
+    // capture (it opens in place) rather than a second entry point in TopActions.
+    const adds = screen.getAllByRole('button', { name: /Weekly goal/ });
+    expect(adds).toHaveLength(1);
+
+    await user.click(adds[0]!);
+    expect(screen.getByLabelText('Sub-goal title')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Weekly goal/ })).not.toBeInTheDocument();
   });
 
   it('S-goal-48-1: a Yearly goal with no children still gets the section, and the first sub-goal goes in from it', async () => {
@@ -132,7 +141,8 @@ describe('Goal detail', () => {
   it('S-goal-48-2: one legal horizon is not a question — a Monthly goal is never asked, and gets the week', async () => {
     withDetail(F.M);
     const { user } = renderApp(<AppShell />, { route: `/goal/${F.M}` });
-    await user.click(await screen.findByRole('button', { name: '+ Sub-goal' }));
+    // Monthly can hold only weeks, so the control names the horizon (see S-nav-29-1).
+    await user.click(await screen.findByRole('button', { name: '+ Weekly goal' }));
 
     expect(screen.queryByRole('group', { name: 'Sub-goal horizon' })).not.toBeInTheDocument();
     await user.type(screen.getByLabelText('Sub-goal title'), 'Three easy runs{Enter}');

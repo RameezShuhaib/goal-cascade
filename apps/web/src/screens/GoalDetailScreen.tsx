@@ -402,7 +402,15 @@ function AddSubGoal({ parent, clock }: { parent: GoalView; clock: WeekClock }) {
             }
           }}
         >
-          {open ? (text.trim() ? 'Save sub-goal' : 'Never mind') : '+ Sub-goal'}
+          {/*
+           * Name the child by its horizon when there is only ONE legal choice, so a Monthly goal reads
+           * `+ Weekly goal`. R-nav-29 dropped `+ Weekly goal` from TopActions in favour of this control,
+           * and a flat `+ Sub-goal` would leave the words "weekly goal" nowhere on the page for what is
+           * the most-used write in the product — the owner's whole model is "weekly goals", not
+           * "sub-goals". Where several horizons are legal the choice is the picker's, so the generic
+           * word is the honest one; naming `legal[0]` there would advertise one option out of four.
+           */}
+          {open ? (text.trim() ? 'Save sub-goal' : 'Never mind') : legal.length === 1 ? `+ ${legal[0]} goal` : '+ Sub-goal'}
         </button>
         {/* R-goal-48 — the way out to the full form, carrying across what has already been typed. */}
         {open && (
