@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import type { BacklogItemView, GoalView, Horizon } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
@@ -8,7 +8,9 @@ import { TaskRow } from '../components/TaskRow';
 import { BacklogItemCard } from '../components/BacklogItemCard';
 import { useReorderList } from '../components/ReorderableList';
 import { TopActions } from '../components/TopActions';
-import { FieldError, Loading, LoadError, commandError } from '../components/states';
+import { FieldError, LoadError, commandError } from '../components/states';
+import { GoalPageSkeleton, useSkeleton } from '../components/Skeleton';
+import { GoalEyebrow, GoalTrail } from './GoalTrail';
 import { useSkin } from '../skin';
 import { capturedLabel } from '../utils/dates';
 import { childHorizons, subGoalPeriodKey } from '../utils/periodKeys';
@@ -36,13 +38,31 @@ export function GoalDetailScreen() {
 
   const detail = detailQ.data;
   const goal = detail?.goal;
+  /**
+   * ⚠ **R-nav-30** — `isPending`, never `isFetching`: a refetch, a mutation invalidation and a window-focus
+   * revalidation all leave content on screen. R4's 150 ms grace and R5's 400 ms minimum are in the hook.
+   */
+  const skeleton = useSkeleton(detailQ.isPending, detailQ.error);
 
-  if (detailQ.isPending) return <Loading label="Loading this goal…" />;
-  if (detailQ.error || !detail || !goal) {
+  /*
+   * R-nav-30 P3 — `Goals` and the cluster are known before the read starts, so they render for real in
+   * every one of the three states below: the grace window (an empty body, never a flash of grey), the
+   * skeleton, and the failure. R6 — an error supersedes both windows and takes the space at once.
+   *
+   * ⚠ `skeleton ||` comes **before** the data check, deliberately: once a skeleton is painted it holds the
+   * page until its 400 ms are paid, so a read that lands at 160 ms does not flash the whole goal page into
+   * existence for a quarter of a second. It can never delay a page that was already cached, because a cache
+   * hit never sets `isPending` and so never paints one (R2/R5).
+   */
+  if (detailQ.error || skeleton || !detail || !goal) {
     return (
-      <div style={S.page}>
-        <LoadError error={detailQ.error} what="this goal" onRetry={() => void detailQ.refetch()} />
-      </div>
+      <GoalPageShell onGoals={() => navigate(lensPath(ui.lastLens))}>
+        {detailQ.error ? (
+          <LoadError error={detailQ.error} what="this goal" onRetry={() => void detailQ.refetch()} />
+        ) : (
+          skeleton && <GoalPageSkeleton />
+        )}
+      </GoalPageShell>
     );
   }
 
@@ -53,16 +73,14 @@ export function GoalDetailScreen() {
   return (
     <div style={S.page} data-screen-label="Goal detail">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, minWidth: 0 }}>
-          {/* R-goal-41 — breadcrumbs to the Life root, each ancestor with its own period label (R-goal-35). */}
-          <Crumb label="Goals" onClick={() => navigate(lensPath(ui.lastLens))} />
-          {detail.ancestors.map((a) => (
-            <span key={a.id}>
-              <span style={{ color: S.T.border, fontSize: 12.5 }}>/</span>
-              <Crumb label={a.title} onClick={() => navigate(goalPath(a.id))} />
-            </span>
-          ))}
-        </div>
+        {/*
+         * ⚠ **R-goal-41, amended** — one line that never wraps: `Goals`, an overflow `…` when segments were
+         * dropped, and the immediate parent, which tail-truncates. The Life root moves to the eyebrow below
+         * and every ancestor's period label moves into `Where this sits` — the clause R-goal-41 has always
+         * required and this screen has never rendered, because there was never room on the line for four
+         * periods. See `GoalTrail`.
+         */}
+        <GoalTrail ancestors={detail.ancestors} goal={goal} />
         {/*
          * ⚠ **A3 (R-nav-29)** — this page's mapping is now **`+ Task` on a Weekly goal and nothing at any
          * other horizon**, superseding R-nav-25's (`+ Weekly goal` on Monthly, `+ Add` on
@@ -73,17 +91,45 @@ export function GoalDetailScreen() {
          * leave one horizon of four with two routes to the same write (R-nav-27). `More…` inside the
          * capture opens the very sheet this button opened, pre-filled the same way, so nothing is lost.
          */}
-        <TopActions>
-          {isWeekly && (
-            <button type="button" style={S.topBtn} onClick={() => ui.openSheet({ kind: 'taskCreate', goalId: goal.id, weekStart: goal.periodKey })}>
-              + Task
-            </button>
-          )}
-        </TopActions>
+        {/* `flex: 0 0 auto` — the cluster can never be pushed or shrunk by a title, at any length. */}
+        <div style={{ flex: '0 0 auto' }}>
+          <TopActions>
+            {isWeekly && (
+              <button type="button" style={S.topBtn} onClick={() => ui.openSheet({ kind: 'taskCreate', goalId: goal.id, weekStart: goal.periodKey })}>
+                + Task
+              </button>
+            )}
+          </TopActions>
+        </div>
       </div>
 
+      {/* The Life root, out of the trail and onto its own line — depth ≥ 3 only. */}
+      <GoalEyebrow ancestors={detail.ancestors} />
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
-        <h1 style={{ margin: 0, fontSize: 23, fontWeight: 800, letterSpacing: '-0.01em', color: S.T.ink }}>{goal.title}</h1>
+        {/*
+         * ⚠ **Crumbs never wrap. The page title always wraps.** A page title is the answer to "what am I
+         * looking at" and truncating it is the defect, not the fix — so this wraps freely to three lines and
+         * only then clamps, with the full text one tap away in the Edit sheet, which is where you would go
+         * to read or change it anyway. It is the exact opposite treatment to the crumb above, deliberately.
+         */}
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 23,
+            fontWeight: 800,
+            letterSpacing: '-0.01em',
+            color: S.T.ink,
+            minWidth: 0,
+            overflowWrap: 'anywhere',
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+        >
+          {goal.title}
+        </h1>
         {/* The horizon chip survives HERE and only here: on a detail page the horizon is ambiguous. */}
         <span style={S.hChip()}>
           {goal.horizon.toUpperCase()}
@@ -265,16 +311,37 @@ export function GoalDetailScreen() {
   );
 }
 
-function Crumb({ label, onClick }: { label: string; onClick: () => void }) {
+/**
+ * **R-nav-30 P3 — the part of this page that never waits.**
+ *
+ * `Goals` is a constant and the cluster needs no data, so both render for real from the first frame of a
+ * cold open, in the grace window, under the skeleton and under a failure alike. What varies is only the
+ * body below them.
+ *
+ * There is **no `+ Task` here**: whether it belongs depends on the goal's horizon, which is precisely the
+ * unknown (P2 — a skeleton stands in for content, never for a control).
+ */
+function GoalPageShell({ onGoals, children }: { onGoals: () => void; children: ReactNode }) {
   const S = useSkin();
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ minHeight: 36, border: 'none', background: 'none', padding: '0 2px', fontSize: 12.5, fontWeight: 700, color: S.T.mut, cursor: 'pointer', fontFamily: 'inherit' }}
-    >
-      {label}
-    </button>
+    <div style={S.page} data-screen-label="Goal detail">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <nav aria-label="Breadcrumb" style={{ display: 'flex', alignItems: 'center', flexWrap: 'nowrap', gap: 2, flex: '1 1 auto', minWidth: 0, overflow: 'hidden' }}>
+          <button
+            type="button"
+            onClick={onGoals}
+            data-crumb="root"
+            style={{ minHeight: 36, border: 'none', background: 'none', padding: '0 2px', fontSize: 12.5, fontWeight: 700, color: S.T.mut, cursor: 'pointer', fontFamily: 'inherit', flex: '0 0 auto' }}
+          >
+            Goals
+          </button>
+        </nav>
+        <div style={{ flex: '0 0 auto' }}>
+          <TopActions />
+        </div>
+      </div>
+      {children}
+    </div>
   );
 }
 

@@ -74,7 +74,7 @@ function ParentLine({ parent }: { parent: GoalRefView | undefined }) {
   const navigate = useNavigate();
   if (!parent) return null;
   return (
-    <div style={{ marginTop: 3 }}>
+    <div style={{ marginTop: 3, minWidth: 0 }}>
       <button
         type="button"
         aria-label={`under ${parent.title}${parent.period ? `, ${parent.period}` : ''}. Open goal.`}
@@ -89,6 +89,19 @@ function ParentLine({ parent }: { parent: GoalRefView | undefined }) {
           color: S.T.mut,
           cursor: 'pointer',
           fontFamily: 'inherit',
+          /*
+           * ⚠ **Crumbs never wrap** (R-goal-41, amended) — and `under <title>` is a crumb. It was
+           * unconstrained, so the owner's own titles wrapped it to three lines *inside a card*, pushing the
+           * backlog line down and making a two-line card a four-line one. One line, tail-truncated; the
+           * `aria-label` above already carries the full name **and** its period, so nothing is lost to a
+           * screen reader and the card it points at is one tap away.
+           */
+          display: 'block',
+          maxWidth: '100%',
+          minWidth: 0,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
         }}
       >
         under {parent.title}

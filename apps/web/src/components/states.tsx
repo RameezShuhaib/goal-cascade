@@ -8,11 +8,24 @@ import { toApiError } from '../api/errors';
  * any of them. A real network is all three, several times a day.
  *
  * They are deliberately quiet and in the existing visual language: the same dashed frame the mockup's
- * empty states use, the same muted type. A skeleton that shimmers would be louder than anything else in
- * this product.
+ * empty states use, the same muted type.
+ *
+ * ⚠ **This file used to end its doc block with *"A skeleton that shimmers would be louder than anything
+ * else in this product"*, and that sentence is right about **shimmer** and wrong about **skeletons**
+ * (R-nav-30).** `components/Skeleton.tsx` is the loading state of every full screen now — static blocks,
+ * no motion of any kind, so the objection this file raised is answered rather than overruled. What
+ * survives here is the *accessible* half: `role="status"` and the exact strings, which moved onto the
+ * skeleton's wrapper verbatim.
  */
 
-/** A screen still waiting on its first read. One line, no spinner, no layout shift worth the name. */
+/**
+ * A list still waiting on its first read, **inside a sheet**, where a skeleton would be more chrome than
+ * the list it replaces.
+ *
+ * ⚠ **R-nav-30 — retired from every full screen.** `LensScreen`, `GoalDetailScreen`, `TaskPage` and
+ * `ZoomSheet` each rendered this; the first three now render a skeleton and the fourth does not load at
+ * all (R-lens-30). One line, no spinner, no layout shift worth the name.
+ */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   const S = useSkin();
   return (

@@ -17,7 +17,8 @@ import { useLens, useRepeatWeek } from '../api/queries';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { TopActions } from '../components/TopActions';
-import { Empty, Loading, LoadError } from '../components/states';
+import { Empty, LoadError } from '../components/states';
+import { LensListSkeleton, useSkeleton } from '../components/Skeleton';
 import { rank, validKeyFor } from '../utils/periodKeys';
 import { lensPath } from '../routes';
 import { assertPeriodAgrees } from './assertPeriodAgrees';
@@ -143,7 +144,22 @@ export function LensScreen({ lens }: { lens: Horizon }) {
   };
 
   const failed = q.error;
+  /**
+   * ⚠ **R-nav-30** — `isPending`, and deliberately **not** `isFetching`.
+   *
+   * `isPending` is true only when *this* `(lens, period)` key has no data at all. A period already in the
+   * cache — which, with `useNeighbourPrefetch` warming ±1 on every settle, is most steps the owner takes —
+   * leaves it false, so **stepping Sep → Oct with Oct cached is one repaint and nothing else** (R2). A
+   * background revalidation, a focus refetch, a mutation invalidation and a retry all leave it false too,
+   * so none of them can put grey over visible content (R7). And an empty period, once known to be empty, is
+   * cached content like any other, so its empty state returns instantly rather than being skeletonised
+   * (R8).
+   *
+   * R1 needs nothing here: a new period is a new query key and `placeholderData` is refused
+   * (`useLens`), so the previous period's list is discarded in the same frame the label changes.
+   */
   const pending = q.isPending && !failed;
+  const skeleton = useSkeleton(pending, failed);
   /**
    * ⚠ **R-lens-30 — both notices are now calendar facts, so they settle in the same frame as the label.**
    *
@@ -247,10 +263,24 @@ export function LensScreen({ lens }: { lens: Horizon }) {
         data={data}
       />
 
-      {pending && <Loading label="Loading…" />}
+      {/*
+       * ⚠ **R-nav-30** — the body's skeleton, and it is a **body** skeleton. Everything above this line is
+       * already real (R-lens-30): the cluster, the period's name, its range and both notices are calendar
+       * facts and settle in the same frame as the input. So the only thing left that can be unknown on this
+       * screen is the list — which is exactly the scope UX-PLAN §3.3 draws around `LensListSkeleton`, and
+       * the reason the skeleton adds no row to R-nav-27's budget: it occupies the space the list will.
+       */}
+      {skeleton && <LensListSkeleton />}
       {failed && <LoadError error={failed} what="this lens" onRetry={() => void q.refetch()} />}
 
-      {data && (
+      {/*
+       * ⚠ `!skeleton`, and it is the **whole point of R5**. A skeleton that vanished the instant the payload
+       * arrived would flash for 40 ms on a fast-but-not-instant read, which is the flicker skeletons exist
+       * to prevent — so once one is painted it holds the space until its 400 ms are paid, and the list
+       * appears when it goes. This can never delay content that was *already* available: a cache hit never
+       * sets `pending`, so no skeleton is ever painted and there is nothing to wait for.
+       */}
+      {!skeleton && data && (
         <LensBody lens={lens} onStep={step} onZoom={zoomOneStep}>
           <Body lens={lens} data={data} period={local} canCreate={canCreate} weekOffset={weekOffset} />
         </LensBody>

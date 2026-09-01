@@ -5,7 +5,8 @@ import { useAddTaskLink, useCompleteTask, useGoal, usePatchTask, useRemoveTaskLi
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { TopActions } from '../components/TopActions';
-import { FieldError, Loading, LoadError, commandError } from '../components/states';
+import { FieldError, LoadError, commandError } from '../components/states';
+import { TaskPageSkeleton, useSkeleton } from '../components/Skeleton';
 import { CarryLabel } from '../components/TaskRow';
 import { instantLabel, weekOfLabel } from '../utils/dates';
 import { goalPath, LENS_SEGMENT, lensPath } from '../routes';
@@ -62,7 +63,30 @@ export function TaskPage() {
   }, [task?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const backTo = from ?? lensPath('Weekly', task?.originWeekStart);
-  const backLabel = task ? weekOfLabel(fromWeek ?? task.originWeekStart) : 'Back';
+  /**
+   * ⚠ **R-nav-30 P3** — this is a **client-side** fact whenever the page was reached from a lens: `fromWeek`
+   * comes out of `location.state.from`, so the control names where you came from before any read starts.
+   * Only the cold-by-URL case has to wait, and it waits as the word `Back`, which is true rather than grey.
+   */
+  const backLabel = fromWeek ? weekOfLabel(fromWeek) : task ? weekOfLabel(task.originWeekStart) : 'Back';
+  const backBtn = {
+    minHeight: 44,
+    border: 'none',
+    background: 'none',
+    padding: '0 2px',
+    fontSize: 13.5,
+    fontWeight: 700,
+    color: S.T.mut,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    flex: '0 1 auto',
+    minWidth: 0,
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  };
+  /** R-nav-30 — `isPending`, never `isFetching`: reopening a task you have already seen is a repaint. */
+  const skeleton = useSkeleton(taskQ.isPending, taskQ.error);
 
   const fields = draft ?? { title: task?.title ?? '', cond: task?.cond ?? '', description: task?.description ?? '' };
   const dirty =
@@ -100,11 +124,28 @@ export function TaskPage() {
     if (confirming) keepRef.current?.focus();
   }, [confirming]);
 
-  if (taskQ.isPending) return <Loading label="Loading this task…" />;
-  if (taskQ.error || !task) {
+  // ⚠ `skeleton ||` before the data check — R5's minimum holds the page rather than flashing it. See
+  // `GoalDetailScreen` for the same guard and the reason it cannot delay a cached read.
+  if (taskQ.error || skeleton || !task) {
     return (
-      <div style={S.page}>
-        <LoadError error={taskQ.error} what="this task" onRetry={() => void taskQ.refetch()} />
+      /*
+       * **R-nav-30 P3** — the back control is **real**, not a bar, whenever the page was reached from a
+       * lens: `backLabel` is derived from `location.state.from` and needs no read at all, so `‹ Week of Mon
+       * 31 Aug` is correct before the task read starts. Opened cold by URL there is no `from`, and it reads
+       * `Back` — which is the truth, and still a working exit. The cluster renders for real beside it.
+       *
+       * R6 — an error supersedes the grace and the minimum alike and takes the body at once.
+       */
+      <div style={S.page} data-screen-label="Task page">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <button type="button" onClick={requestLeave} style={backBtn}>
+            ‹ {backLabel}
+          </button>
+          <div style={{ flex: '0 0 auto' }}>
+            <TopActions />
+          </div>
+        </div>
+        {taskQ.error ? <LoadError error={taskQ.error} what="this task" onRetry={() => void taskQ.refetch()} /> : skeleton && <TaskPageSkeleton />}
       </div>
     );
   }
@@ -159,15 +200,13 @@ export function TaskPage() {
   return (
     <div style={S.page} data-screen-label="Task page">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <button
-          type="button"
-          onClick={requestLeave}
-          style={{ minHeight: 44, border: 'none', background: 'none', padding: '0 2px', fontSize: 13.5, fontWeight: 700, color: S.T.mut, cursor: 'pointer', fontFamily: 'inherit' }}
-        >
+        <button type="button" onClick={requestLeave} style={backBtn}>
           ‹ {backLabel}
         </button>
         {/* R-nav-25 — the task page carries the cluster, which goal detail used to omit. */}
-        <TopActions />
+        <div style={{ flex: '0 0 auto' }}>
+          <TopActions />
+        </div>
       </div>
 
       {confirming && (
@@ -199,18 +238,37 @@ export function TaskPage() {
           <h1 ref={headingRef} tabIndex={-1} style={{ margin: 0, fontSize: 21, fontWeight: 800, letterSpacing: '-0.01em', color: S.T.ink, outline: 'none' }}>
             {task.title}
           </h1>
-          {/* R-task-45 — the context line: the Life goal and the Weekly goal, both tappable. */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 2 }}>
+          {/*
+           * R-task-45 — the context line: the Life goal and the Weekly goal, both tappable.
+           *
+           * ⚠ **Crumbs never wrap** (R-goal-41, amended) — and this is a crumb line in everything but name.
+           * It was a wrapping flex of two `linkBtn`s, so the owner's own weekly goal title broke it over
+           * three lines under the `<h1>`. Same treatment as the trail: one line, no wrap, the **weekly
+           * goal** takes the remaining width and tail-truncates, and the Life root is `flex: 0 1 auto` with
+           * a 96 px floor so it gives ground first. Both segments stay tappable, which is what R-task-45
+           * requires, and both accessible names are the untruncated titles.
+           */}
+          <div style={{ display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: 4, marginTop: 2, minWidth: 0, overflow: 'hidden' }}>
             {lifeRoot && (
-              <button type="button" style={{ ...S.linkBtn, minHeight: 32, color: S.T.mut, fontWeight: 600, fontSize: 12.5 }} onClick={() => navigate(goalPath(lifeRoot.id))}>
+              <button
+                type="button"
+                aria-label={lifeRoot.title}
+                style={{ ...S.linkBtn, ...clampedLink, flex: '0 1 auto', minWidth: 96, color: S.T.mut }}
+                onClick={() => navigate(goalPath(lifeRoot.id))}
+              >
                 {lifeRoot.title}
               </button>
             )}
-            {lifeRoot && weeklyGoal && <span style={{ color: S.T.mut, fontSize: 12.5 }}>·</span>}
+            {lifeRoot && weeklyGoal && (
+              <span aria-hidden="true" style={{ color: S.T.mut, fontSize: 12.5, flex: '0 0 auto' }}>
+                ·
+              </span>
+            )}
             {weeklyGoal && (
               <button
                 type="button"
-                style={{ ...S.linkBtn, minHeight: 32, color: S.T.mut, fontWeight: 600, fontSize: 12.5 }}
+                aria-label={weeklyGoal.title}
+                style={{ ...S.linkBtn, ...clampedLink, flex: '1 1 auto', color: S.T.mut }}
                 onClick={() => navigate(lensPath('Weekly', weeklyGoal.periodKey))}
               >
                 {weeklyGoal.title}
@@ -347,6 +405,18 @@ export function TaskPage() {
  * return `null`, the page would fall back to the task's origin week instead of the week you came from,
  * and no test or type would notice.
  */
+/** One line, tail-truncated. `minWidth: 0` because a flex item's `min-width: auto` is its intrinsic width. */
+const clampedLink = {
+  minHeight: 32,
+  fontWeight: 600,
+  fontSize: 12.5,
+  minWidth: 0,
+  whiteSpace: 'nowrap' as const,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  display: 'block',
+};
+
 function mondayInPath(path: string | null): string | null {
   const m = path ? new RegExp(`^/${LENS_SEGMENT.Weekly}/(\\d{4}-\\d{2}-\\d{2})$`).exec(path) : null;
   return m ? m[1]! : null;

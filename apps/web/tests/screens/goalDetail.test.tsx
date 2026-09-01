@@ -60,9 +60,18 @@ describe('Goal detail', () => {
 
     expect(await screen.findByText('“Evening sessions never survive a busy week”')).toBeInTheDocument();
     expect(screen.getByText('changed the plan')).toBeInTheDocument();
-    // R-goal-41 — breadcrumbs to the Life root, with each ancestor's own period label.
-    expect(screen.getByRole('button', { name: 'Be strong at 60' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Get back under 80kg' })).toBeInTheDocument();
+    /**
+     * ⚠ **AMENDED, not weakened — R-goal-41's breadcrumb clause (A6).** This used to assert two plain
+     * buttons, `Be strong at 60` and `Get back under 80kg`, which is what the wrapping trail rendered. The
+     * trail is now one non-wrapping line and the Life root is an eyebrow, so **both ways up still exist and
+     * this asserts strictly more about each of them**: the parent crumb's accessible name now carries its
+     * **period** (the clause R-goal-41 has always required and the screen never rendered — asserted here
+     * for the first time), and the eyebrow names itself as a way there. Neither route was removed; both are
+     * now checked by name rather than by presence. The full ancestry with every period is asserted in
+     * `breadcrumbs.test.tsx`.
+     */
+    expect(screen.getByRole('button', { name: 'Get back under 80kg, 2026' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Be strong at 60. Open goal.' })).toBeInTheDocument();
   });
 
   /**

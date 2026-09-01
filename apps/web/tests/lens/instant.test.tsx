@@ -33,10 +33,11 @@ describe('the header never waits, and `…` is never a label (R-lens-30)', () =>
     expect(screen.getByText('Mon 7 Sep – Sun 4 Oct')).toBeInTheDocument();
 
     /**
-     * **`…` IS NEVER A LABEL.** Scoped to the title control, deliberately: the body still renders
-     * `Loading…` while a cold read is in flight, and replacing *that* with a skeleton is item B of the UX
-     * plan and a different agent's change. What this pins is the owner's actual complaint — the *name of
-     * the period* was an ellipsis — and it pins it where it can never be satisfied by accident.
+     * **`…` IS NEVER A LABEL.** Scoped to the title control, deliberately, and it stays scoped there: the
+     * body renders `LensListSkeleton` while a cold read is in flight (R-nav-30, A6), and the `…` on the
+     * goal page's trail is a real control with the accessible name `Show the full path`. What this pins is
+     * the owner's actual complaint — the *name of the period* was an ellipsis — and it pins it where it can
+     * never be satisfied by accident.
      */
     const title = screen.getByRole('button', { name: /^Monthly lens, Sep 2026 · Mon 7 Sep – Sun 4 Oct\./ });
     expect(title.textContent).not.toContain('…');
@@ -293,8 +294,11 @@ describe('neighbour prefetch is bounded (R-lens-30, §3.4)', () => {
 
     // The prefetch already warmed `2026-09` inside its own `staleTime`, so arriving there costs nothing.
     expect(periodsAsked().filter((p) => p === '2026-09')).toHaveLength(before);
-    // And the body is on screen with no loading state in between.
+    // And the body is on screen with no loading state in between — R-nav-30's R2, from the other side:
+    // this is the same assertion `skeletons.test.tsx` makes about the skeleton, made here about the
+    // prefetch that is the reason there is nothing to load.
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-skeleton]')).toBeNull();
   });
 
   it('never prefetches on the Life lens, which has no periods', async () => {
