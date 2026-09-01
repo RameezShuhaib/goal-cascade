@@ -1,5 +1,6 @@
+import { useEffect } from 'react';
 import { usePreferences } from '../api/queries';
-import { todayInZone } from './dates';
+import { setOwnerTimezone, useOwnerClock, type OwnerClockState } from '../lib/ownerClock';
 
 /**
  * The owner's calendar day, and nothing else.
@@ -7,20 +8,36 @@ import { todayInZone } from './dates';
  * ── What used to be here, and why it is gone ───────────────────────────────────
  * `defaultPeriod(horizon, today)` pre-filled the create form's free-text `TARGET PERIOD` field. Both
  * halves of that are retired: `period` is **[srv]**, the rendered label of a canonical `periodKey`
- * (R-goal-33), and there is no period field on the create sheet at all any more — a goal is created into
- * **the period you are looking at**, shown as a read-only chip with its reason beside it (UX §6.7). The
- * old field is what let you type `Q9 3026`.
+ * (R-goal-33), and there is no period field on the create sheet at all any more. The old field is what let
+ * you type `Q9 3026`.
  *
- * `replanPeriods` left earlier for the same reason: `GoalDetailResponse.replanOptions` is the server's own
- * derivation, and two implementations of a date rule drift on the first boundary (D-3).
- *
- * What survives is one value the client legitimately needs and can compute without a second rule: the
- * anchor date for the Zoom sheet (R-lens-18), which is the SERVER's clock (`lib/serverClock`) rendered in
- * the OWNER's stored timezone (R-auth-5) — never the device clock.
+ * ⚠ **R-lens-30** — what survives is no longer a one-shot `todayInZone(prefs?.timezone)` read. Today is an
+ * external store (`lib/ownerClock`) because the app is an installed PWA that can sit open across a
+ * midnight, and a value read once at mount would keep offering `+ Weekly goal` on a week that became past
+ * while the tab was in the background. This module is the seam that pushes the STORED timezone into that
+ * store — the only place the two meet.
  */
+
+/**
+ * Subscribe the owner clock to `preferences.timezone`. Mounted once, high in the tree.
+ *
+ * `null` while preferences are unknown, which is deliberate and is not the same as `'UTC'`: the store
+ * falls back to `'UTC'` for the arithmetic (matching the server middleware) while reporting `tz: null`, so
+ * a caller can tell "we do not know yet" from "the owner is in UTC" and suppress a badge rather than guess
+ * at one.
+ */
+export function useOwnerTimezoneSync(): void {
+  const prefs = usePreferences();
+  const tz = prefs.data?.preferences.timezone ?? null;
+  useEffect(() => setOwnerTimezone(tz), [tz]);
+}
 
 /** Today as the owner's account sees it: the server's clock in the stored timezone (R-auth-5). */
 export function useOwnerToday(): string {
-  const prefs = usePreferences();
-  return todayInZone(prefs.data?.preferences.timezone);
+  return useOwnerClock().today;
+}
+
+/** Today, plus whether the timezone behind it is actually known yet. */
+export function useOwnerClockState(): OwnerClockState {
+  return useOwnerClock();
 }

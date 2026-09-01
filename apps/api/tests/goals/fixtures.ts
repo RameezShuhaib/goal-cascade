@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { IBacklogRepo, IGoalRepo, ILearningRepo, ITaskRepo } from '../../src/application/ports';
 import { DB, GuardedBatch } from '../../src/application/services';
 import type { BacklogItem, Goal, Learning, Task } from '../../src/domain/entities';
-import { labelOf } from '../../src/domain/periods';
+import { labelOf } from '@goal-cascade/shared';
 import { ids, type TestApp } from '../helpers/app';
 
 /**

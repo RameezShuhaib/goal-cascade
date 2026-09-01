@@ -1,4 +1,4 @@
-import { API_TOKEN_PREFIX, MCP_PATH } from '@goal-cascade/shared';
+import { API_TOKEN_PREFIX, dateInTimezone, HORIZONS, isPeriodKeyFor, MCP_PATH, periodViewOf } from '@goal-cascade/shared';
 import type {
   BacklogItemView,
   GoalRefView,
@@ -30,7 +30,41 @@ import type {
  * builds one horizon's page the way `GoalService.lens` does.
  */
 
-export const NOW = '2026-08-31T09:00:00.000Z';
+export const DEFAULT_NOW = '2026-08-31T09:00:00.000Z';
+
+/**
+ * The instant every fixture's `serverNow` carries, and the one `tests/setup.ts` pins the device clock to.
+ *
+ * ⚠ **R-lens-30 — it is a `let`, and `atInstant()` is the only thing that moves it.** The client now
+ * computes the whole lens header from `(horizon, periodKey, today)`, so a test about a date-dependent
+ * state — R-lens-29's "this week is somewhere else", a day rollover — has to move the SERVER's clock and
+ * the DEVICE's together, or the two disagree and the runtime echo assertion fires on the fixture rather
+ * than on a defect. One knob, both clocks.
+ */
+export let NOW: string = DEFAULT_NOW;
+
+/**
+ * The fixture account's timezone, which `tests/render.tsx`'s `testClient` sends on every request. 09:00
+ * UTC is 11:00 in Amsterdam, so at the default instant the zone and UTC agree on the day.
+ */
+export const FIXTURE_TZ = 'Europe/Amsterdam';
+
+/** The owner's calendar date at `NOW`, computed the way the server computes it. */
+export const today = (): string => dateInTimezone(NOW, FIXTURE_TZ);
+
+/**
+ * Move the fixtures' clock. **Call `handlers.atInstant` instead** — it moves the device clock too, and
+ * one without the other is the disagreement the whole change exists to make impossible.
+ */
+export function setFixtureNow(iso: string): void {
+  NOW = iso;
+}
+
+/** Reset to `DEFAULT_NOW`. Called from `tests/setup.ts`'s `beforeEach`, so a move never leaks. */
+export function resetFixtureNow(): void {
+  NOW = DEFAULT_NOW;
+}
+
 /** 2026-08-31 is a Monday, which `WeekStart` requires. */
 export const THIS_MONDAY = '2026-08-31';
 export const LAST_MONDAY = '2026-08-24';
@@ -271,17 +305,33 @@ const RANGES: Record<string, string> = {
   [NEXT_MONDAY]: 'Mon 7 Sep – Sun 13 Sep',
 };
 
-export const period = (over: Partial<PeriodView> & { periodKey: string }): PeriodView => ({
-  label: LABELS[over.periodKey] ?? over.periodKey,
-  isCurrent: true,
-  isPast: false,
-  hasWork: true,
-  weekRange: RANGES[over.periodKey] ?? '',
-  // R-lens-29 — `null` is the ordinary case: this period holds the week containing today. The fixtures'
-  // clock is Mon 31 Aug 2026, which is inside `2026-08`, `2026-Q3` and `2026`, so every default is honest.
-  currentWeekPeriod: null,
-  ...over,
-});
+/**
+ * ⚠ **R-lens-30** — this is computed with `periodViewOf`, **the same call the Worker makes**
+ * (`GoalService.periodView` is `{ ...periodViewOf(horizon, key, today), hasWork }`), rather than looked up
+ * in `LABELS`/`RANGES`.
+ *
+ * That is not a relaxation of the "never generate a fixture from the implementation" discipline — it is
+ * that discipline applied at the right level. **MSW stands in for the Worker**, and a stand-in that hand-
+ * stubs a field the Worker derives is not standing in for it: it answered `weekRange: ''` and
+ * `currentWeekPeriod: null` for every key not in the two tables above, which is a payload the real server
+ * would never send. The hand-written boundary table that pins *correctness* lives where it belongs, in
+ * `packages/shared/tests/fixtures/period-boundaries.ts`, and is checked independently by an api test and a
+ * web test.
+ *
+ * This is also what makes the runtime echo assertion meaningful under test: the client compares itself
+ * against this payload on every read, so a faithful stand-in is the difference between the assertion
+ * proving something and the assertion firing on the fixture.
+ */
+export const period = (over: Partial<PeriodView> & { periodKey: string; horizon?: Horizon }): PeriodView => {
+  const { horizon, ...rest } = over;
+  const h = horizon ?? horizonOfKey(over.periodKey);
+  return { ...periodViewOf(h, over.periodKey, today()), hasWork: true, ...rest };
+};
+
+/** The one horizon a canonical key can belong to — every format is distinguishable (R-goal-33). */
+function horizonOfKey(key: string): Horizon {
+  return (HORIZONS.find((h) => h !== 'Life' && isPeriodKeyFor(h, key)) ?? 'Life') as Horizon;
+}
 
 export const group = (over: Partial<LifeGroupView> & { id: string | null }): LifeGroupView => ({
   title: over.id === L2 ? 'Ship the thing' : over.id === null ? 'UNSORTED' : 'Be strong at 60',
@@ -304,7 +354,7 @@ export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensRespo
     serverNow: NOW,
     ...over,
     lens: over.lens,
-    period: over.lens === 'Life' ? null : (over.period ?? period({ periodKey: defaultKey(over.lens) })),
+    period: over.lens === 'Life' ? null : (over.period ?? period({ horizon: over.lens, periodKey: defaultKey(over.lens) })),
     groups,
     items,
     carried: over.carried ?? [],
@@ -334,17 +384,29 @@ function parentsOf(items: readonly GoalView[]): GoalRefView[] {
 
 const defaultKey = (h: Horizon) => (h === 'Yearly' ? '2026' : h === 'Quarterly' ? '2026-Q3' : h === 'Monthly' ? '2026-08' : THIS_MONDAY);
 
-/** The default page for each lens, so a screen test can render any of the five without extra setup. */
+/**
+ * The default page for each lens, so a screen test can render any of the five without extra setup.
+ *
+ * ⚠ **R-lens-30** — `periodKey` is honoured at **every** horizon now, not only the Weekly one. It used to
+ * be ignored on the other four, so `/month/2026-11` came back describing `2026-08`: a payload the real
+ * server could not produce, and one the client's echo assertion now catches immediately. The goals on the
+ * page are still the fixture account's regardless of the period asked for — the period is what the header
+ * is about, and which goals a period holds is a question for a test that cares.
+ */
 export function lensFor(horizon: Horizon, periodKey?: string): LensResponse {
+  const at = (over: Partial<LensResponse> & { lens: Horizon }): LensResponse => {
+    const key = periodKey && isPeriodKeyFor(over.lens, periodKey) ? periodKey : defaultKey(over.lens);
+    return lens({ ...over, period: period({ horizon: over.lens, periodKey: key }) });
+  };
   switch (horizon) {
     case 'Life':
       return lens({ lens: 'Life', items: lifeGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
     case 'Yearly':
-      return lens({ lens: 'Yearly', items: yearlyGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
+      return at({ lens: 'Yearly', items: yearlyGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
     case 'Quarterly':
-      return lens({ lens: 'Quarterly', items: quarterlyGoals(), groups: [group({ id: L, openTasks: 2 })] });
+      return at({ lens: 'Quarterly', items: quarterlyGoals(), groups: [group({ id: L, openTasks: 2 })] });
     case 'Monthly':
-      return lens({ lens: 'Monthly', items: monthlyGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
+      return at({ lens: 'Monthly', items: monthlyGoals(), groups: [group({ id: L, openTasks: 2 }), group({ id: L2 })] });
     default:
       return weeklyLens(periodKey);
   }
@@ -357,7 +419,9 @@ export function lensFor(horizon: Horizon, periodKey?: string): LensResponse {
 export function weeklyLens(periodKey = THIS_MONDAY): LensResponse {
   return lens({
     lens: 'Weekly',
-    period: period({ periodKey, isCurrent: periodKey === THIS_MONDAY, isPast: periodKey < THIS_MONDAY }),
+    // `isCurrent` / `isPast` are no longer restated here: `periodViewOf` derives them from `TODAY`, which
+    // is the same instant the handler's `serverNow` carries, so the two cannot disagree.
+    period: period({ horizon: 'Weekly', periodKey }),
     items: [weeklyGoal()],
     carried: [carriedGoal()],
     groups: [group({ id: L, openTasks: 2 })],

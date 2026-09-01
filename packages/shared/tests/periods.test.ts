@@ -3,7 +3,7 @@ import {
   firstMondayIn,
   isCurrentPeriod,
   isPastPeriod,
-  isPeriodKey,
+  isPeriodKeyFor,
   labelOf,
   lastMondayIn,
   periodKeyOf,
@@ -11,7 +11,7 @@ import {
   stepPeriod,
   weekForMonth,
   zoomTo,
-} from '../../src/domain/periods';
+} from '../src/index';
 
 /**
  * ⚠ **A2, new (R-goal-33/34, R-lens-9)** — period arithmetic, in the one module it lives in.
@@ -42,14 +42,14 @@ describe('R-goal-33 — canonical period keys, one shape per horizon', () => {
   });
 
   it('S-goal-33-2 — a key is validated against its OWN horizon', () => {
-    expect(isPeriodKey('Quarterly', '2026-Q5')).toBe(false);
-    expect(isPeriodKey('Monthly', '2026-13')).toBe(false);
-    expect(isPeriodKey('Weekly', '2026-09-01')).toBe(false); // a Tuesday
-    expect(isPeriodKey('Weekly', '2026-08-31')).toBe(true); // a Monday
+    expect(isPeriodKeyFor('Quarterly', '2026-Q5')).toBe(false);
+    expect(isPeriodKeyFor('Monthly', '2026-13')).toBe(false);
+    expect(isPeriodKeyFor('Weekly', '2026-09-01')).toBe(false); // a Tuesday
+    expect(isPeriodKeyFor('Weekly', '2026-08-31')).toBe(true); // a Monday
     // A lens must PARTITION its horizon, so a key valid for one is not valid for another.
-    expect(isPeriodKey('Monthly', '2026')).toBe(false);
-    expect(isPeriodKey('Yearly', '')).toBe(false);
-    expect(isPeriodKey('Life', '')).toBe(true);
+    expect(isPeriodKeyFor('Monthly', '2026')).toBe(false);
+    expect(isPeriodKeyFor('Yearly', '')).toBe(false);
+    expect(isPeriodKeyFor('Life', '')).toBe(true);
   });
 
   it('R-goal-33 — an unrecognised key renders as itself rather than throwing', () => {

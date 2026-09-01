@@ -9,8 +9,12 @@ import { nowMs } from '../lib/serverClock';
  * `weekStart` it is about, and these functions format the string the server sent.
  *
  * R-auth-5 — "the current week" is the server's, resolved in the owner's timezone. So there is no
- * `mondayOf(offset)` here: deriving a Monday from the device clock is exactly the disagreement that rule
- * exists to prevent.
+ * `mondayOf(offset)` here — but that is now because **there is exactly one `weekStartOfDate` in the repo
+ * and it lives in `@goal-cascade/shared`** (R-lens-30), not because the client may not know where a week
+ * starts. Deriving a Monday from the DEVICE CLOCK is still the disagreement R-auth-5 exists to prevent;
+ * deriving one from the owner's today, in the owner's stored zone, through the same function the server
+ * calls, is not. The rule is: **the client may not hold a *second* implementation of a date rule; it may
+ * import the *only* one.**
  */
 
 /** Parse a `YYYY-MM-DD` as a UTC instant, so formatting never shifts it across a timezone boundary. */
@@ -18,16 +22,12 @@ const dateOnly = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
 
 const fmt = (d: Date, opts: Intl.DateTimeFormatOptions): string => d.toLocaleDateString('en-GB', { timeZone: 'UTC', ...opts });
 
-/**
- * Another Monday, `weeks` away from a Monday the SERVER sent. Date-only arithmetic on a UTC instant, so
- * DST cannot move it (Q-9) and no device clock is consulted — this walks away from a known-correct anchor
- * rather than deriving one. It is how the week picker labels the chips either side of the viewed week.
+/*
+ * ⚠ **R-lens-30** — `addWeeks` is DELETED. It was the sixth of the six duplicated calendar functions this
+ * client carried, and it was identical to `@goal-cascade/shared:addWeeks` — same UTC-instant arithmetic,
+ * same DST immunity, same doc block making the same argument. Import the one in shared; the reason the
+ * duplicate existed at all is answered in `utils/periodKeys.ts`'s header.
  */
-export function addWeeks(weekStart: string, weeks: number): string {
-  const d = dateOnly(weekStart);
-  d.setUTCDate(d.getUTCDate() + weeks * 7);
-  return d.toISOString().slice(0, 10);
-}
 
 /**
  * `Mon 24 Aug` — a week, named by its Monday, **with the weekday**. Takes the absolute `weekStart` the
@@ -88,13 +88,18 @@ export function capturedLabel(iso: string): string {
   return sameDay ? 'Today' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
-/** The owner-local date (`YYYY-MM-DD`) as the server would compute it, for the period defaults (R-goal-13). */
-export function todayInZone(timezone: string | undefined): string {
-  const at = new Date(nowMs());
-  try {
-    // `en-CA` renders `YYYY-MM-DD`, which is the shape the period helpers parse.
-    return at.toLocaleDateString('en-CA', { timeZone: timezone || undefined });
-  } catch {
-    return at.toLocaleDateString('en-CA');
-  }
-}
+/*
+ * ⚠ **R-lens-30** — `todayInZone` is DELETED. It was a second implementation of the server's
+ * `dateInTimezone`: `toLocaleDateString('en-CA', { timeZone })` against the server's
+ * `Intl.DateTimeFormat('en-US', { year, month, day }).formatToParts`. They agreed on every ICU build
+ * anyone is likely to meet — **by convention, not by construction** — and `en-CA`'s `YYYY-MM-DD` pattern
+ * is a locale-data fact rather than a guarantee.
+ * `tests/utils/todayInZone-equivalence.test.ts` proved they agreed across a zone × instant matrix, and is
+ * deleted with the next change that touches it.
+ *
+ * Its catch branch was worse than redundant: it fell back to the **device** zone, which is exactly the
+ * traveller disagreement R-auth-5 forbids — an owner whose account is `Europe/Berlin`, in Tokyo, would
+ * have got Tokyo's date while the server computed Berlin's. `@goal-cascade/shared:dateInTimezone` falls
+ * back to `'UTC'`, matching the server middleware. Read the owner's today from
+ * `lib/ownerClock.useOwnerToday`, which also re-checks it when the day rolls over.
+ */

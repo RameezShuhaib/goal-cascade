@@ -26,14 +26,34 @@ describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
     expect(await screen.findByRole('button', { name: title })).toBeInTheDocument();
   });
 
-  it('R-lens-14: a period the URL does not name falls back to the current one, and the URL is rewritten', async () => {
-    // `/month` is legal and means "whichever month the server says contains today" — the client must never
-    // derive that (R-goal-34). The address bar catches up once the read lands, so a copied link is absolute.
-    renderApp(<AppShell />, { route: '/month' });
+  /**
+   * ⚠ **VERDICT — one clause of this test encoded a rule R-lens-30 supersedes, and it is rewritten, not
+   * weakened.**
+   *
+   * The retired clause read: *"The fallback read carries NO period: asking for one the client made up is
+   * the bug this avoids"* — the client-side half of R-goal-34, which is the rule that moved. The bug it
+   * avoided was a client that *made a period up* from its own device clock; a client that computes one
+   * from the owner's stored timezone through the same module the Worker calls is not making anything up,
+   * and the runtime echo assertion checks that on this very response.
+   *
+   * **Everything the test protected is still asserted, and more is.** `/month` still lands on the current
+   * month, still rewrites the address bar, and now also proves the defect the change existed to remove:
+   * it issues **exactly one** `GET /goals`, carrying the period, where it used to issue two — one under
+   * `['goals','Monthly',null]` and a second under `['goals','Monthly','2026-08']` once the first landed,
+   * with a `Loading…` on each.
+   */
+  it('R-lens-14 / R-lens-30: `/month` resolves the current period locally, in ONE request', async () => {
+    // `browserHistory`, so the address-bar rewrite is observable — it is half of what this asserts.
+    renderApp(<AppShell />, { browserHistory: true, route: '/month' });
     expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
-    await waitFor(() => expect(new URL(requests('GET', '/api/goals').at(-1)!.url).searchParams.get('lens')).toBe('Monthly'));
-    // The fallback read carries NO period: asking for one the client made up is the bug this avoids.
-    expect(new URL(requests('GET', '/api/goals')[0]!.url).searchParams.has('period')).toBe(false);
+    await waitFor(() => expect(requests('GET', '/api/goals').length).toBeGreaterThan(0));
+    // The URL is canonicalised before the read, so the address bar is absolute and the key never moves.
+    await waitFor(() => expect(window.location.pathname).toBe('/month/2026-08'));
+
+    const goals = requests('GET', '/api/goals');
+    expect(goals).toHaveLength(1);
+    expect(new URL(goals[0]!.url).searchParams.get('lens')).toBe('Monthly');
+    expect(new URL(goals[0]!.url).searchParams.get('period')).toBe('2026-08');
   });
 
   it('an unparseable period is dropped rather than trusted — a URL segment is attacker-supplied', async () => {

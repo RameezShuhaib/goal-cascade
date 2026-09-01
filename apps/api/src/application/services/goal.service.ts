@@ -36,18 +36,22 @@ import {
   type TreeIndex,
 } from '../../domain/goal-tree';
 import {
+  addWeeks,
+  dateInTimezone,
   firstMondayIn,
   isPastPeriod,
-  isPeriodKey,
+  isPeriodKeyFor,
   labelOf,
   lastMondayIn,
+  offsetOf,
   periodKeyOf,
-  periodKeyOfCurrentWeek,
+  periodViewOf,
   replanPeriods,
   weekRangeOf,
+  weekStartOf,
+  weeksBetween,
   zoomTo,
-} from '../../domain/periods';
-import { addWeeks, dateInTimezone, offsetOf, weekStartOf, weeksBetween } from '../../domain/weeks';
+} from '@goal-cascade/shared';
 import type { RequestContext } from '../context';
 import {
   IBacklogLinkRepo,
@@ -134,7 +138,7 @@ export class GoalService {
     const horizon = q.lens;
     const isLife = horizon === 'Life';
     // R-lens-2 — the Life lens has no period dimension: it is simply all of them.
-    const periodKey = isLife ? '' : q.period && isPeriodKey(horizon, q.period) ? q.period : periodKeyOf(horizon, today);
+    const periodKey = isLife ? '' : q.period && isPeriodKeyFor(horizon, q.period) ? q.period : periodKeyOf(horizon, today);
     const limit = Math.min(q.limit ?? MAX_PAGE, MAX_PAGE);
 
     // R-lens-4 — the anchoring week: the SELECTED week in the Weekly lens, the CURRENT week in every
@@ -427,7 +431,7 @@ export class GoalService {
         throw new DomainError('VALIDATION_FAILED', 'a Life goal has no target period', { periodKey: input.periodKey });
       }
       this.assertPeriodMutable(goal);
-      if (!isPeriodKey(goal.horizon, input.periodKey)) {
+      if (!isPeriodKeyFor(goal.horizon, input.periodKey)) {
         throw new DomainError('VALIDATION_FAILED', `not a valid periodKey for a ${goal.horizon} goal`, {
           periodKey: input.periodKey,
           horizon: goal.horizon,
@@ -497,7 +501,7 @@ export class GoalService {
       throw new DomainError('LIFE_GOAL_IMMUTABLE', 'a Life goal cannot be moved or re-planned');
     }
     this.assertPeriodMutable(goal);
-    if (!isPeriodKey(goal.horizon, input.periodKey)) {
+    if (!isPeriodKeyFor(goal.horizon, input.periodKey)) {
       throw new DomainError('VALIDATION_FAILED', `not a valid periodKey for a ${goal.horizon} goal`, {
         periodKey: input.periodKey,
         horizon: goal.horizon,
@@ -949,19 +953,14 @@ export class GoalService {
    * still the one a lens opens on (R-lens-8, deliberately unchanged) — is not always the period holding
    * the week the owner is living in. `weekRange` says what this period really spans and
    * `currentWeekPeriod` says where the current week actually is, `null` when it is here.
+   *
+   * ⚠ **R-lens-30** — the body of this is now `calendar/period-view.periodViewOf`, which the CLIENT calls
+   * too. `hasWork` is the only field left here because it is the only one that needs the database. The
+   * client compares what this sends against what it computed, on every read (`assertPeriodAgrees`), so a
+   * client bundle older than the Worker is a reported bug rather than a quietly wrong month.
    */
   private periodView(horizon: Horizon, periodKey: string, today: string, hasWork: boolean): PeriodView {
-    const current = periodKeyOf(horizon, today);
-    const weekIn = periodKeyOfCurrentWeek(horizon, today);
-    return {
-      periodKey,
-      label: labelOf(horizon, periodKey),
-      isCurrent: periodKey === current,
-      isPast: periodKey < current,
-      hasWork,
-      weekRange: weekRangeOf(horizon, periodKey),
-      currentWeekPeriod: weekIn === periodKey ? null : { periodKey: weekIn, label: labelOf(horizon, weekIn) },
-    };
+    return { ...periodViewOf(horizon, periodKey, today), hasWork };
   }
 
   /** The derived half of a goal. Never stored (§1), and computed only for the goals being rendered. */

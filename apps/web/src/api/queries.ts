@@ -14,6 +14,7 @@ import type {
   TaskView,
   TasksResponse,
 } from '@goal-cascade/shared';
+import { isPastPeriod } from '@goal-cascade/shared';
 import { useApi } from '../context/ApiContext';
 import { useUI } from '../context/UIContext';
 import { newIdempotencyKey, type ApiClient } from './http';
@@ -21,6 +22,8 @@ import { isApiError, isTransient, toApiError, type ApiError, type ApiErrorCode }
 import { presentError, type Refresh } from '../lib/errorCopy';
 import { keys, shouldRetry } from '../lib/queryClient';
 import { recordLiveIdentity } from '../auth/identity';
+import { useWeekClock } from '../lib/weekClock';
+import { assertCurrentMondayAgrees, assertPeriodAgrees } from '../lens/assertPeriodAgrees';
 
 export { keys };
 
@@ -38,7 +41,29 @@ export { keys };
  * `refetchOnWindowFocus` plus the invalidations every command fires is the whole freshness story. (The
  * reference app polled because two parents wrote to one household; here there is exactly one writer.)
  */
-const READ_MODEL = { staleTime: 30_000 } as const;
+export const READ_MODEL_STALE_MS = 30_000;
+const READ_MODEL = { staleTime: READ_MODEL_STALE_MS } as const;
+
+/**
+ * ⚠ **R-lens-30** — a lens payload is kept for **ten** minutes rather than React Query's default five,
+ * so a browse of roughly a dozen periods stays resident and stepping back over one you have seen is a
+ * repaint with no loading state at all.
+ *
+ * The size is bounded by construction: `MAX_PAGE` caps a page, and `MAX_WEEKLY_GOALS_PER_WEEK` caps a
+ * Weekly page at 50 goals, so twelve resident payloads are a few hundred kilobytes rather than a leak.
+ */
+const LENS_GC_MS = 10 * 60_000;
+
+/**
+ * ⚠ **R-lens-30** — a **past** period is stale after five minutes, not thirty seconds.
+ *
+ * A past period changes only when *you* edit it, and every write path calls `applyRefresh`, whose `goals`
+ * and `all` cases both invalidate the `['goals']` PREFIX — which covers every period key, including this
+ * one. So the longer window is not a bet that nothing changed; it is the observation that anything which
+ * could change it has already invalidated it. The residual risk is a *future* write path that forgets to
+ * declare a refresh, which is a bug that would show up in the current period first.
+ */
+const PAST_PERIOD_STALE_MS = 5 * 60_000;
 
 export function useMe() {
   const client = useApi();
@@ -87,51 +112,111 @@ export function usePreferences() {
  * Everything the app needs on cold open, in one request.
  *
  * ⚠ **A2 (R-rm-5, R-nav-28)** — it no longer ships every goal: it carries the Life goals, the Weekly lens
- * at the week containing today, and that week's tasks. It is also **the client's only source of the
- * current Monday** (`week.weekStart`, R-auth-5) — see `lib/weekClock.ts`.
+ * at the week containing today, and that week's tasks.
+ *
+ * ⚠ **R-lens-30** — it is no longer *the client's only source of the current Monday*. `lib/weekClock`
+ * derives that from the owner's today through the same `weekStartOfDate` the server calls, so the
+ * `+ Weekly goal` affordance is live on a cold open instead of inert until this lands. `week.weekStart`
+ * stays on the wire and becomes an **input to the echo assertion** (`lens/assertPeriodAgrees`), which is
+ * the one live check on the client's timezone resolution.
  */
 export function useBootstrap(week = 0) {
   const client = useApi();
   const enabled = useSignedIn();
-  return useQuery({ queryKey: keys.bootstrap(week), queryFn: () => client.bootstrap(week), enabled, ...READ_MODEL });
+  const clock = useWeekClock();
+  const q = useQuery({ queryKey: keys.bootstrap(week), queryFn: () => client.bootstrap(week), enabled, ...READ_MODEL });
+  /**
+   * ⚠ **Anti-drift layer 3, applied to the timezone ladder.** This is the ONE live check that the client's
+   * `tz` resolution matches the server's: if it did not, every week boundary in the product would be a
+   * day out and nothing else would notice.
+   */
+  assertCurrentMondayAgrees(q.data?.week.weekStart, q.data?.serverNow, clock.tz);
+  return q;
 }
 
 /**
  * R-lens-16 — **one lens: one horizon, one period, grouped by Life goal.** This replaced `useGoals`, the
  * whole-tree read.
  *
- * `period` is `undefined` when the URL names none; the server then answers with the current period
- * (R-lens-14) and the screen rewrites the address bar to the canonical key. The client never derives a
- * period, a Monday or a "current" flag — all four arrive on the wire (R-goal-34).
+ * ⚠ **R-lens-30 — `period` is now `undefined` only on the Life lens**, which genuinely has none
+ * (R-lens-2). Every other read carries an explicit canonical key, resolved by the route before the first
+ * render (`LensScreen`). That is the whole cache win: **one address per period instead of two.** It used
+ * to be `undefined` whenever the URL named no period — the read went out under `['goals','Monthly',null]`,
+ * the answer arrived, the screen rewrote the URL, the key became `['goals','Monthly','2026-09']`, and that
+ * was a cache miss, a second `GET /goals` and a second `Loading…`. A prefetch could never hit, either,
+ * because the key it warmed was not the key the screen would settle on.
+ *
+ * The client now derives the period; it still derives no count and no `hasWork` (R-goal-34's spirit, with
+ * the calendar half moved to `@goal-cascade/shared` so the two sides cannot disagree about it).
  */
 export function useLens(lens: Horizon, period?: string, enabled = true) {
   const client = useApi();
   const signedIn = useSignedIn();
+  const clock = useWeekClock();
+  const isPast = !!period && lens !== 'Life' && isPastPeriod(lens, period, clock.today);
   return useQuery({
     queryKey: keys.lens(lens, period ?? null),
     queryFn: () => client.lens({ lens, ...(period ? { period } : {}) }),
     enabled: signedIn && enabled,
-    ...READ_MODEL,
+    staleTime: isPast ? PAST_PERIOD_STALE_MS : READ_MODEL_STALE_MS,
+    gcTime: LENS_GC_MS,
   });
 }
 
-/** R-lens-22 — the Zoom sheet's five rows, in one grouped read. Only fetched while the sheet is open. */
+/**
+ * R-lens-22 — the Zoom sheet's five rows, in one grouped read. Only fetched while the sheet is open.
+ *
+ * ⚠ **R-lens-30** — the sheet no longer *waits* on this: it renders all five destinations from local
+ * arithmetic and fills the counts in when this lands (`ZoomSheet`). What the read still answers is the
+ * only field of `ZoomRowView` that needs a database.
+ */
 export function useZoom(anchor: string | null, enabled = true) {
   const client = useApi();
   const signedIn = useSignedIn();
-  return useQuery({
+  const clock = useWeekClock();
+  const q = useQuery({
     queryKey: keys.zoom(anchor),
     queryFn: () => client.zoom(anchor ?? undefined),
     enabled: signedIn && enabled,
     ...READ_MODEL,
   });
+  /**
+   * ⚠ **Anti-drift layer 3.** A `ZoomRowView` is not a `PeriodView` — it carries no `isPast` or
+   * `currentWeekPeriod` — so what is echoed here is the part it does carry: the destination key the
+   * server chose for each horizon, its label and its span. That is `zoomTo` + `labelOf` + `weekRangeOf`,
+   * which is exactly what the sheet now renders from, so a disagreement would put a wrong destination
+   * under a right count.
+   */
+  for (const row of q.data?.rows ?? []) {
+    if (row.periodKey === null) continue;
+    assertPeriodAgrees(
+      'ZoomResponse.rows',
+      row.lens,
+      { periodKey: row.periodKey, label: row.label, weekRange: row.weekRange, isCurrent: false, isPast: false, currentWeekPeriod: null, hasWork: false },
+      q.data!.serverNow,
+      // Clock-free by construction: the three fields above are all a `ZoomRowView` carries, and none of
+      // them needs a `today`. Passing `null` says so rather than inventing a comparison.
+      null,
+    );
+  }
+  return q;
 }
 
 /** R-goal-41 — one goal's detail page: the goal, its ancestors, children, tasks, backlog and learnings. */
 export function useGoal(id: string | null | undefined) {
   const client = useApi();
   const enabled = useSignedIn() && !!id;
-  return useQuery({ queryKey: keys.goal(id ?? ''), queryFn: () => client.goal(id!), enabled, ...READ_MODEL });
+  const clock = useWeekClock();
+  const q = useQuery({ queryKey: keys.goal(id ?? ''), queryFn: () => client.goal(id!), enabled, ...READ_MODEL });
+  /**
+   * ⚠ **Anti-drift layer 3.** `replanOptions` is a list of `PeriodView`s the server derived from its own
+   * clock (R-goal-40), so it is the goal page's echo of the same calendar. Checking it here rather than at
+   * the seven call sites of `useGoal` means every one of them is covered without any of them knowing.
+   */
+  for (const option of q.data?.replanOptions ?? []) {
+    assertPeriodAgrees('GoalDetailResponse.replanOptions', q.data!.goal.horizon, option, q.data!.serverNow, clock.tz);
+  }
+  return q;
 }
 
 /** R-lens-12 — the tasks visible in one week. Visibility is entirely server-applied (R-task-7/8/32). */

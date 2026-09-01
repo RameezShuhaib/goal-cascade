@@ -1,7 +1,8 @@
 import type { BacklogItemView, ExternalLinkView, TaskView, WeekView } from '@goal-cascade/shared';
 import type { BacklogItem, BacklogLink, Goal, Task, TaskLink } from '../../domain/entities';
 import { isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
-import { carryWeeks, offsetOf } from '../../domain/weeks';
+import { offsetOf } from '@goal-cascade/shared';
+import { carryWeeks } from '../../domain/weeks';
 import type { RequestContext } from '../context';
 
 /**

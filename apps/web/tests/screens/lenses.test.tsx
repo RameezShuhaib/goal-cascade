@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import type { LensResponse } from '@goal-cascade/shared';
 import { AppShell } from '../../src/AppShell';
 import { renderApp } from '../render';
-import { server } from '../msw/handlers';
+import { atInstant, server } from '../msw/handlers';
 import * as F from '../msw/fixtures';
 
 /**
@@ -172,20 +172,32 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
     expect(screen.getByText('This month went unplanned. History stays as it was.')).toBeInTheDocument();
   });
 
-  it('R-nav-25: the create button waits for the read, so it can never fire with an empty period key', async () => {
-    /**
-     * Regression. The guard here was `view !== undefined`, and `view` is `data?.period ?? null` — never
-     * `undefined`, so the test was always true and the button rendered *during the read*, when `view` is
-     * `null` for want of a response. Clicking it then opened the create sheet with `periodKey: ''`, which
-     * is a Life goal's key (R-goal-3) on a lens that is not Life. Typecheck cannot see an always-true
-     * comparison, so the guard is pinned here instead.
-     */
+  /**
+   * ⚠ **VERDICT — this test encoded a rule R-lens-30 supersedes, and the defect it guarded is now
+   * unreachable by construction rather than by a guard.**
+   *
+   * It was a regression test for `data !== undefined`: `view` was `data?.period ?? null`, so during a read
+   * it was `null`, and a button rendered then would open the create sheet with `periodKey: ''` — a Life
+   * goal's key (R-goal-3) on a lens that is not Life. The guard's cost was the one the owner would have
+   * reported next: **the screen's only primary action disappeared and reappeared on every period step.**
+   *
+   * The period key no longer comes from the payload. It comes from the URL, or from the calendar when the
+   * URL names none, so it is correct on the first render and there is no window in which it is `''`. The
+   * assertion is therefore inverted and strengthened: with the read held open forever, the button is
+   * present **and carries the right period**, which is a stronger statement than "it is absent".
+   */
+  it('R-nav-25 / R-lens-30: the create button does not wait for the read, and never carries an empty period key', async () => {
     server.use(http.get('/api/goals', () => new Promise<never>(() => {})));
-    renderApp(<AppShell />, { route: '/month/2026-08' });
+    const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
 
     // The lens chrome is up — this is a real pending render, not an unmounted one.
     expect(await screen.findByRole('button', { name: /Later month/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '+ Monthly goal' })).not.toBeInTheDocument();
+    const create = screen.getByRole('button', { name: '+ Monthly goal' });
+    await user.click(create);
+
+    // The sheet opened on August, not on `''`. Its own read-only period chip is what names the period the
+    // goal would be created into (UX §6.7), so this is the assertion that the key was right.
+    expect(await screen.findByText('Aug 2026')).toBeInTheDocument();
   });
 
   it('R-lens-2: the Life lens still offers create once its read lands, though it has no period', async () => {
@@ -454,7 +466,12 @@ describe('R-lens-24 — three empty states, and they are distinguishable', () =>
     );
     renderApp(<AppShell />, { route: '/quarter/2026-Q1' });
 
-    expect(await screen.findByText('Nothing was set for 2026-Q1.')).toBeInTheDocument();
+    // ⚠ **R-lens-30** — `Q1 2026`, not `2026-Q1`. The sentence names the period with `labelOf`, computed
+    // locally; it used to take `PeriodView.label` from the payload, and this fixture's hand-written
+    // `LABELS` table had no entry for `2026-Q1` and fell back to echoing the raw KEY. R-nav-24 is explicit
+    // that the URL carries the key and the screen shows the label, so the old expectation was pinning a
+    // leaked identifier that the real server would never have sent.
+    expect(await screen.findByText('Nothing was set for Q1 2026.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '+ Quarterly goal' })).not.toBeInTheDocument();
     expect(screen.queryByText('Nothing quarterly yet.')).not.toBeInTheDocument();
   });
@@ -560,15 +577,22 @@ describe('R-lens-28 — the lens title says what the period actually spans', () 
 });
 
 describe('R-lens-29 — the flag for "this week is somewhere else"', () => {
-  /** Tue 1 Sep 2026: the Monthly lens's current period is `Sep 2026` and this week is August's. */
-  const seam = () =>
-    withLens(
-      F.lens({
-        lens: 'Monthly',
-        period: F.period({ periodKey: '2026-09', currentWeekPeriod: { periodKey: '2026-08', label: 'Aug 2026' } }),
-        items: [],
-      }),
-    );
+  /**
+   * Tue 1 Sep 2026: the Monthly lens's current period is `Sep 2026` and this week is August's.
+   *
+   * ⚠ **R-lens-30** — the clock is genuinely moved to that Tuesday now, rather than the fixture asserting
+   * `currentWeekPeriod` by hand at a clock that said Mon 31 Aug. It has to be: `currentWeekPeriod` is a
+   * calendar fact the client computes, and R-lens-29's row renders only on the CURRENT period — which
+   * `2026-09` is not, on 31 August. The old fixture was internally inconsistent and passed because
+   * nothing checked it; the runtime echo assertion checks it now.
+   *
+   * `atInstant` moves the device clock and the fixtures' `serverNow` together, which is the whole reason
+   * it exists.
+   */
+  const seam = () => {
+    atInstant('2026-09-01T09:00:00.000Z');
+    withLens(F.lens({ lens: 'Monthly', period: F.period({ horizon: 'Monthly', periodKey: '2026-09' }), items: [] }));
+  };
 
   it('says where this week is, and offers one tap to it', async () => {
     seam();

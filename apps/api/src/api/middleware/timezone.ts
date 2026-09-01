@@ -1,7 +1,7 @@
 import { HEADERS } from '@goal-cascade/shared';
 import type { MiddlewareHandler } from 'hono';
 import { IPreferencesRepo } from '../../application/ports';
-import { isValidTimezone, weekStartOf } from '../../domain/weeks';
+import { isValidTimezone, weekStartOf } from '@goal-cascade/shared';
 import type { AppBindings } from '../types';
 
 /**

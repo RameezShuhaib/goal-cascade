@@ -11,7 +11,7 @@ import { Hono } from 'hono';
 import { IClock, IPreferencesRepo, IUserRepo } from '../../application/ports';
 import { ApiTokenService } from '../../application/services';
 import { DomainError } from '../../domain/errors';
-import { isValidTimezone, weekStartOf } from '../../domain/weeks';
+import { isValidTimezone, weekStartOf } from '@goal-cascade/shared';
 import { mcpAllowedOriginHostnames } from '../middleware/mcp-cors';
 import { createMcpServer } from '../mcp/server';
 import type { McpDeps } from '../mcp/shapes';

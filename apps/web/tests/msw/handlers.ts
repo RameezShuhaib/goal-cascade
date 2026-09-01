@@ -1,4 +1,5 @@
 import { http, HttpResponse, type HttpHandler } from 'msw';
+import { vi } from 'vitest';
 import { setupServer } from 'msw/node';
 import { ERROR_STATUS, type ErrorCode } from '@goal-cascade/shared';
 import * as F from './fixtures';
@@ -143,6 +144,22 @@ export const handlers: HttpHandler[] = [
 ];
 
 export const server = setupServer(...handlers);
+
+/**
+ * ⚠ **R-lens-30 — move BOTH clocks, or neither.**
+ *
+ * The client computes the lens header from `(horizon, periodKey, today)`, and `today` is the SERVER's
+ * clock (learned from `serverNow` on every response) in the account's stored zone. So a test about a
+ * date-dependent state has to move the fixtures' `serverNow` and the device clock together; moving one
+ * makes the two disagree, and the runtime echo assertion then fires on the fixture instead of on a
+ * defect — which is the assertion working, and a confusing way to find out.
+ *
+ * `tests/setup.ts` resets both after every test.
+ */
+export function atInstant(iso: string): void {
+  F.setFixtureNow(iso);
+  vi.setSystemTime(new Date(iso));
+}
 
 // ---- request recorder ------------------------------------------------------
 

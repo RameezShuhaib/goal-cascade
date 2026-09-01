@@ -1,4 +1,4 @@
-import type { Horizon } from './enums';
+import { isPeriodKeyFor, type Horizon } from '../common';
 import { addWeeks, weekStartOfDate } from './weeks';
 
 /**
@@ -28,6 +28,16 @@ import { addWeeks, weekStartOfDate } from './weeks';
  *
  * Pure: every function is `(horizon, a date or a key) → a string`. `today` is always the OWNER's local
  * calendar date (R-auth-5) — resolve it with `weeks.dateInTimezone` before calling in.
+ *
+ * ── Why this lives in `packages/shared` (R-lens-30) ────────────────────────────
+ * It used to be `apps/api/src/domain/periods.ts`, and `apps/web/src/utils/periodKeys.ts` held a
+ * line-for-line copy of `stepPeriod`, `firstDayOf` and `periodKeyOf` under a doc block arguing at length
+ * that it was not a second implementation. It was, and the drift D-3 warns about was already latent.
+ * **The client may not hold a *second* implementation of a date rule; it may import the *only* one.**
+ *
+ * Every field of `PeriodView` except `hasWork` is a pure function of `(horizon, periodKey, today)`, and
+ * `label` and `weekRange` need no `today` at all — which is why the lens header renders correctly before
+ * the session, the timezone or the network are known (`calendar/period-view.ts`).
  */
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
@@ -72,21 +82,12 @@ export function periodKeyOf(horizon: Horizon, date: string): string {
   }
 }
 
-/** Is `key` the canonical key for `horizon`? The server's half of the shared `isPeriodKeyFor`. */
-export function isPeriodKey(horizon: Horizon, key: string): boolean {
-  switch (horizon) {
-    case 'Life':
-      return key === '';
-    case 'Yearly':
-      return YEAR_RE.test(key);
-    case 'Quarterly':
-      return QUARTER_RE.test(key);
-    case 'Monthly':
-      return MONTH_RE.test(key);
-    case 'Weekly':
-      return DAY_RE.test(key) && weekStartOfDate(key) === key;
-  }
-}
+/*
+ * ⚠ **R-lens-30** — `isPeriodKey` is DELETED, not moved. It was a third copy of a predicate that already
+ * existed twice (`common.ts:isPeriodKeyFor`, and the `isMondayKey` it was cut out of), and it lived
+ * beside them for as long as the calendar and the schemas were in different packages. They are in one
+ * package now, so `isPeriodKeyFor` is the only spelling and there is nothing left to disagree with it.
+ */
 
 /**
  * R-goal-33 — the rendered label. `period` on the wire is **[srv]** and is exactly this: a client-supplied
@@ -132,7 +133,7 @@ export function labelOf(horizon: Horizon, key: string): string {
  * 500s hides the row it was meant to describe.
  */
 export function weekRangeOf(horizon: Horizon, key: string): string {
-  if (horizon === 'Life' || key === '' || !isPeriodKey(horizon, key)) return '';
+  if (horizon === 'Life' || key === '' || !isPeriodKeyFor(horizon, key)) return '';
   const from = firstWeekOf(horizon, key);
   const to = shiftDays(lastWeekOf(horizon, key), 6);
   const spansYears = ymd(from).year !== ymd(to).year;
@@ -219,7 +220,9 @@ export function firstDayOf(horizon: Horizon, key: string): string {
 export function lastDayOf(horizon: Horizon, key: string): string {
   if (horizon === 'Life') return key;
   if (horizon === 'Weekly' && DAY_RE.test(key)) return shiftDays(key, 6);
-  return shiftDays(firstDayOf(horizon, stepPeriod(horizon, key, 1)), -1);
+  // `stepUnclamped`, not `stepPeriod`: this needs the arithmetic next period, and the representable-range
+  // clamp would make `lastDayOf('Yearly','9999')` step to itself and answer 9998-12-31.
+  return shiftDays(firstDayOf(horizon, stepUnclamped(horizon, key, 1)), -1);
 }
 
 function shiftDays(date: string, n: number): string {
@@ -230,14 +233,32 @@ function shiftDays(date: string, n: number): string {
 /**
  * R-lens-7 — step a period by `n` of its own unit: a year, a quarter, a month, a week.
  *
- * **Neither direction is bounded.** There is no forward cap (R-goal-36) and the backward clamp went with
- * `WEEK_HISTORY_WEEKS` (R-rm-3): a bound in one direction only rebuilds D-24's asymmetry, and greying out
- * one control would cost a `MIN(period_key)` probe on every render.
+ * **Neither direction is bounded, as a product rule.** There is no forward cap (R-goal-36) and the
+ * backward clamp went with `WEEK_HISTORY_WEEKS` (R-rm-3): a bound in one direction only rebuilds D-24's
+ * asymmetry, and greying out one control would cost a `MIN(period_key)` probe on every render. Neither
+ * chevron is ever disabled and this does not reopen that.
+ *
+ * ⚠ **The one bound that does exist is the FORMAT's, not the product's** (R-lens-30). A `PeriodKey` is at
+ * most ten characters and a year is `\d{4}`, so the representable range is 1000-01-01 … 9999-12-31.
+ * `stepPeriod('Yearly', '9999', 1)` used to return `'10000'` — a string that fails `isPeriodKeyFor`,
+ * fails `PeriodKeyParam` and is answered `422` by the server. It took thousands of clicks to reach, which
+ * is why it survived; with an instantly-repainting header and swipe navigation ahead of it, a fling is
+ * exactly how you get there. **A step that would leave the representable range returns the input
+ * unchanged**, so the chevron is a silent no-op at the two ends rather than a key nothing can parse. It
+ * belongs here, beside the format it is an edge of, and nowhere else.
  */
 export function stepPeriod(horizon: Horizon, key: string, n: number): string {
+  const stepped = stepUnclamped(horizon, key, n);
+  // Life's `''` and an unrecognised key both come back unchanged from `stepUnclamped`; the guard is only
+  // ever consulted for a key that was canonical going in, so an already-malformed key is not "fixed" here.
+  if (stepped === key || !isPeriodKeyFor(horizon, key)) return stepped;
+  return isPeriodKeyFor(horizon, stepped) ? stepped : key;
+}
+
+function stepUnclamped(horizon: Horizon, key: string, n: number): string {
   if (horizon === 'Life') return '';
   if (horizon === 'Weekly') return addWeeks(key, n);
-  if (horizon === 'Yearly') return String(Number(key) + n);
+  if (horizon === 'Yearly') return YEAR_RE.test(key) ? String(Number(key) + n) : key;
   const q = QUARTER_RE.exec(key);
   if (horizon === 'Quarterly' && q) {
     const ord = Number(q[1]) * 4 + (Number(q[2]) - 1) + n;
@@ -328,7 +349,7 @@ export function lastMondayIn(monthKey: string): string {
 export function replanPeriods(horizon: Horizon, today: string, currentKey = ''): string[] {
   if (horizon === 'Life' || horizon === 'Weekly') return [];
   const todayKey = periodKeyOf(horizon, today);
-  const base = isPeriodKey(horizon, currentKey) && currentKey > todayKey ? currentKey : todayKey;
+  const base = isPeriodKeyFor(horizon, currentKey) && currentKey > todayKey ? currentKey : todayKey;
   const count = horizon === 'Yearly' ? 1 : 2;
   return Array.from({ length: count }, (_, i) => stepPeriod(horizon, base, i + 1));
 }

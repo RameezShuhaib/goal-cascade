@@ -1,4 +1,4 @@
-import type { Horizon, PeriodView } from '@goal-cascade/shared';
+import type { CalendarPeriodView, Horizon } from '@goal-cascade/shared';
 import { useSkin } from '../skin';
 import { PERIOD_UNIT } from '../utils/periodKeys';
 import { periodTitle } from './copy';
@@ -28,7 +28,11 @@ export function LensRow({
   onZoom,
 }: {
   lens: Horizon;
-  period: PeriodView | null;
+  /**
+   * ⚠ **R-lens-30** — the LOCALLY computed view (`useCalendarPeriod`), not `LensResponse.period`. It is
+   * present on the first render, so this component never has a period it cannot name.
+   */
+  period: CalendarPeriodView;
   hasForwardContent: boolean;
   onStep: (n: -1 | 1) => void;
   onZoom: () => void;
@@ -36,7 +40,14 @@ export function LensRow({
   const S = useSkin();
   const unit = PERIOD_UNIT[lens];
   const isLife = lens === 'Life';
-  const label = isLife ? 'Life' : (period?.label ?? '…');
+  /**
+   * ⚠ **R-lens-30 — `…` is never a label.** This read `period?.label ?? '…'`, so until `GET /goals`
+   * landed the header of the entire screen was a literal ellipsis: a period step was a network round trip
+   * for calendar arithmetic the client had already done to build the URL. The fallback is **deleted, not
+   * defaulted** — `labelOf(lens, periodKey)` needs no clock, no session and no network, so there is no
+   * state in which the name of the period on screen is unknown.
+   */
+  const label = isLife ? 'Life' : period.label;
   /**
    * R-lens-28 — the range, on the **Yearly, Quarterly and Monthly** lenses only.
    *
@@ -45,10 +56,11 @@ export function LensRow({
    * a specific Monday and a week is unambiguously the seven days from it — so nothing is appended there;
    * a range under it would be chrome restating what the title already said. Life spans everything.
    *
-   * The server sends it (`PeriodView.weekRange`) and the client renders it, because deriving it here
-   * would need a Monday rule this client deliberately does not have (D-1).
+   * ⚠ **R-lens-30** — this used to be the SERVER's string, *"because deriving it here would need a Monday
+   * rule this client deliberately does not have (D-1)"*. The client now imports that Monday rule rather
+   * than copying it, and `weekRangeOf` is the same function the wire field is built from.
    */
-  const range = isLife || lens === 'Weekly' ? '' : (period?.weekRange ?? '');
+  const range = isLife || lens === 'Weekly' ? '' : period.weekRange;
 
   const chevron = (dir: -1 | 1) => (
     <button
@@ -113,18 +125,61 @@ export function LensRow({
           textAlign: 'left',
         }}
       >
-        <span
-          style={{
-            display: 'block',
-            fontSize: 21,
-            fontWeight: 800,
-            letterSpacing: '-0.01em',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {label} <span aria-hidden="true" style={{ fontSize: 13, color: S.T.mut }}>▾</span>
+        {/*
+         * ⚠ **UX-PLAN §5 (item F) — the misaligned chevron, and why it is a flex row now.**
+         *
+         * It was `{label} <span style={{ fontSize: 13 }}>▾</span>` inside one 21/800 ellipsising span,
+         * and it had four defects of which the first two are the misalignment the owner reported:
+         *
+         *  1. **A different font from every glyph beside it.** `▾` is U+25BE, and neither Manrope
+         *     `@font-face` block's `unicode-range` contains it — the nearest are `U+2000-206F` and the
+         *     singletons `U+2191`/`U+2193`. So it fell through to the platform sans (SF Pro on iOS,
+         *     Roboto on Android) while the label beside it was Manrope, and the two typefaces disagree
+         *     about a small triangle's baseline offset and side bearings by an amount that CHANGES WITH
+         *     THE DEVICE. The two step chevrons are unaffected: `‹` and `›` are U+2039/U+203A, inside
+         *     `U+2000-206F`, and render in Manrope.
+         *  2. **Baseline-aligned against text half again its size** — 13 px inside a 21 px block. Inline
+         *     boxes align on the baseline, so its optical centre sat 4–5 px above it while the label's
+         *     sat 7–8 px above it. It read as sunk.
+         *  3. **It inherited `letterSpacing: -0.01em`**, applied after the literal space, so the gap was
+         *     a space *minus* tracking.
+         *  4. **It was inside the truncating span**, so on a long label (`Week of Mon 4 Jan 2027`) the
+         *     ellipsis ate it — the one affordance saying "this title is a control" vanished precisely
+         *     when the title was long. Not alignment, but the worse defect.
+         *
+         * The fix is four properties and a shape: `alignItems: 'center'` puts it on the label's optical
+         * centre; `flex: 0 0 auto` makes it survive any title length; `gap: 6` replaces the literal space
+         * so tracking cannot reach it; and an inline `<svg>` removes the `unicode-range` lottery entirely
+         * — one shape, identical on every platform, no font dependency, no asset, no library. It stays
+         * `aria-hidden`, because the button's own name already ends `Change lens or period.`
+         */}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              flex: '1 1 auto',
+              minWidth: 0,
+              fontSize: 21,
+              fontWeight: 800,
+              letterSpacing: '-0.01em',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {label}
+          </span>
+          <svg
+            aria-hidden="true"
+            data-testid="lens-zoom-marker"
+            width="8"
+            height="5"
+            viewBox="0 0 8 5"
+            focusable="false"
+            // `display: block` so it carries no line-height box of its own and the flex centring is exact.
+            style={{ flex: '0 0 auto', display: 'block', color: S.T.mut }}
+          >
+            <path d="M0 0h8L4 5z" fill="currentColor" />
+          </svg>
         </span>
         {/*
          * R-lens-28 / R-nav-27 — the range is a **second line inside this button**, never a row of its

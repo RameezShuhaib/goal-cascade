@@ -1,38 +1,31 @@
-import { HORIZONS, isPeriodKeyFor, type Horizon } from '@goal-cascade/shared';
-import { addWeeks } from './dates';
+import { firstDayOf, firstMondayIn, HORIZONS, isPeriodKeyFor, periodKeyOf, type Horizon } from '@goal-cascade/shared';
 
 /**
- * Arithmetic over **canonical period keys** (R-goal-33), and nothing else.
+ * The client's period **vocabulary** — the names and defaults that are genuinely about this UI, and
+ * nothing that is about the calendar.
  *
- * ── What this file is allowed to do, and why it is not a second implementation of a date rule ──
+ * ── ⚠ **R-lens-30 — what this file used to be** ────────────────────────────────
+ * It carried `stepPeriod`, `firstDayOf`, `containingKey`, `weekForMonth` and `weeksBetween` as its own
+ * implementations, under a doc block insisting at length that it was *"not a second implementation of a
+ * date rule"*. Line for line it was: `stepPeriod` was identical to the server's including the
+ * `((ord % 4) + 4) % 4` normalisation, `firstDayOf` was identical, `containingKey` was `periodKeyOf` with
+ * the Weekly branch inlined, and `weekForMonth` reached the same answer by walking whole weeks off a
+ * server-sent Monday instead of by `weekStartOfDate`. **The drift D-3 warns about was already latent,
+ * kept out of sight by two test files written against the same expectations.**
  *
- * Every *judgement* about time stays on the server and arrives on the wire: whether a period is current or
- * past (`PeriodView.isCurrent` / `.isPast`, R-goal-34), which period a lens opens on when the URL names
- * none (R-lens-14), which period each horizon zooms to (`GET /goals/zoom`, R-lens-9), and what a period is
- * called (`PeriodView.label`). None of that is re-derived here — D-3 is the reason, and `utils/periods.ts`
- * already lost `replanPeriods` to exactly that argument.
+ * All of it now comes from `@goal-cascade/shared`, which is the SAME MODULE the Worker calls. The old
+ * prohibition — *"there is no `weekStartOfDate` in this client and there must not be one"* — is replaced
+ * by the rule it was reaching for: **the client may not hold a *second* implementation of a date rule; it
+ * may import the *only* one.** A Monday derived from the DEVICE CLOCK is still forbidden, and that is
+ * `lib/ownerClock`'s job: every `today` here is the server's clock in the account's stored zone (R-auth-5).
  *
- * What is left is **stepping and containment between two canonical keys**, which the wire cannot answer
- * because no read model carries "the next period". `2026-Q3 → 2026-Q4` is string arithmetic on a format
- * whose whole purpose is to be comparable and sortable; it consults no clock, so it cannot disagree with
- * the server about *now*.
- *
- * **The one Monday rule is never re-derived.** A Weekly key is a `WeekStart` (D-1) and Mondays are the
- * owner's timezone's, so every function here that needs one takes a **known Monday the server sent** and
- * walks whole weeks from it (`addWeeks`). There is no `weekStartOfDate` in this client and there must not
- * be one.
+ * What is left below is vocabulary and defaults: what a lens's unit is called, which horizons may sit
+ * under a parent, which period a new sub-goal should offer, and whether a URL segment is trustworthy.
  */
 
 export function rank(horizon: Horizon): number {
   return HORIZONS.indexOf(horizon);
 }
-
-
-const QUARTER_RE = /^(\d{4})-Q([1-4])$/;
-const MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
-const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-const pad2 = (n: number) => String(n).padStart(2, '0');
 
 /** The unit a lens steps by — the word the chevrons' accessible names and the off-now badge use. */
 export const PERIOD_UNIT: Record<Horizon, string> = {
@@ -43,70 +36,10 @@ export const PERIOD_UNIT: Record<Horizon, string> = {
   Weekly: 'week',
 };
 
-/**
- * R-lens-7 — step a period by `n` of its own unit. **Neither direction is bounded**: there is no forward
- * cap (R-goal-36) and the backward clamp went with `WEEK_HISTORY_WEEKS` (R-rm-3).
- *
- * The Weekly case walks whole weeks off the key itself, which the server guaranteed is a Monday, so the
- * result is a Monday without anyone re-deriving one.
- */
-export function stepPeriod(horizon: Horizon, key: string, n: number): string {
-  if (horizon === 'Life') return '';
-  if (horizon === 'Weekly') return addWeeks(key, n);
-  if (horizon === 'Yearly') return String(Number(key) + n);
-  const q = QUARTER_RE.exec(key);
-  if (horizon === 'Quarterly' && q) {
-    const ord = Number(q[1]) * 4 + (Number(q[2]) - 1) + n;
-    return `${Math.floor(ord / 4)}-Q${(((ord % 4) + 4) % 4) + 1}`;
-  }
-  const m = MONTH_RE.exec(key);
-  if (horizon === 'Monthly' && m) {
-    const ord = Number(m[1]) * 12 + (Number(m[2]) - 1) + n;
-    return `${Math.floor(ord / 12)}-${pad2((((ord % 12) + 12) % 12) + 1)}`;
-  }
-  return key;
-}
-
-/** The first calendar date inside the period `key` names — R-lens-18's anchor when today is elsewhere. */
-export function firstDayOf(horizon: Horizon, key: string): string {
-  if (horizon === 'Yearly') return `${key}-01-01`;
-  const q = QUARTER_RE.exec(key);
-  if (horizon === 'Quarterly' && q) return `${q[1]}-${pad2((Number(q[2]) - 1) * 3 + 1)}-01`;
-  const m = MONTH_RE.exec(key);
-  if (horizon === 'Monthly' && m) return `${m[1]}-${m[2]}-01`;
-  if (horizon === 'Weekly' && DAY_RE.test(key)) return key;
-  return key;
-}
-
-/**
- * The key of the `horizon` period **containing** the calendar date `date` — used only to walk *up* from a
- * key we already hold (a Monthly goal's quarter, a Weekly goal's month), never to answer "what is now".
- *
- * A week belongs to its **Monday's** month (R-lens-9), which is why the Weekly case passes its own key in.
- */
-export function containingKey(horizon: Horizon, date: string): string {
-  const d = DAY_RE.exec(date);
-  if (!d) return date;
-  const year = Number(d[1]);
-  const month = Number(d[2]);
-  switch (horizon) {
-    case 'Life':
-      return '';
-    case 'Yearly':
-      return String(year);
-    case 'Quarterly':
-      return `${year}-Q${Math.floor((month - 1) / 3) + 1}`;
-    case 'Monthly':
-      return `${year}-${pad2(month)}`;
-    case 'Weekly':
-      return date;
-  }
-}
-
 /** The period of `horizon` that encloses the period `key` of `of` — `2026-08` inside `2026-Q3`, `2026`. */
 export function enclosingKey(horizon: Horizon, of: Horizon, key: string): string {
   if (horizon === 'Life') return '';
-  return containingKey(horizon, firstDayOf(of, key));
+  return periodKeyOf(horizon, firstDayOf(of, key));
 }
 
 /**
@@ -114,22 +47,22 @@ export function enclosingKey(horizon: Horizon, of: Horizon, key: string): string
  * sitting in `parentKey`.
  *
  * **The current period of the child's own horizon, or the parent's first enclosed period when the parent
- * begins later** — never a past one, so `PERIOD_IN_PAST` (R-goal-36) is unreachable from the affordance
- * without the client owning that rule. The comparison is a plain `>` because same-horizon keys sort
- * chronologically by construction (R-goal-33) — that is the entire reason the format exists.
+ * begins later** — never a past one, so `PERIOD_IN_PAST` (R-goal-36) is unreachable from the affordance.
+ * The comparison is a plain `>` because same-horizon keys sort chronologically by construction
+ * (R-goal-33) — that is the entire reason the format exists.
  *
  * Periods do not nest (R-goal-35), so this is an *offer*: a Quarterly child of a `2027` Yearly goal is
  * perfectly legal in `2026-Q4`, it is merely a surprising default.
  *
- * **The Weekly case takes the Monday the server sent and derives none** (D-1) — the same `currentMonday`
- * the old `+ Weekly goal` on a Monthly page used. `''` until bootstrap lands, which is why the caller
- * keeps the control inert until it has one.
+ * ⚠ **R-lens-30 — the Weekly case no longer waits for bootstrap.** It used to take `currentMonday` from
+ * `BootstrapResponse.week.weekStart` and answer `''` until that landed, which left `+ Weekly goal` inert
+ * on a cold open. `periodKeyOf('Weekly', today)` is the same Monday, from the same rule, with no query
+ * dependency — the Monday is still the owner's, because `today` is.
  */
-export function subGoalPeriodKey(horizon: Horizon, parentHorizon: Horizon, parentKey: string, today: string, currentMonday: string | null): string {
-  if (horizon === 'Weekly') return currentMonday ?? '';
-  const now = containingKey(horizon, today);
-  if (parentHorizon === 'Life') return now;
-  const inside = containingKey(horizon, firstDayOf(parentHorizon, parentKey));
+export function subGoalPeriodKey(horizon: Horizon, parentHorizon: Horizon, parentKey: string, today: string): string {
+  const now = periodKeyOf(horizon, today);
+  if (horizon === 'Weekly' || parentHorizon === 'Life') return now;
+  const inside = periodKeyOf(horizon, firstDayOf(parentHorizon, parentKey));
   return inside > now ? inside : now;
 }
 
@@ -138,30 +71,19 @@ export function childHorizons(parent: Horizon): Horizon[] {
   return HORIZONS.filter((h) => rank(h) > rank(parent));
 }
 
-const MS_DAY = 86_400_000;
-const utc = (isoDate: string) => Date.parse(`${isoDate}T00:00:00.000Z`);
-
-/** Whole weeks from `from` to `to`, both Mondays the server sent. Used for the `?week=` offsets. */
-export function weeksBetween(from: string, to: string): number {
-  return Math.round((utc(to) - utc(from)) / (7 * MS_DAY));
-}
-
 /**
  * R-lens-9 / R-goal-47 / R-task-49 — **the one answer to "which week does this month mean"**: the week
  * containing today when the month contains today, otherwise the first week whose **Monday** falls in it.
  *
- * `currentMonday` is the server's (`WeekView.weekStart`), and `todayMonthKey` is the month it falls in, so
- * neither a Monday nor a "today" is derived from the device clock here. The fallback walks whole weeks off
- * that same Monday, so its result is a Monday by construction.
+ * ⚠ **R-lens-30** — the body is `@goal-cascade/shared`'s, so this and R-goal-47's `BETWEEN` scope and the
+ * header's own range are literally one function. The signature is kept as `(monthKey, currentMonday,
+ * todayMonthKey)` because that is what the two call sites hold and because `currentMonday` remains the
+ * honest input for "the week containing today" — the client no longer needs the server to send it, but it
+ * is still what the answer means.
  */
 export function weekForMonth(monthKey: string, currentMonday: string, todayMonthKey: string): string {
   if (monthKey === todayMonthKey) return currentMonday;
-  const first = firstDayOf('Monthly', monthKey);
-  // How many whole weeks from the known Monday to the month's first day, rounded DOWN, then one more if
-  // that lands before the month starts. The result is always `currentMonday + 7k`, hence always a Monday.
-  const weeks = Math.floor((utc(first) - utc(currentMonday)) / (7 * MS_DAY));
-  const candidate = addWeeks(currentMonday, weeks);
-  return candidate >= first ? candidate : addWeeks(candidate, 1);
+  return firstMondayIn(monthKey);
 }
 
 /** A URL segment is attacker-supplied: a key that is not canonical for its lens is dropped, not trusted. */

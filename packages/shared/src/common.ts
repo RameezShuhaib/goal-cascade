@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isMonday } from './calendar/weeks';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scalars. Normalisation happens HERE, in the schema — never in a handler. A value
@@ -110,13 +111,13 @@ export const Pulse = z.enum(PULSES);
 const YEAR_RE = /^\d{4}$/;
 const QUARTER_RE = /^\d{4}-Q[1-4]$/;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function isMondayKey(key: string): boolean {
-  if (!DAY_RE.test(key)) return false;
-  const t = Date.parse(`${key}T00:00:00.000Z`);
-  return Number.isFinite(t) && new Date(t).getUTCDay() === 1;
-}
+/*
+ * ⚠ **R-lens-30** — the local `isMondayKey` is deleted and `calendar/weeks.isMonday` is used instead.
+ * It was the same six lines, and it was the *third* place in the repo that decided what a Monday is.
+ * There is one now, and this file's dependency on it is the reason `calendar/weeks.ts` imports nothing:
+ * `weeks → nothing`, `common → weeks`, `periods → common`, `period-view → periods` is a DAG.
+ */
 
 /**
  * Is `key` the canonical period key for `horizon`?
@@ -135,7 +136,7 @@ export function isPeriodKeyFor(horizon: Horizon, key: string): boolean {
     case 'Monthly':
       return MONTH_RE.test(key);
     case 'Weekly':
-      return isMondayKey(key);
+      return isMonday(key);
   }
 }
 

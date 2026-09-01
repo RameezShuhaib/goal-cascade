@@ -3,7 +3,7 @@ import { IGoalRepo } from '../../src/application/ports';
 import { GuardedBatch } from '../../src/application/services';
 import type { Goal } from '../../src/domain/entities';
 import type { Horizon } from '../../src/domain/enums';
-import { labelOf } from '../../src/domain/periods';
+import { labelOf } from '@goal-cascade/shared';
 import { ids, type TestApp } from '../helpers/app';
 
 /**

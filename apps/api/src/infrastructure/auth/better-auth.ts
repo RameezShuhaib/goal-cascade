@@ -4,7 +4,7 @@ import { APIError } from 'better-auth/api';
 import type { DependencyContainer } from 'tsyringe';
 import { IEmailSender } from '../../application/ports';
 import { ProvisionUserService } from '../../application/services';
-import { isValidTimezone } from '../../domain/weeks';
+import { isValidTimezone } from '@goal-cascade/shared';
 import type { AppEnv } from '../../env';
 import { DB } from '../di/tokens';
 import { resetPassword as resetPasswordMail, verifyEmail as verifyEmailMail } from '../email/templates';

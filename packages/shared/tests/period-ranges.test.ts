@@ -7,7 +7,7 @@ import {
   periodKeyOf,
   periodKeyOfCurrentWeek,
   weekRangeOf,
-} from '../../src/domain/periods';
+} from '../src/index';
 
 /**
  * ⚠ **A4, new (R-lens-28, R-lens-29)** — what a period *spans*, as opposed to what it is *called*.

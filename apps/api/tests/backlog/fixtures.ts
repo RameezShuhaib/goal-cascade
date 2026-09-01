@@ -2,7 +2,7 @@ import type { Horizon } from '@goal-cascade/shared';
 import { GuardedBatch } from '../../src/application/services';
 import { IBacklogRepo, IGoalRepo, ILearningRepo, ITaskRepo } from '../../src/application/ports';
 import type { Goal } from '../../src/domain/entities';
-import { labelOf } from '../../src/domain/periods';
+import { labelOf } from '@goal-cascade/shared';
 import { ids, type TestApp } from '../helpers/app';
 
 /**

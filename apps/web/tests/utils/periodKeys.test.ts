@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { enclosingKey, firstDayOf, stepPeriod, validKeyFor, weekForMonth, weeksBetween } from '../../src/utils/periodKeys';
+import { firstDayOf, stepPeriod, weeksBetween } from '@goal-cascade/shared';
+import { enclosingKey, validKeyFor, weekForMonth } from '../../src/utils/periodKeys';
 
 /**
- * The period-key arithmetic — the one piece of date handling this client is allowed to own, and the
- * boundary cases that decide whether it can disagree with the server.
+ * The period-key arithmetic, and the boundary cases that decide whether the client can disagree with the
+ * server about a period.
  *
- * It consults no clock. Every function here takes canonical keys (R-goal-33) or a Monday the server sent
- * (D-1), so it cannot form an opinion about *now* — which is the whole reason it is allowed to exist while
- * `defaultPeriod` and `replanPeriods` were deleted (D-3).
+ * ⚠ **R-lens-30 — every assertion below is UNCHANGED, and only the import line moved.** These
+ * expectations were written against `utils/periodKeys.ts`'s own copies of `stepPeriod`, `firstDayOf` and
+ * `weeksBetween`; they now run against `@goal-cascade/shared`, which is the module the Worker calls. That
+ * this file went green with no edit to a single expectation is the proof, after the fact, that the two
+ * implementations had agreed all along — and it is the last moment at which they could ever be asked,
+ * because there is only one of them now.
+ *
+ * The three functions still imported from `utils/periodKeys` are the ones that are genuinely client
+ * vocabulary rather than calendar: `enclosingKey` (a create-form scope), `validKeyFor` (a URL segment is
+ * attacker-supplied) and `weekForMonth` (the shared rule under the signature the two call sites hold).
  */
 
 describe('stepPeriod — unbounded in both directions (R-lens-7, R-rm-3)', () => {

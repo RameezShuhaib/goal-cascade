@@ -2,7 +2,7 @@ import type { MeResponse, PatchPreferencesRequest, PreferencesResponse, Preferen
 import { inject, injectable } from 'tsyringe';
 import type { Preferences } from '../../domain/entities';
 import { DomainError } from '../../domain/errors';
-import { isValidTimezone } from '../../domain/weeks';
+import { isValidTimezone } from '@goal-cascade/shared';
 import type { RequestContext } from '../context';
 import { IClock, IPreferencesRepo } from '../ports';
 import { GuardedBatch } from './guarded-batch';

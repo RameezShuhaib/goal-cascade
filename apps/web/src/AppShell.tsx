@@ -10,6 +10,8 @@ import { TaskPage } from './screens/TaskPage';
 import { BacklogScreen } from './screens/BacklogScreen';
 import { LearningsScreen } from './screens/CaptureScreens';
 import { LENS_SEGMENT, lensPath } from './routes';
+import { useOwnerClockInvalidation } from './lib/ownerClock';
+import { useOwnerTimezoneSync } from './utils/periods';
 
 /**
  * The signed-in tree, and R-nav-24's route table.
@@ -32,6 +34,11 @@ import { LENS_SEGMENT, lensPath } from './routes';
  */
 export function AppShell() {
   const S = useSkin();
+  // R-lens-30 — the two halves of "now" on the client: the stored timezone feeds the owner clock, and a
+  // day rollover invalidates the read models whose meaning depends on the date. Mounted once, here,
+  // because both are app-wide facts and neither belongs to a screen.
+  useOwnerTimezoneSync();
+  useOwnerClockInvalidation();
   return (
     <div
       style={{

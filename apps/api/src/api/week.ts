@@ -1,6 +1,6 @@
 import type { WeekView } from '@goal-cascade/shared';
 import type { RequestContext } from '../application/context';
-import { weekStartFromOffset } from '../domain/weeks';
+import { weekStartFromOffset } from '@goal-cascade/shared';
 
 /**
  * The ONE place a wire week-offset becomes an absolute `weekStart` (SPEC D-1).

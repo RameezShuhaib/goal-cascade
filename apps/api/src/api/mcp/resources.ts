@@ -2,7 +2,7 @@ import { ERROR_STATUS } from '@goal-cascade/shared';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { BacklogService, GoalService, LearningService, MeService } from '../../application/services';
 import { DomainError } from '../../domain/errors';
-import { offsetOf } from '../../domain/weeks';
+import { offsetOf } from '@goal-cascade/shared';
 import { BUSINESS_RULES_MD } from './business-rules';
 import { errorCatalogue } from './errors';
 import { goalOut, lensOutline, week, weekOut, type McpDeps } from './shapes';

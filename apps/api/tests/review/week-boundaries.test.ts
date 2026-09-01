@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { addWeeks, carryWeeks, offsetOf, weekStartOf, weekStartOfDate, weeksBetween } from '../../src/domain/weeks';
+import { addWeeks, offsetOf, weekStartOf, weekStartOfDate, weeksBetween } from '@goal-cascade/shared';
+import { carryWeeks } from '../../src/domain/weeks';
 import { createTestApp, signedInOwner } from '../helpers/app';
 import { createGoal, lens, makeLine, seedGoal, seedTask } from '../goals/fixtures';
 

@@ -1,6 +1,6 @@
 import type { GoalView } from '@goal-cascade/shared';
 import { describe, expect, it } from 'vitest';
-import { periodKeyOf, replanPeriods } from '../../src/domain/periods';
+import { periodKeyOf, replanPeriods } from '@goal-cascade/shared';
 import { createTestApp, signedInOwner } from '../helpers/app';
 import { codeOf, createGoal, detailsOf, makeLine } from './fixtures';
 

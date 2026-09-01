@@ -1,14 +1,28 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { HORIZONS, type GoalRefView, type GoalView, type Horizon, type LifeGroupView, type TaskView } from '@goal-cascade/shared';
+import {
+  currentPeriodKey,
+  firstDayOf,
+  HORIZONS,
+  stepPeriod,
+  type CalendarPeriodView,
+  type GoalRefView,
+  type GoalView,
+  type Horizon,
+  type LifeGroupView,
+  type TaskView,
+} from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useLens, useRepeatWeek } from '../api/queries';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { TopActions } from '../components/TopActions';
 import { Empty, Loading, LoadError } from '../components/states';
-import { firstDayOf, rank, stepPeriod, validKeyFor } from '../utils/periodKeys';
+import { rank, validKeyFor } from '../utils/periodKeys';
 import { lensPath } from '../routes';
+import { assertPeriodAgrees } from './assertPeriodAgrees';
+import { useCalendarPeriod } from './useCalendarPeriod';
+import { useNeighbourPrefetch } from './useNeighbourPrefetch';
 import { LensRow, OffNowRow, WeekElsewhereRow } from './LensRow';
 import { CarriedCard, LifeCard, MonthlyCard, PlainCard, WeeklyCard } from './cards';
 import {
@@ -33,11 +47,18 @@ import {
  * carried three plus depth, so two is not merely "no worse": it removes half of what the owner complained
  * about before any new capability is counted. **A new unconditional row is refused, not deferred.**
  *
- * ── What the client is not allowed to work out for itself ──────────────────────
- * The period, whether it is current or past, its label, and the counts all arrive on the wire (R-goal-34,
- * R-lens-4). When the URL names no period the read is sent without one and the SERVER answers with the
- * current one (R-lens-14); this screen then rewrites the address bar to the canonical key, so `/month`
- * becomes `/month/2026-08` and a copied link is absolute.
+ * ── ⚠ **R-lens-30 — what the client works out for itself, and what it still does not** ─────────────
+ * **The calendar is the client's; the data is the server's.** The period's label, its range, whether it
+ * is current or past and which period holds the current week are all `(horizon, periodKey, today)` and
+ * are computed here, in the same frame as the input that changed them (`useCalendarPeriod`). The counts,
+ * `hasWork`, `hasForwardContent` and `hasAnyAtHorizon` are questions about data and still arrive on the
+ * wire.
+ *
+ * This deleted two defects at once. The header no longer renders `…` while a read is in flight — and the
+ * URL is no longer rewritten *after* the response lands, which used to change the query key mid-flight
+ * and fire a **second** `GET /goals`: opening a lens cost two round trips and two loading flashes. The
+ * route now resolves `/month` to `/month/2026-09` **before the first render that fetches**, so
+ * `keys.lens(lens, null)` is Life-only and one open is one request.
  */
 export function LensScreen({ lens }: { lens: Horizon }) {
   const S = useSkin();
@@ -46,10 +67,36 @@ export function LensScreen({ lens }: { lens: Horizon }) {
   const params = useParams();
   const clock = useWeekClock();
 
-  const period = validKeyFor(lens, params.period);
-  const q = useLens(lens, period);
+  /**
+   * ⚠ **R-lens-30 / R-lens-14 — the period is resolved BEFORE the read, not after it.**
+   *
+   * `/month` used to fetch under `['goals','Monthly',null]`, and an effect rewrote the URL to
+   * `/month/2026-09` once the answer landed — a new key, a cache miss, a second request and a second
+   * `Loading…`. Every entry through the tab bar, every `Jump to now` and every one-step zoom did that.
+   * `currentPeriodKey` is the same `periodKeyOf(horizon, today)` the server would have answered with, so
+   * the address is right from the first render.
+   *
+   * A URL segment is attacker-supplied, so `validKeyFor` drops one that is not canonical for this lens
+   * and the current period stands in — R-lens-14's "a deep link that has rotted should land you
+   * somewhere real", now answered without a round trip.
+   */
+  const fromUrl = validKeyFor(lens, params.period);
+  const period = lens === 'Life' ? null : (fromUrl ?? currentPeriodKey(lens, clock.today));
+  const q = useLens(lens, period ?? undefined);
   const data = q.data;
-  const view = data?.period ?? null;
+  const local = useCalendarPeriod(lens, period ?? '');
+
+  /**
+   * ⚠ **Anti-drift layer 3** — every lens read is compared against the calendar the client just computed.
+   * A shared module cannot drift; a shared module plus a service worker holding a client bundle a week
+   * older than the Worker can, and only a runtime comparison catches that. Throws in dev and test, warns
+   * once and defers to the server in production.
+   */
+  assertPeriodAgrees(`LensResponse (${lens})`, lens, data?.period, data?.serverNow, clock.tz);
+
+  // R-lens-30 — ±1 once this period has settled, plus one further in the direction of travel. Depth 1,
+  // idle-scheduled and save-data-aware; the reasons are in the hook.
+  useNeighbourPrefetch(lens, period, q.isSuccess);
 
   // R-nav-28 — the Goals tab returns to the lens you were last in.
   const { rememberLens, setAnchor } = ui;
@@ -64,23 +111,31 @@ export function LensScreen({ lens }: { lens: Horizon }) {
    * **Life is not a reset.** Life has no period, so it borrows the last one held — going up to Life and
    * back down returns you where you were, instead of silently destroying your position.
    */
-  const anchor = lens === 'Life' ? (ui.anchor ?? clock.today) : view ? (view.isCurrent ? clock.today : firstDayOf(lens, view.periodKey)) : null;
+  const anchor = lens === 'Life' ? (ui.anchor ?? clock.today) : local.isCurrent ? clock.today : firstDayOf(lens, local.periodKey);
   useEffect(() => {
     if (lens !== 'Life' && anchor) setAnchor(anchor);
   }, [lens, anchor, setAnchor]);
 
-  // The URL is rewritten to the canonical key once the read lands — never before, because the client does
-  // not know which period "now" is. `replace`, so it is not a back-stack entry of its own.
+  /**
+   * ⚠ **R-lens-30** — the URL is canonicalised **before** the first fetch, not after the read lands, so
+   * `/month` becomes `/month/2026-09` with no request in between and a copied link is still absolute.
+   * `replace`, so it is not a back-stack entry of its own.
+   *
+   * The effect fires only when the segment is genuinely absent or unusable; `period` is already the key
+   * the read used, so this never changes the query key and never triggers a second fetch. That is the
+   * whole of §3.1's defect, closed.
+   */
   useEffect(() => {
-    if (!view || params.period === view.periodKey) return;
-    navigate(lensPath(lens, view.periodKey), { replace: true });
-  }, [lens, params.period, view, navigate]);
+    if (lens === 'Life' || !period || params.period === period) return;
+    navigate(lensPath(lens, period), { replace: true });
+  }, [lens, params.period, period, navigate]);
 
   const step = (n: -1 | 1) => {
-    if (lens === 'Life' || !view) return;
+    if (lens === 'Life' || !period) return;
     // No clamp in either direction (R-lens-7, R-rm-3). The `Math.min(0, …)` that used to live on the week
-    // control is deleted, not relaxed: it would silently pin every forward step to the current week.
-    navigate(lensPath(lens, stepPeriod(lens, view.periodKey, n)));
+    // control is deleted, not relaxed: it would silently pin every forward step to the current week. The
+    // one guard `stepPeriod` does carry is the FORMAT's representable range, not a product bound.
+    navigate(lensPath(lens, stepPeriod(lens, period, n)));
   };
   const zoomOneStep = (n: -1 | 1) => {
     const to = HORIZONS[rank(lens) + n];
@@ -89,12 +144,20 @@ export function LensScreen({ lens }: { lens: Horizon }) {
 
   const failed = q.error;
   const pending = q.isPending && !failed;
-  const offNow = !!view && !view.isCurrent;
+  /**
+   * ⚠ **R-lens-30 — both notices are now calendar facts, so they settle in the same frame as the label.**
+   *
+   * They used to wait on the read, which is why the header settled twice: the name at 0 ms and the badge
+   * 300 ms later. `clockKnown` is what keeps the `'UTC'` fallback from ever being *seen*: while the
+   * owner's timezone is unknown, `isCurrent` and `isPast` are both false, so neither notice renders and
+   * neither is a guess.
+   */
+  const offNow = lens !== 'Life' && local.clockKnown && !local.isCurrent;
   // R-goal-36 / R-nav-25 — on a past period the create affordances are **absent, not disabled**. A
   // disabled create button invites "why?" on every past screen; absence plus the badge says the true
   // thing — the past is readable, and planning does not reach back into it.
-  const canCreate = !view?.isPast;
-  const weekOffset = lens === 'Weekly' && view ? clock.offsetOf(view.periodKey) : 0;
+  const canCreate = !local.isPast;
+  const weekOffset = lens === 'Weekly' && period ? clock.offsetOf(period) : 0;
 
   /**
    * R-lens-29 — the period on screen is the current one **and still does not hold the week you are in**.
@@ -110,7 +173,7 @@ export function LensScreen({ lens }: { lens: Horizon }) {
    * `Past month — still editable`. That is a worse landing than an honest label: you would arrive
    * somewhere you cannot plan. The flag carries the weight instead, and the jump is one tap.
    */
-  const elsewhere = view && view.isCurrent ? view.currentWeekPeriod : null;
+  const elsewhere = local.isCurrent ? local.currentWeekPeriod : null;
 
   return (
     <div style={S.page} data-screen-label={`${lens} lens`}>
@@ -118,18 +181,21 @@ export function LensScreen({ lens }: { lens: Horizon }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', gap: 10 }}>
         <TopActions>
           {/*
-           * The guard is on `data`, not on `view`. `view` is `?? null`-coalesced above, so it is never
-           * `undefined` and a `view !== undefined` test is always true — it would render this button
-           * while the read is still pending, when `view` is `null` for a different reason, and fire
-           * `openSheet` with `periodKey: ''`. On the **Life** lens `view` is legitimately `null` after
-           * the read lands (R-lens-2) and `''` is the right key there (R-goal-3 refuses a Life goal
-           * that carries a period), so the two cases must be told apart by the query, not the value.
+           * ⚠ **R-lens-30 — this used to be gated on `data !== undefined`, so the one primary action on
+           * the screen DISAPPEARED AND REAPPEARED on every single period step.** The guard existed
+           * because `view` came from the read and was `null` both while pending and, legitimately, on
+           * the Life lens (R-lens-2) — two states the query was the only way to tell apart.
+           *
+           * The calendar answers both without it: `local.periodKey` is `''` on Life because Life has no
+           * period (R-goal-3 refuses a Life goal that carries one), and it is the real key on every other
+           * lens from the first render. So the button's presence now depends only on R-goal-36 — the past
+           * offers no create affordance — and it does not blink.
            */}
-          {canCreate && data !== undefined && (
+          {canCreate && (
             <button
               type="button"
               style={S.topBtn}
-              onClick={() => ui.openSheet({ kind: 'goalForm', editId: null, horizon: lens, periodKey: view?.periodKey ?? '' })}
+              onClick={() => ui.openSheet({ kind: 'goalForm', editId: null, horizon: lens, periodKey: local.periodKey })}
             >
               {createLabel(lens)}
             </button>
@@ -140,7 +206,14 @@ export function LensScreen({ lens }: { lens: Horizon }) {
       {/* Row 2 — the lens. The title IS the altitude control (R-lens-17). */}
       <LensRow
         lens={lens}
-        period={view}
+        period={local}
+        /**
+         * R-lens-26 — the forward-content dot answers "is there anything ahead", which is a question
+         * about DATA and not about the calendar. It therefore lags the header on an uncached period, and
+         * that is correct: it appears when the read lands and moves nothing on screen when it does (it is
+         * absolutely positioned inside the chevron). UX-PLAN §9.4 asks that it not blink, which it cannot
+         * — it only ever goes false → true as a period's own read settles.
+         */
         hasForwardContent={data?.hasForwardContent ?? false}
         onStep={step}
         onZoom={() => ui.openSheet({ kind: 'zoom' })}
@@ -151,8 +224,8 @@ export function LensScreen({ lens }: { lens: Horizon }) {
        * rows**: `offNow` is `!isCurrent` and `elsewhere` is only ever set when `isCurrent`, so the
        * `else` is a fact about the data and not a preference about layout.
        */}
-      {offNow && view ? (
-        <OffNowRow badge={offNowBadge(lens, view.isPast)} onNow={() => navigate(lensPath(lens))} />
+      {offNow ? (
+        <OffNowRow badge={offNowBadge(lens, local.isPast)} onNow={() => navigate(lensPath(lens))} />
       ) : (
         elsewhere && (
           <WeekElsewhereRow
@@ -169,7 +242,7 @@ export function LensScreen({ lens }: { lens: Horizon }) {
         lens={lens}
         // R-lens-28 — a screen reader hears the span too, because the range line is `aria-hidden` in the
         // title and a period change leaves focus on the chevron, which re-reads nothing (§8.2).
-        label={view ? periodTitle(view.label, lens === 'Weekly' ? '' : view.weekRange) : 'Life'}
+        label={lens === 'Life' ? 'Life' : periodTitle(local.label, lens === 'Weekly' ? '' : local.weekRange)}
         elsewhere={elsewhere?.label ?? null}
         data={data}
       />
@@ -179,7 +252,7 @@ export function LensScreen({ lens }: { lens: Horizon }) {
 
       {data && (
         <LensBody lens={lens} onStep={step} onZoom={zoomOneStep}>
-          <Body lens={lens} data={data} canCreate={canCreate} weekOffset={weekOffset} />
+          <Body lens={lens} data={data} period={local} canCreate={canCreate} weekOffset={weekOffset} />
         </LensBody>
       )}
     </div>
@@ -303,12 +376,28 @@ interface LensData {
   /** R-lens-24 — has this horizon ever held a goal, and does the account have Life goals at all? */
   hasAnyAtHorizon: boolean;
   hasLifeGoals: boolean;
-  period: { periodKey: string; label: string; isCurrent: boolean; isPast: boolean } | null;
 }
 
-function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: LensData; canCreate: boolean; weekOffset: number }) {
+/**
+ * ⚠ **R-lens-30** — `period` comes in from the caller as the LOCALLY computed view, not out of `data`.
+ * The empty-state copy names the period (`Sep 2026 is unwritten.`), and taking that name from the payload
+ * meant the sentence could not exist until the payload did. It is a calendar fact; it exists first.
+ */
+function Body({
+  lens,
+  data,
+  period,
+  canCreate,
+  weekOffset,
+}: {
+  lens: Horizon;
+  data: LensData;
+  period: CalendarPeriodView;
+  canCreate: boolean;
+  weekOffset: number;
+}) {
   const S = useSkin();
-  const label = data.period?.label ?? 'Life';
+  const label = lens === 'Life' ? 'Life' : period.label;
 
   /**
    * R-lens-19 — a group with **no items in the selected period is not rendered**. A lens is not a roster:
@@ -348,12 +437,10 @@ function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: Lens
      * have no legal parent to hang off, so a brand-new account gets R-lens-6's cold start instead.
      */
     const horizonLevel = lens !== 'Life' && !data.hasAnyAtHorizon && data.hasLifeGoals;
-    const copy = horizonLevel
-      ? horizonEmptyCopy(lens)
-      : emptyCopy(lens, label, data.period?.isCurrent ?? true, data.period?.isPast ?? false);
+    const copy = horizonLevel ? horizonEmptyCopy(lens) : emptyCopy(lens, label, lens === 'Life' || period.isCurrent, period.isPast);
     return (
-      <div style={{ marginTop: 20 }} data-empty-state={horizonLevel ? 'horizon' : data.period?.isPast ? 'past-period' : 'period'}>
-        <Empty title={copy.title} body={copy.body} action={copy.cta && canCreate ? <CreateButton lens={lens} periodKey={data.period?.periodKey ?? ''} /> : undefined} />
+      <div style={{ marginTop: 20 }} data-empty-state={horizonLevel ? 'horizon' : period.isPast ? 'past-period' : 'period'}>
+        <Empty title={copy.title} body={copy.body} action={copy.cta && canCreate ? <CreateButton lens={lens} periodKey={period.periodKey} /> : undefined} />
       </div>
     );
   }
@@ -379,7 +466,7 @@ function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: Lens
           items={items}
           tasks={data.tasks}
           weekOffset={weekOffset}
-          periodKey={data.period?.periodKey ?? ''}
+          periodKey={period.periodKey}
           canCreate={canCreate}
           parents={parents}
           // R-lens-19 — with exactly one group the header does not render at all. There is nothing to
@@ -388,7 +475,7 @@ function Body({ lens, data, canCreate, weekOffset }: { lens: Horizon; data: Lens
         />
       ))}
       {showCarried && (
-        <CarriedBand goals={data.carried} tasks={data.tasks} weekOffset={weekOffset} periodKey={data.period?.periodKey ?? ''} parents={parents} />
+        <CarriedBand goals={data.carried} tasks={data.tasks} weekOffset={weekOffset} periodKey={period.periodKey} parents={parents} />
       )}
       {showCarried && data.items.length === 0 && (
         <div style={{ ...S.dashed, padding: '22px 20px', textAlign: 'center', fontSize: 13.5, color: S.T.mut }}>

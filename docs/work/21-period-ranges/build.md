@@ -56,6 +56,16 @@ client and there must not be one"* (D-1). A client computation would have had to
 server-sent Monday — possible, and a second implementation of a date rule. It is also needed by the MCP
 surface, so one implementation in the domain serves three consumers instead of three serving one each.
 
+> ⚠ **SUPERSEDED by `23-instant-periods` (R-lens-30).** The paragraph above is right about the *reason*
+> and wrong about the *conclusion it drew from it*, and the difference cost the owner a round trip for the
+> name of a month. The rule is that there may not be a **second** implementation of a date rule; the
+> conclusion drawn was that the client may not **have** one. The module moved to
+> `packages/shared/src/calendar/` and both sides now import it, so the client computes `weekRange`
+> locally from *the* implementation rather than from a copy of it, and the header renders before the
+> network. `apps/web/src/utils/periodKeys.ts`'s sentence is deleted with the duplicate it was protecting —
+> which, as `23-instant-periods/build.md` records, that same file was already carrying. The wire fields
+> stay: the MCP surface reads them, and they became the input to a runtime echo assertion.
+
 New wire fields, all derived from a `periodKey` that is already stored — **no migration, no new endpoint,
 no new error code, no new dependency**:
 

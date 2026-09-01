@@ -25,8 +25,9 @@ import type { BacklogItem, BacklogLink, Goal, Task, TaskLink } from '../../domai
 import { DomainError, notFound } from '../../domain/errors';
 import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
 import { FIRST_SORT_KEY, topKey } from '../../domain/sort-keys';
-import { isPastPeriod, labelOf, periodKeyOf } from '../../domain/periods';
-import { carryWeeks, dateInTimezone, weekStartFromOffset } from '../../domain/weeks';
+
+import { dateInTimezone, isPastPeriod, labelOf, periodKeyOf, weekStartFromOffset } from '@goal-cascade/shared';
+import { carryWeeks } from '../../domain/weeks';
 import type { RequestContext } from '../context';
 import {
   IBacklogLinkRepo,

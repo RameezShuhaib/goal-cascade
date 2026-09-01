@@ -21,9 +21,9 @@ import type { BacklogItem, BacklogLink, Goal, Task, TaskEvent, TaskLink } from '
 import { TASK_EVENT_GLYPHS, type TaskSource } from '../../domain/enums';
 import { DomainError, notFound } from '../../domain/errors';
 import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
-import { isPastPeriod, labelOf } from '../../domain/periods';
+
 import { between, rekey, topKey, withinGoal } from '../../domain/sort-keys';
-import { dateInTimezone, weekStartFromOffset } from '../../domain/weeks';
+import { dateInTimezone, isPastPeriod, labelOf, weekStartFromOffset } from '@goal-cascade/shared';
 import type { GuardedWrite } from '../ports';
 import {
   IBacklogLinkRepo,

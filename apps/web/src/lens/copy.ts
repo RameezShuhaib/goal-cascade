@@ -27,8 +27,18 @@ export const offNowBadge = (lens: Horizon, isPast: boolean): string =>
  *
  * On screen the two halves sit on **two lines inside the one title button** (`LensRow`), not on one; this
  * is the form the accessible name and the live region use, where a line break carries nothing and a `·`
- * does. Both halves are the SERVER's strings (`PeriodView.label` / `.weekRange`) — the client formats no
- * date here, because it holds no Monday rule to format one with (D-1).
+ * does.
+ *
+ * ⚠ **R-lens-30 / R-lens-28 amended** — this used to read *"Both halves are the SERVER's strings
+ * (`PeriodView.label` / `.weekRange`) — the client formats no date here, because it holds no Monday rule
+ * to format one with (D-1)."* **The client formats both now**, with `labelOf` and `weekRangeOf` imported
+ * from `@goal-cascade/shared` — which is not a second Monday rule, it is *the* Monday rule, the same
+ * function the Worker calls. That is what lets the header repaint in the same frame as the input that
+ * changed it, instead of waiting a round trip for the name of a month.
+ *
+ * The wire fields stay: the MCP surface reads them, and they are what the runtime echo assertion compares
+ * the client's own rendering against on every read. **The server remains the reference the client's
+ * formatter is tested against; it is no longer the source the client renders from.**
  */
 export const periodTitle = (label: string, weekRange: string): string => (weekRange ? `${label} · ${weekRange}` : label);
 

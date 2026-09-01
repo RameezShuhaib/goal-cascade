@@ -339,7 +339,10 @@ function AddSubGoal({ parent, clock }: { parent: GoalView; clock: WeekClock }) {
   // shorter one. Non-empty by construction: this component is not rendered on a Weekly goal.
   const legal = childHorizons(parent.horizon);
   const [horizon, setHorizon] = useState<Horizon>(legal[0] ?? 'Weekly');
-  const periodKey = subGoalPeriodKey(horizon, parent.horizon, parent.periodKey, clock.today, clock.currentMonday);
+  // ⚠ **R-lens-30** — no `currentMonday` argument any more. It used to be threaded in from
+  // `BootstrapResponse.week.weekStart` and was `null` until that landed, which left `+ Weekly goal` inert
+  // on a cold open; the Monday is now derived from the owner's today by the same rule the server uses.
+  const periodKey = subGoalPeriodKey(horizon, parent.horizon, parent.periodKey, clock.today);
 
   const close = () => {
     setOpen(false);

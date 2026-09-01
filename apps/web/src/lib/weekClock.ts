@@ -1,27 +1,37 @@
-import { useBootstrap } from '../api/queries';
-import { useOwnerToday } from '../utils/periods';
-import { containingKey, weeksBetween } from '../utils/periodKeys';
+import { periodKeyOf, weekStartOfDate, weeksBetween } from '@goal-cascade/shared';
+import { useOwnerClockState } from '../utils/periods';
 
 /**
- * The two facts about "now" the client is allowed to hold, and where each comes from.
+ * The facts about "now" this client holds, and where each comes from.
  *
- * R-auth-5 / R-goal-34 put every week boundary and every "current period" on the server, in the owner's
- * timezone. So:
+ * ⚠ **R-lens-30** — both are now derived from ONE input, the owner's today, through the SAME functions
+ * the Worker calls (`@goal-cascade/shared`).
  *
- *  - **the current Monday** is `BootstrapResponse.week.weekStart` — an absolute date the server sent
- *    (D-1). There is no `weekStartOfDate` in this client and there must not be one;
- *  - **the owner's today** is the server's clock (`lib/serverClock`) rendered in the STORED timezone
- *    (`utils/periods.useOwnerToday`), which is the mechanism the create-form defaults have always used.
+ * The previous version sourced `currentMonday` from `BootstrapResponse.week.weekStart` under the rule
+ * *"there is no `weekStartOfDate` in this client and there must not be one"*. That rule was right about a
+ * **copy** and wrong about an **import**: what R-auth-5 forbids is deriving a week boundary from the
+ * DEVICE CLOCK, and `useOwnerToday` is the server's clock rendered in the account's stored timezone —
+ * exactly the two inputs the server itself uses. So `currentMonday = weekStartOfDate(ownerToday)` is not a
+ * second opinion about time; it is the same one, with no query dependency.
  *
- * Everything derived here is arithmetic over those two: which offset a week is, and which month today is
- * in. Nothing asks the device clock, and nothing decides whether a period is past or current — that is
- * `PeriodView.isPast` / `.isCurrent`, on the wire.
+ * What that buys, beyond the header: `currentMonday` stops being `null` until bootstrap lands, so the
+ * `+ Weekly goal` affordance is no longer inert on a cold open.
+ *
+ * `BootstrapResponse.week.weekStart` remains on the wire and becomes an **input to the echo assertion**
+ * (`lens/assertPeriodAgrees.ts`), which is the one live check on the timezone ladder: if the client's `tz`
+ * resolution is wrong for any reason, the two Mondays disagree and it fires.
  */
 export interface WeekClock {
-  /** The Monday of the week containing today, as the server resolved it. `null` until bootstrap lands. */
-  currentMonday: string | null;
+  /** The Monday of the week containing today, in the owner's zone. Never `null` — it needs no read. */
+  currentMonday: string;
   /** The owner's calendar date, `YYYY-MM-DD`. */
   today: string;
+  /**
+   * The stored zone `today` was computed in, or `null` while preferences are unknown. Exported because
+   * the echo assertion needs to tell "we do not know the zone yet" from "the owner is in UTC", and
+   * because a caller rendering a clock-dependent badge must suppress it rather than guess (R-auth-5).
+   */
+  tz: string | null;
   /** The month key containing today — R-task-49's "does this month contain today". */
   todayMonthKey: string;
   /**
@@ -36,13 +46,13 @@ export interface WeekClock {
 }
 
 export function useWeekClock(): WeekClock {
-  const boot = useBootstrap();
-  const today = useOwnerToday();
-  const currentMonday = boot.data?.week.weekStart ?? null;
+  const { tz, today } = useOwnerClockState();
+  const currentMonday = weekStartOfDate(today);
   return {
     currentMonday,
     today,
-    todayMonthKey: containingKey('Monthly', today),
-    offsetOf: (monday) => (currentMonday && monday ? weeksBetween(currentMonday, monday) : 0),
+    tz,
+    todayMonthKey: periodKeyOf('Monthly', today),
+    offsetOf: (monday) => (monday ? weeksBetween(currentMonday, monday) : 0),
   };
 }

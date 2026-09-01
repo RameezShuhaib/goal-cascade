@@ -2,7 +2,7 @@ import type { TaskEventView } from '@goal-cascade/shared';
 import { inject, injectable } from 'tsyringe';
 import type { Task, TaskEvent } from '../../domain/entities';
 import { TASK_EVENT_GLYPHS, type TaskEventKind, type TaskSource } from '../../domain/enums';
-import { addWeeks, weeksBetween } from '../../domain/weeks';
+import { addWeeks, weeksBetween } from '@goal-cascade/shared';
 import type { RequestContext } from '../context';
 import { IIdGenerator, ITaskEventRepo, type GuardedWrite } from '../ports';
 import { GuardedBatch } from './guarded-batch';
