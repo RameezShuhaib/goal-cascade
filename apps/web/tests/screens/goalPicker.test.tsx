@@ -76,10 +76,16 @@ const openCreateSheet = async (user: ReturnType<typeof renderApp>['user']) => {
   return screen.findByRole('dialog', { name: 'New Quarterly goal' });
 };
 
-/** The field the picker collapses to above eight options, and the sheet it then takes over. */
+/**
+ * The field a picker inside a sheet always is now (A9), and the sheet it takes over when opened.
+ *
+ * ⚠ The name matches `/^Choose a goal/` rather than the exact string because A9 gives the field its VALUE
+ * as well as its label: `Choose a goal: Gym — Be strong at 60 · Yearly · 2026` once something is chosen.
+ * The label is the stable part, which is the whole reason it is there.
+ */
 async function openBigPicker(user: ReturnType<typeof renderApp>['user']) {
   const sheet = await openCreateSheet(user);
-  await user.click(await within(sheet).findByRole('button', { name: 'Choose a goal' }));
+  await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
   return screen.findByRole('dialog', { name: 'Choose a goal' });
 }
 
@@ -90,16 +96,57 @@ async function openBigPicker(user: ReturnType<typeof renderApp>['user']) {
 describe('R-nav-31 — each mode offers exactly the legal goals', () => {
   it('`parent`: strictly longer horizons only, at the enclosing period (R-goal-5, R-goal-32)', async () => {
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+    const picker = await openBigPicker(user);
+
+    // Legal: the Life goals and the Yearly goals of the enclosing year. A9 scopes them, so the Yearly ones
+    // are on screen and the Life ones are one chip away — both are still exactly what the server accepts.
+    expect(await within(picker).findByRole('option', { name: /^Get back under 80kg/ })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: /^Launch v1/ })).toBeInTheDocument();
+    await user.click(within(picker).getByRole('radio', { name: /^Life/ }));
+    expect(within(picker).getByRole('option', { name: /^Be strong at 60/ })).toBeInTheDocument();
+
+    // Illegal: equal or shorter horizons. A Monthly goal cannot parent a Quarterly one — and A9 must not
+    // let one in through a chip, so the chips are asserted as well as the rows.
+    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['Life', 'Yearly']);
+    for (const chip of within(picker).getAllByRole('radio')) {
+      await user.click(chip);
+      expect(within(picker).queryByRole('option', { name: /^Lift three times a week/ })).not.toBeInTheDocument();
+      expect(within(picker).queryByRole('option', { name: /^Rebuild the gym habit/ })).not.toBeInTheDocument();
+      expect(within(picker).queryByRole('option', { name: /^Three easy runs/ })).not.toBeInTheDocument();
+    }
+  });
+
+  /**
+   * ⚠ **A9 — defect 1, and the shape of the fix.** The owner's `New Monthly goal` sheet rendered its three
+   * legal parents inline, which ate the sheet and pushed `Save goal` below the fold. A threshold cannot
+   * tell a form sheet from a picker-shaped one; the SURFACE can.
+   */
+  it('A9: inside a form sheet the picker is a compact row at EVERY option count', async () => {
+    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
     const sheet = await openCreateSheet(user);
 
-    // Legal: the Life goals and the Yearly goals of the enclosing year.
-    expect(await within(sheet).findByRole('option', { name: /^Get back under 80kg/ })).toBeInTheDocument();
-    expect(within(sheet).getByRole('option', { name: /^Be strong at 60/ })).toBeInTheDocument();
-    expect(within(sheet).getByRole('option', { name: /^Launch v1/ })).toBeInTheDocument();
-    // Illegal: equal or shorter horizons. A Monthly goal cannot parent a Quarterly one.
-    expect(within(sheet).queryByRole('option', { name: /^Lift three times a week/ })).not.toBeInTheDocument();
-    expect(within(sheet).queryByRole('option', { name: /^Rebuild the gym habit/ })).not.toBeInTheDocument();
-    expect(within(sheet).queryByRole('option', { name: /^Three easy runs/ })).not.toBeInTheDocument();
+    // Four legal parents here — comfortably under the old eight-option threshold, which would have made
+    // this an inline list. It is a row, and the form's own fields are what fill the sheet.
+    expect(await within(sheet).findByRole('button', { name: /^Choose a goal/ })).toBeInTheDocument();
+    expect(within(sheet).queryByRole('listbox')).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole('option')).not.toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Save goal' })).toBeInTheDocument();
+  });
+
+  /**
+   * The other half of the same rule: where the picker IS the whole surface it stays an inline list, because
+   * there is nothing for it to crowd out. `Move goal` is that surface, and so is a backlog row's move.
+   */
+  it('A9: where the picker is the whole surface it is still the inline list', async () => {
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.Q}` });
+    await screen.findByRole('heading', { level: 1, name: 'Rebuild the gym habit' });
+    await user.click(screen.getByRole('button', { name: 'Move…' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Move goal' });
+
+    expect(await within(sheet).findByRole('listbox')).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: /^Choose a goal/ })).not.toBeInTheDocument();
+    // …with the horizon selector, because the mode's rule is the mode's rule on either surface.
+    expect(within(sheet).getAllByRole('radio').map((r) => r.textContent)).toEqual(['Life', 'Yearly']);
   });
 
   it('`parent` on a move: never the goal itself, and never one of its own descendants (R-goal-18)', async () => {
@@ -119,14 +166,24 @@ describe('R-nav-31 — each mode offers exactly the legal goals', () => {
     const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await user.click(await screen.findByRole('button', { name: 'Add' }));
     const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
 
-    expect(await within(sheet).findByRole('option', { name: /^Get back under 80kg/ })).toBeInTheDocument();
-    expect(within(sheet).getByRole('option', { name: /^Rebuild the gym habit/ })).toBeInTheDocument();
-    expect(within(sheet).getByRole('option', { name: /^Lift three times a week/ })).toBeInTheDocument();
+    // A9 — R-backlog-2's three horizons, and exactly those three, opening on the most specific.
+    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['Yearly', 'Quarterly', 'Monthly']);
+    expect(within(picker).getByRole('radio', { name: /^Monthly/ })).toHaveAttribute('aria-checked', 'true');
+    expect(await within(picker).findByRole('option', { name: /^Lift three times a week/ })).toBeInTheDocument();
+    await user.click(within(picker).getByRole('radio', { name: /^Quarterly/ }));
+    expect(within(picker).getByRole('option', { name: /^Rebuild the gym habit/ })).toBeInTheDocument();
+    await user.click(within(picker).getByRole('radio', { name: /^Yearly/ }));
+    expect(within(picker).getByRole('option', { name: /^Get back under 80kg/ })).toBeInTheDocument();
+
     // A Life goal holds a read-only roll-up; a Weekly goal would give the item a week, which is the one
-    // thing a backlog item does not have.
-    expect(within(sheet).queryByRole('option', { name: /^Be strong at 60/ })).not.toBeInTheDocument();
-    expect(within(sheet).queryByRole('option', { name: /^Three easy runs/ })).not.toBeInTheDocument();
+    // thing a backlog item does not have. Neither has a chip, so neither is reachable at all.
+    expect(within(picker).queryByRole('radio', { name: /^Life/ })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole('radio', { name: /^Weekly/ })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole('option', { name: /^Be strong at 60/ })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole('option', { name: /^Three easy runs/ })).not.toBeInTheDocument();
   });
 
   it('`backlogHost` on a move: the item’s current goal is not offered as somewhere to move it', async () => {
@@ -158,12 +215,19 @@ describe('R-nav-31 — each mode offers exactly the legal goals', () => {
     await user.click(screen.getAllByRole('button', { name: '+ Task' })[0]!);
     const sheet = await screen.findByRole('dialog', { name: 'New task' });
 
-    expect(await within(sheet).findByText('WHICH WEEKLY GOAL?')).toBeInTheDocument();
-    expect(within(sheet).getByRole('option', { name: /^Three easy runs and one long run/ })).toBeInTheDocument();
-    expect(within(sheet).getByRole('option', { name: /^Two gym sessions/ })).toBeInTheDocument();
-    expect(within(sheet).queryByRole('option', { name: /^Draft the release notes/ })).not.toBeInTheDocument();
+    // ⚠ **A9** — the sheet names the destination rather than listing the candidates, and the row is the
+    // way to change it.
+    expect(await within(sheet).findByText('WHERE THIS GOES')).toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: /^Choose a goal: Three easy runs and one long run/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
+
+    expect(within(picker).getByRole('option', { name: /^Three easy runs and one long run/ })).toBeInTheDocument();
+    expect(within(picker).getByRole('option', { name: /^Two gym sessions/ })).toBeInTheDocument();
+    expect(within(picker).queryByRole('option', { name: /^Draft the release notes/ })).not.toBeInTheDocument();
     // R-task-49 — the first is preselected, and the selection is ANNOUNCED rather than merely coloured.
-    expect(within(sheet).getByRole('option', { name: /^Three easy runs and one long run/ })).toHaveAttribute('aria-selected', 'true');
+    expect(within(picker).getByRole('option', { name: /^Three easy runs and one long run/ })).toHaveAttribute('aria-selected', 'true');
+    // One legal horizon, so no selector at all: `weeklyTarget` is byte-identical to what shipped (A9).
+    expect(within(picker).queryByRole('radio')).not.toBeInTheDocument();
   });
 
   it('`lifeLine`: Life goals and the `No goal` row, and nothing else can be a tag (R-learning-2)', async () => {
@@ -200,11 +264,13 @@ describe('R-nav-31 — two goals with the same title are never confusable', () =
 
     // Grouped by Life goal, with the line as the group's accessible name and the period on the row.
     const group = within(picker).getByRole('group', { name: 'Be strong at 60' });
-    // Inside a group the line is the header, so each row says its horizon and its period instead. The
-    // Life goal is a legal parent too, and sits in its own group with `LIFE` where a period would be.
-    expect(within(group).getAllByText('YEARLY · 2026')).toHaveLength(within(group).getAllByRole('option').length - 1);
-    expect(within(group).getByText('LIFE')).toBeInTheDocument();
+    // Inside a group the line is the header, so each row says its horizon and its period instead.
+    expect(within(group).getAllByText('YEARLY · 2026')).toHaveLength(within(group).getAllByRole('option').length);
     expect(within(picker).getByRole('group', { name: 'Ship the thing' })).toBeInTheDocument();
+
+    // ⚠ **A9** — the Life goals are a chip away, in their own flat list, still carrying `— Life goal`.
+    await user.click(within(picker).getByRole('radio', { name: /^Life/ }));
+    expect(within(picker).getByRole('option', { name: 'Be strong at 60 — Life goal' })).toBeInTheDocument();
   });
 });
 
@@ -263,15 +329,93 @@ describe('R-nav-31 — search is the assistant’s own ranking (§7.5)', () => {
     expect(await within(picker).findByText('No goals match “fintech”')).toBeInTheDocument();
   });
 
+  /**
+   * ⚠ **A9 — the threshold's remaining job, and its retired one.**
+   *
+   * It used to decide the shape as well, so a four-option account got an inline list inside its form
+   * sheet. It now decides one thing: whether the opened picker carries a search field. Below eight,
+   * searching a list you can see whole is chrome, and this is where the promise not to tax an account
+   * with ten goals is kept.
+   */
   it('§7.5 — the field is chrome below the threshold, so a small account never sees one', async () => {
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    const sheet = await openCreateSheet(user);
-    await within(sheet).findByRole('option', { name: /^Get back under 80kg/ });
+    const picker = await openBigPicker(user);
+    await within(picker).findByRole('option', { name: /^Get back under 80kg/ });
 
-    // Three legal parents: an inline list, no search field, and no field to open.
-    expect(within(sheet).queryByLabelText('Search goals')).not.toBeInTheDocument();
-    expect(within(sheet).queryByRole('button', { name: 'Choose a goal' })).not.toBeInTheDocument();
-    expect(within(sheet).getByRole('listbox')).toBeInTheDocument();
+    // Four legal parents across two horizons: no search field. The picker itself is still there.
+    expect(within(picker).queryByLabelText('Search goals')).not.toBeInTheDocument();
+    expect(within(picker).getByRole('listbox')).toBeInTheDocument();
+  });
+
+  /**
+   * ⚠ **A9 — the count that decides is the TOTAL, not the scoped one.** Search is the one thing that
+   * reaches across horizons, so a field that vanished when the list was narrowed would remove the only
+   * escape from the narrowing.
+   */
+  it('A9: the search field counts every horizon, not the one on screen', async () => {
+    withLenses({ Yearly: bigYearly() });
+    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+    const picker = await openBigPicker(user);
+
+    // Two Life goals on screen would be under the threshold; twelve options in total are over it.
+    await user.click(within(picker).getByRole('radio', { name: /^Life/ }));
+    expect(within(picker).getAllByRole('option')).toHaveLength(2);
+    expect(within(picker).getByLabelText('Search goals')).toBeInTheDocument();
+  });
+
+  it('A9: search crosses every horizon, even though the list is scoped to one', async () => {
+    withLenses({ Yearly: bigYearly() });
+    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+    const picker = await openBigPicker(user);
+
+    // Opened on Yearly, so the Life goal is not on screen…
+    expect(within(picker).getByRole('radio', { name: /^Yearly/ })).toHaveAttribute('aria-checked', 'true');
+    expect(within(picker).queryByRole('option', { name: 'Be strong at 60 — Life goal' })).not.toBeInTheDocument();
+    // …and one query later it is, ranked among the Yearly goals of every line. Scoping is a default view,
+    // not a cage (R-lens-15's distinction, one layer down).
+    await user.type(within(picker).getByLabelText('Search goals'), 'ship the thing');
+    await waitFor(() => expect(within(picker).getAllByRole('option')).toHaveLength(2));
+    expect(within(picker).getByRole('option', { name: 'Ship the thing — Life goal' })).toBeInTheDocument();
+  });
+
+  /**
+   * ⚠ **A9 — the horizon selector is a radiogroup with a roving tabindex, which is R-lens-13's surviving
+   * requirement applied to the second control this picker has.** One tab stop, arrows along the axis, the
+   * selection announced rather than merely coloured — and never a second focus trap.
+   */
+  it('A9: the horizon selector is one tab stop, and arrows move AND select', async () => {
+    withLenses({ Yearly: bigYearly() });
+    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+    const picker = await openBigPicker(user);
+
+    const chips = within(picker).getAllByRole('radio');
+    expect(chips.map((c) => c.getAttribute('tabindex'))).toEqual(['-1', '0']);
+    chips[1]!.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(within(picker).getByRole('radio', { name: /^Life/ })).toHaveAttribute('aria-checked', 'true');
+    expect(within(picker).getByRole('radio', { name: /^Life/ })).toHaveFocus();
+    expect(within(picker).getByRole('option', { name: 'Be strong at 60 — Life goal' })).toBeInTheDocument();
+
+    await user.keyboard('{End}');
+    expect(within(picker).getByRole('radio', { name: /^Yearly/ })).toHaveAttribute('aria-checked', 'true');
+    // Still one dialog — the second control adds a tab stop, never a trap.
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+
+  /**
+   * The third empty state A9 introduces: the account HAS legal goals, just none at the horizon on screen.
+   * `empty`'s sentence ("nothing to file this under yet") would be a flat lie there.
+   */
+  it('A9: an empty horizon says so, and names the way out', async () => {
+    withLenses({ Yearly: F.lens({ lens: 'Yearly', period: F.period({ horizon: 'Yearly', periodKey: '2026' }), items: [] }) });
+    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
+    const picker = await openBigPicker(user);
+
+    // It opens on Life, because that is the most specific horizon that HAS anything.
+    expect(within(picker).getByRole('radio', { name: /^Life/ })).toHaveAttribute('aria-checked', 'true');
+    await user.click(within(picker).getByRole('radio', { name: /^Yearly/ }));
+    expect(within(picker).getByText('No yearly goal to choose here. Pick another horizon above.')).toBeInTheDocument();
+    expect(within(picker).queryByRole('listbox')).not.toBeInTheDocument();
   });
 });
 
@@ -285,7 +429,7 @@ describe('R-nav-31 — the keyboard reaches everything the pointer does (§8.3)'
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
     const sheet = await openCreateSheet(user);
 
-    const field = await within(sheet).findByRole('button', { name: 'Choose a goal' });
+    const field = await within(sheet).findByRole('button', { name: /^Choose a goal/ });
     field.focus();
     await user.keyboard('{Enter}');
 
@@ -349,7 +493,7 @@ describe('R-nav-31 — the keyboard reaches everything the pointer does (§8.3)'
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
     const sheet = await openCreateSheet(user);
     await user.type(within(sheet).getByLabelText('Goal title'), 'Deadlift twice a week');
-    await user.click(await within(sheet).findByRole('button', { name: 'Choose a goal' }));
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
 
     // ONE dialog, never two: a second `aria-modal` sheet would be a second focus trap.
     expect(screen.getAllByRole('dialog')).toHaveLength(1);

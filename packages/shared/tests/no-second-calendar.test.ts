@@ -35,6 +35,11 @@ const OWNED = [
   'firstMondayIn',
   'lastMondayIn',
   'zoomTo',
+  // ⚠ **A9** — both were reachable as one mis-named function (`weekForMonth`) with a client wrapper of
+  // its own in `apps/web/src/utils/periodKeys.ts`, which is precisely the shape this census exists to
+  // refuse. They decide which week a month means; there is one declaration of each and it is here.
+  'zoomWeekForMonth',
+  'taskWeekForMonth',
   'dateInTimezone',
   'isValidTimezone',
   'addWeeks',

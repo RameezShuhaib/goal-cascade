@@ -9,7 +9,7 @@ import { Sheet } from './Sheet';
 import { FieldError, Loading, commandError } from './states';
 import { plural } from '../utils/tree';
 import { PERIOD_UNIT } from '../utils/periodKeys';
-import { GoalPicker, useGoalPicker } from './GoalPicker';
+import { GoalPicker, nearestAncestor, useGoalPicker } from './GoalPicker';
 import { lensPath } from '../routes';
 
 /**
@@ -80,13 +80,26 @@ export function GoalFormSheet({
     listLabel: 'Goals this one can hang off',
   });
 
-  // §6.7, unchanged in substance — with exactly one legal parent it is preselected and the picker
-  // collapses to a single confirming row. It is an effect rather than a fallback so that the row it picks
-  // renders as SELECTED (R-lens-13: the selection is announced, never merely coloured).
-  const only = needsParent && picker.options.length === 1 ? picker.options[0]! : null;
+  /**
+   * ⚠ **A9 — the default parent is the NEAREST legal ancestor, not the first row and not nothing.**
+   *
+   * §6.7 used to preselect only when **exactly one** parent was legal. With three — the owner's ordinary
+   * case: a Life goal, a Yearly goal and a Quarterly goal — nothing was selected at all, and the roving
+   * focus ring sat on row 0, which `useParentOptions` makes the **Life** goal. So `New Monthly goal` in
+   * `Sep 2026` looked like it had preselected *"Be financially independent"*, and had not preselected
+   * anything. That is the worst of the three states: it is neither a real default nor an honest blank.
+   *
+   * `nearestAncestor` answers it properly — the deepest goal whose period contains this one, which for a
+   * new Monthly goal in `Sep 2026` is the **Quarterly goal for Q3 2026**. It subsumes the one-option case
+   * rather than sitting beside it: with one legal parent the nearest ancestor IS that parent.
+   *
+   * Still an effect rather than a fallback, for the reason it always was: the row it picks must render as
+   * SELECTED and be announced (R-lens-13), not merely be what a `??` chain would have used on save.
+   */
+  const defaultParent = useMemo(() => (needsParent ? nearestAncestor(picker.options) : null), [needsParent, picker.options]);
   useEffect(() => {
-    if (only && chosenParent === null) setChosenParent(only.id);
-  }, [only, chosenParent]);
+    if (defaultParent && chosenParent === null) setChosenParent(defaultParent.id);
+  }, [defaultParent, chosenParent]);
 
   const close = () => ui.closeSheet();
   const fields = draft ?? { title: editing?.title ?? title ?? '', why: editing?.why ?? '', pulse: editing?.pulse ?? 'On track' };
@@ -100,7 +113,7 @@ export function GoalFormSheet({
     );
   }
 
-  const parent = chosenParent ?? only?.id ?? null;
+  const parent = chosenParent ?? defaultParent?.id ?? null;
   const label = periodLabel ?? periodKey;
 
   /**

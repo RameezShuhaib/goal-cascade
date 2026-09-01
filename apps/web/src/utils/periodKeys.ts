@@ -1,4 +1,4 @@
-import { firstDayOf, firstMondayIn, HORIZONS, isPeriodKeyFor, periodKeyOf, type Horizon } from '@goal-cascade/shared';
+import { firstDayOf, HORIZONS, isPeriodKeyFor, periodKeyOf, type Horizon } from '@goal-cascade/shared';
 
 /**
  * The client's period **vocabulary** — the names and defaults that are genuinely about this UI, and
@@ -71,20 +71,23 @@ export function childHorizons(parent: Horizon): Horizon[] {
   return HORIZONS.filter((h) => rank(h) > rank(parent));
 }
 
-/**
- * R-lens-9 / R-goal-47 / R-task-49 — **the one answer to "which week does this month mean"**: the week
- * containing today when the month contains today, otherwise the first week whose **Monday** falls in it.
+/*
+ * ⚠ **A9 — `weekForMonth` is DELETED from this file, and it is not renamed here either.**
  *
- * ⚠ **R-lens-30** — the body is `@goal-cascade/shared`'s, so this and R-goal-47's `BETWEEN` scope and the
- * header's own range are literally one function. The signature is kept as `(monthKey, currentMonday,
- * todayMonthKey)` because that is what the two call sites hold and because `currentMonday` remains the
- * honest input for "the week containing today" — the client no longer needs the server to send it, but it
- * is still what the answer means.
+ * It was a client wrapper that re-stated the shared rule under a friendlier signature (`(monthKey,
+ * currentMonday, todayMonthKey)`), which is exactly the shape this file's own header warns about: a second
+ * spelling of a date rule, kept honest only by two test files agreeing with each other. Its single caller
+ * was `+ Task` on a Monthly card, and that caller was the one consumer the rule was **wrong** for.
+ *
+ * The rule now has two names in `@goal-cascade/shared/calendar/periods`, one per question, and callers
+ * import whichever they mean:
+ *
+ *   - `zoomWeekForMonth(monthKey, today)` — R-lens-9's Monthly → Weekly zoom. The week you are living in,
+ *     seam and all. Used by `zoomTo`, and by nothing in this client.
+ *   - `taskWeekForMonth(monthKey, today)` — R-task-49's target week. Always inside `monthKey`.
+ *
+ * `packages/shared/tests/no-second-calendar.test.ts` now names both, so neither can grow a copy here again.
  */
-export function weekForMonth(monthKey: string, currentMonday: string, todayMonthKey: string): string {
-  if (monthKey === todayMonthKey) return currentMonday;
-  return firstMondayIn(monthKey);
-}
 
 /** A URL segment is attacker-supplied: a key that is not canonical for its lens is dropped, not trusted. */
 export function validKeyFor(horizon: Horizon, key: string | undefined): string | undefined {

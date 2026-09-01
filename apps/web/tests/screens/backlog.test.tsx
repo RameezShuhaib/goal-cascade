@@ -137,7 +137,11 @@ describe('Backlog → work: the one conversion (R-backlog-26, D-19)', () => {
     expect(await within(sheet).findByText('More than one weekly goal could take this. Which one?')).toBeInTheDocument();
     // ⚠ **R-nav-31** — the same one picker, in `weeklyTarget` mode, rendering the SERVER's list rather
     // than the client's filter: only the server knows the subtree at or under the item's goal.
-    expect(within(sheet).getByRole('option', { name: /^Two gym sessions/ })).toBeInTheDocument();
+    // ⚠ **A9** — and the sheet names the destination it is offering before the picker is opened at all.
+    expect(within(sheet).getByText('WHERE THIS GOES')).toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: /^Choose a goal: Three easy runs and one long run/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
+    expect(within(picker).getByRole('option', { name: /^Two gym sessions/ })).toBeInTheDocument();
   });
 
   it('S-backlog-26-2 (retired S-backlog-8-1/8-2/8-3): NO_WEEKLY_GOAL is not a dead end any more', async () => {
@@ -184,7 +188,10 @@ describe('The `+` drawer (R-backlog-27, D-21)', () => {
     await user.click(await screen.findByRole('button', { name: 'Add' }));
     const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
 
-    await user.click(await within(sheet).findByRole('option', { name: /^Lift three times a week/ }));
+    // ⚠ **A9** — the drawer's goal picker is a compact row now, so the choice is made one tap in.
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
+    await user.click(within(picker).getByRole('option', { name: /^Lift three times a week/ }));
     await user.type(within(sheet).getByLabelText('What needs doing, someday?'), 'Book an induction');
     await user.click(within(sheet).getByRole('button', { name: 'Add to this week instead' }));
     await user.click(within(sheet).getByRole('button', { name: 'Save' }));
@@ -207,7 +214,9 @@ describe('The `+` drawer (R-backlog-27, D-21)', () => {
     await user.click(await screen.findByRole('button', { name: 'Add' }));
     const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
 
-    await user.click(await within(sheet).findByRole('option', { name: /^Lift three times a week/ }));
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
+    await user.click(within(picker).getByRole('option', { name: /^Lift three times a week/ }));
     await user.type(within(sheet).getByLabelText('What needs doing, someday?'), 'Book an induction');
     await user.click(within(sheet).getByRole('button', { name: 'Add to this week instead' }));
     await user.click(within(sheet).getByRole('button', { name: 'Save' }));
@@ -222,9 +231,18 @@ describe('The `+` drawer (R-backlog-27, D-21)', () => {
     await user.click(await screen.findByRole('button', { name: 'Add' }));
     const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
 
-    expect(await within(sheet).findByRole('option', { name: 'Lift three times a week — Be strong at 60 · Monthly · Aug 2026' })).toBeInTheDocument();
-    expect(within(sheet).queryByRole('option', { name: /^Be strong at 60/ })).not.toBeInTheDocument();
-    expect(within(sheet).queryByRole('option', { name: /^Three easy runs and one long run/ })).not.toBeInTheDocument();
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
+
+    expect(await within(picker).findByRole('option', { name: 'Lift three times a week — Be strong at 60 · Monthly · Aug 2026' })).toBeInTheDocument();
+    // ⚠ **A9** — neither horizon is offered as a chip either, so neither is reachable at all.
+    for (const chip of within(picker).getAllByRole('radio')) {
+      await user.click(chip);
+      expect(within(picker).queryByRole('option', { name: /^Be strong at 60/ })).not.toBeInTheDocument();
+      expect(within(picker).queryByRole('option', { name: /^Three easy runs and one long run/ })).not.toBeInTheDocument();
+    }
+    expect(within(picker).queryByRole('radio', { name: /^Life/ })).not.toBeInTheDocument();
+    expect(within(picker).queryByRole('radio', { name: /^Weekly/ })).not.toBeInTheDocument();
   });
 
   it('R-auth-6 / D-10: a brand-new account has nothing to file under, and no fallback goal is invented', async () => {
@@ -232,8 +250,12 @@ describe('The `+` drawer (R-backlog-27, D-21)', () => {
     const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await user.click(await screen.findByRole('button', { name: 'Add' }));
     const sheet = await screen.findByRole('dialog', { name: 'Add to Backlog' });
-    expect(within(sheet).getByText('Nothing to file this under yet — a backlog item needs a Yearly, Quarterly or Monthly goal.')).toBeInTheDocument();
     expect(within(sheet).getByRole('button', { name: 'Save' })).toBeDisabled();
+    // The empty state is the picker's own, one tap in — and it is the ORIGINAL sentence, not A9's
+    // "pick another horizon", because here there is nothing at any horizon to pick.
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
+    expect(within(picker).getByText('Nothing to file this under yet — a backlog item needs a Yearly, Quarterly or Monthly goal.')).toBeInTheDocument();
   });
 });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { MAX_PAGE, rankGoals, type GoalView, type Horizon, type LensResponse } from '@goal-cascade/shared';
+import { HORIZONS, MAX_PAGE, rankGoals, type GoalView, type Horizon, type LensResponse } from '@goal-cascade/shared';
 import { useLens } from '../api/queries';
 import { useParentOptions } from '../lens/useParentOptions';
 import { useSkin } from '../skin';
@@ -96,8 +96,69 @@ export interface GoalOption {
   line: string;
 }
 
-/** § 7.6 — **at 8 options a picker stops being a list and starts being a field.** One number, both jobs. */
+/**
+ * §7.5 — **at 8 options a list stops being scannable and needs a search field.**
+ *
+ * ⚠ **A9 — this number no longer decides the picker's SHAPE, only its search field.** It used to do both
+ * jobs, and the second one was wrong inside a form sheet: the owner's `New Monthly goal` sheet had three
+ * legal parents, so the threshold chose the inline list, and three two-line rows ate the sheet and pushed
+ * `Save goal` below the fold. The shape now follows the **surface** (`useGoalPicker` = a compact row in a
+ * sheet, `GoalPicker` = the inline list where the picker IS the whole surface), and the number governs one
+ * thing again.
+ */
 export const PICKER_THRESHOLD = 8;
+
+/**
+ * ⚠ **A9 — the horizons a mode may offer, broadest first.**
+ *
+ * The owner's own proposal, and it is better than retuning a threshold:
+ *
+ * > *"instead we put everything under with all the goals from all the lense. we can have another option
+ * > to select which lense to focus on and based on it i get the goals for that lense."*
+ *
+ * So the picker scopes by horizon first. This function is the **only** place that decides which horizons
+ * exist for a mode, and it answers with exactly the set the mode's own `legal` filter admits — it is the
+ * same rule read a second way, not a second rule. A horizon the server would refuse is therefore never
+ * offered, which is the one property that must not slip: an empty tab is a dead end, but a tab whose every
+ * choice is about to 409 is a lie.
+ *
+ * `parent` widens or narrows with the subject horizon (R-goal-5 / R-goal-32 — strictly longer, levels
+ * skippable), and collapses to `Life` alone under R-lens-20's `only: 'life'`. `backlogHost` is
+ * R-backlog-2's three. `weeklyTarget` and `lifeLine` are single-horizon by definition, so they render no
+ * selector at all and are byte-identical to what shipped.
+ */
+export function permittedHorizons(mode: PickerMode): Horizon[] {
+  switch (mode.kind) {
+    case 'parent':
+      return mode.only === 'life' ? ['Life'] : HORIZONS.filter((h) => rank(h) < rank(mode.horizon));
+    case 'backlogHost':
+      return ['Yearly', 'Quarterly', 'Monthly'];
+    case 'weeklyTarget':
+      return ['Weekly'];
+    case 'lifeLine':
+      return ['Life'];
+  }
+}
+
+/**
+ * ⚠ **A9 — the horizon the picker OPENS on: the most specific one, never the broadest.**
+ *
+ * *"for a new Monthly goal that is Quarterly, not Life."* A broadest-first default is the behaviour the
+ * owner actually hit — the Life goal sitting at the top of the list, looking chosen — and it is backwards:
+ * the nearer a parent is, the more likely it is the one you meant.
+ *
+ * Three inputs, in order. The **current choice** wins, so reopening a picker shows you where your goal
+ * lives rather than resetting the view under you. Otherwise the most specific horizon that actually **has**
+ * something to offer, because opening on an empty tab is a dead end the owner has to escape before they can
+ * do anything. Otherwise the most specific permitted horizon, so the answer is total.
+ */
+export function defaultHorizon(horizons: readonly Horizon[], options: readonly GoalOption[], value: string | null): Horizon {
+  const chosen = value ? options.find((o) => o.id === value) : undefined;
+  if (chosen && horizons.includes(chosen.horizon)) return chosen.horizon;
+  const specificFirst = [...horizons].sort((a, b) => rank(b) - rank(a));
+  return specificFirst.find((h) => options.some((o) => o.horizon === h)) ?? specificFirst[0] ?? 'Life';
+}
+
 
 /** R-lens-13's surviving requirement, and §7.7's: what a truncated list says instead of lying quietly. */
 export const TRUNCATION_NOTICE = `Showing the first ${MAX_PAGE}. Search to narrow it.`;
@@ -263,6 +324,10 @@ const optionLabel = (o: GoalOption): string => {
   return bits.length ? `${o.title} — ${bits.join(' · ')}` : o.title;
 };
 
+/** ⚠ **A9** — the third empty state: legal goals exist, none at the horizon you are standing on. */
+const scopedEmptyNote = (horizon: Horizon, searchable: boolean): string =>
+  `No ${horizon.toLowerCase()} goal to choose here. Pick another horizon above${searchable ? ', or search across all of them' : ''}.`;
+
 /**
  * ⚠ **R-backlog-14, generalised (§7.4).** The drawer's module-level `lastUsedGoalId` becomes one recency
  * list shared by every mode: the goal you filed under last time is the same goal whether you are adding a
@@ -279,6 +344,33 @@ export const rememberGoal = (id: string | null): void => {
   if (!id) return;
   recent = [id, ...recent.filter((x) => x !== id)].slice(0, RECENT_ROWS);
 };
+/**
+ * ⚠ **A9 — the parent a create form defaults to: the NEAREST legal ancestor.**
+ *
+ * The owner, creating a Monthly goal in `Sep 2026`, was shown the Life goal *"Be financially independent"*
+ * — because there was no default at all. `GoalFormSheet` preselected a parent only when exactly **one** was
+ * legal; with three the picker selected nothing, and the roving-focus ring sat on row 0, which is the Life
+ * goal (`useParentOptions` concatenates Life, Yearly, Quarterly, Monthly in that order). A picker that
+ * *looks* preselected and is not is worse than either honest state.
+ *
+ * The nearest legal ancestor is **the deepest goal whose period contains the new goal's period**. That is
+ * one line here because `useParentOptions` has already done the containment half: each longer horizon is
+ * read at `enclosingKey`, the period that encloses this one, so every option's period contains the new
+ * goal's by construction and "nearest" reduces to "highest rank". For a new Monthly goal in `Sep 2026`
+ * that is the Quarterly goal for `Q3 2026`.
+ *
+ * Ties are broken by the picker's shared `RECENT` list (R-backlog-14, generalised), then by the server's
+ * own order. Two Quarterly goals in the same line and the same quarter is a real account shape, and array
+ * order is not a decision (D-18) — but this is a *default* the owner can see and change in one tap, not a
+ * silent write, which is exactly the distinction that made D-18 refuse to choose on the server.
+ */
+export function nearestAncestor(options: readonly GoalOption[], recentIds: readonly string[] = recent): GoalOption | null {
+  if (options.length === 0) return null;
+  const deepest = options.reduce((max, o) => Math.max(max, rank(o.horizon)), -1);
+  const pool = options.filter((o) => rank(o.horizon) === deepest);
+  return pool.find((o) => recentIds.includes(o.id)) ?? pool[0] ?? null;
+}
+
 /** Test-only reset; a module-level list must not leak from one test into the next. */
 export const forgetRecentGoals = (): void => {
   recent = [];
@@ -309,6 +401,7 @@ export function GoalPickerList({
   listLabel = 'Goals',
   tall = false,
   focusOnMount = false,
+  horizons = [],
 }: {
   options: readonly GoalOption[];
   groups: readonly { id: string | null; title: string }[];
@@ -322,6 +415,12 @@ export function GoalPickerList({
   listLabel?: string;
   tall?: boolean;
   focusOnMount?: boolean;
+  /**
+   * ⚠ **A9** — the horizons this mode permits (`permittedHorizons`), broadest first. Two or more render the
+   * selector and scope the list; one or none renders nothing and the list is every option, which is what
+   * keeps `weeklyTarget` and `lifeLine` exactly as they shipped.
+   */
+  horizons?: readonly Horizon[];
 }) {
   const S = useSkin();
   const domId = useId();
@@ -331,11 +430,29 @@ export function GoalPickerList({
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [announced, setAnnounced] = useState('');
+  /** `null` until the reads land: the default depends on which horizons actually have something. */
+  const [horizon, setHorizon] = useState<Horizon | null>(null);
 
   // §7.5 — the field renders only when there are more than 8 options. Searching a list you can see whole
-  // is chrome, and this is where the promise not to tax an account with ten goals is kept.
+  // is chrome, and this is where the promise not to tax an account with ten goals is kept. ⚠ **A9 — the
+  // count is the TOTAL, across every horizon**, because search deliberately crosses them: scoping is a
+  // default view, not a cage, and a field that vanished when you narrowed to one horizon would make the
+  // one thing that reaches the whole list unreachable.
   const searchable = options.length > PICKER_THRESHOLD;
   const searching = searchable && query.trim() !== '';
+
+  const scoped = horizons.length > 1;
+  const shownHorizon = horizon ?? defaultHorizon(horizons, options, value);
+  /**
+   * ⚠ **A9 — scoping is a DEFAULT VIEW, not a cage.** While the field is empty the list is one horizon;
+   * the moment anything is typed it is every option again, ranked. That is the whole reason the horizon
+   * control can be a default rather than a filter the owner has to remember they set (R-lens-15's
+   * distinction, one layer down).
+   */
+  const visible = useMemo(
+    () => (!scoped || searching ? options : options.filter((o) => o.horizon === shownHorizon)),
+    [options, scoped, searching, shownHorizon],
+  );
 
   const sections = useMemo<Section[]>(() => {
     const rowOf = (o: GoalOption, flat: boolean, prefix: string): Row => ({
@@ -349,36 +466,37 @@ export function GoalPickerList({
 
     if (searching) {
       // §7.5 — a ranked list re-sorted into groups is not ranked, so grouping collapses to one flat list.
-      const ranked = rankGoals(options, query, { lineTitleOf: (o) => o.line });
+      // ⚠ **A9** — ranked across EVERY horizon: `visible` is the unscoped set while a query is live.
+      const ranked = rankGoals(visible, query, { lineTitleOf: (o) => o.line });
       return [...head, { key: 'results', title: null, rows: ranked.map((m) => rowOf(m.goal, true, 'r')) }];
     }
 
     const sortedIds = new Set<string>();
     const out: Section[] = [...head];
     // §7.4 — up to three, most-recently-chosen first, and only when the whole list is too long to scan.
-    const recentRows = recent.map((id) => options.find((o) => o.id === id)).filter((o): o is GoalOption => !!o);
+    const recentRows = recent.map((id) => visible.find((o) => o.id === id)).filter((o): o is GoalOption => !!o);
     if (searchable && recentRows.length >= 2) {
       out.push({ key: 'recent', title: 'RECENT', rows: recentRows.slice(0, RECENT_ROWS).map((o) => rowOf(o, true, 'rec')) });
     }
 
     // A Life-goal list groups under itself, which is a header per row and says nothing: it stays flat.
-    const flatMode = options.every((o) => o.horizon === 'Life');
+    const flatMode = visible.length > 0 && visible.every((o) => o.horizon === 'Life');
     if (flatMode) {
-      out.push({ key: 'all', title: null, rows: options.map((o) => rowOf(o, true, 'g')) });
+      out.push({ key: 'all', title: null, rows: visible.map((o) => rowOf(o, true, 'g')) });
       return out;
     }
 
     for (const g of groups) {
-      const mine = options.filter((o) => o.lineId === g.id);
+      const mine = visible.filter((o) => o.lineId === g.id);
       if (mine.length === 0) continue;
       for (const o of mine) sortedIds.add(o.id);
       out.push({ key: `g:${g.id ?? 'unsorted'}`, title: g.title, rows: mine.map((o) => rowOf(o, false, 'g')) });
     }
     // A group the reads did not describe is still rendered: a data problem must surface (R-lens-20).
-    const orphans = options.filter((o) => !sortedIds.has(o.id));
+    const orphans = visible.filter((o) => !sortedIds.has(o.id));
     if (orphans.length) out.push({ key: 'g:rest', title: null, rows: orphans.map((o) => rowOf(o, true, 'g')) });
     return out;
-  }, [options, groups, query, searchable, searching, extra]);
+  }, [visible, groups, query, searchable, searching, extra]);
 
   const rows = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
   // R-lens-19, generalised — one non-empty group needs no header. One rule, two surfaces.
@@ -400,14 +518,20 @@ export function GoalPickerList({
   // §8.2 — the count, debounced so typing does not chatter. It is the only thing this component says out
   // loud; the selection announces itself through `aria-selected`.
   useEffect(() => {
+    const goalRows = rows.filter((r) => r.id !== null).length;
     if (!searching) {
-      setAnnounced('');
+      // ⚠ **A9** — narrowing to a horizon changes what the list holds, so it is announced for the same
+      // reason the search count is. `horizon === null` is the untouched default, which announces nothing.
+      if (!scoped || horizon === null) {
+        setAnnounced('');
+        return;
+      }
+      setAnnounced(`${shownHorizon} — ${goalRows} goal${goalRows === 1 ? '' : 's'}`);
       return;
     }
-    const goalRows = rows.filter((r) => r.id !== null).length;
     const t = setTimeout(() => setAnnounced(goalRows === 0 ? `No goals match “${query}”` : `${goalRows} goal${goalRows === 1 ? '' : 's'}`), 300);
     return () => clearTimeout(t);
-  }, [searching, query, rows]);
+  }, [searching, query, rows, scoped, horizon, shownHorizon]);
 
   const choose = useCallback(
     (row: Row) => {
@@ -440,6 +564,37 @@ export function GoalPickerList({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [query]);
 
+  /**
+   * ⚠ **A9 — the horizon selector's keyboard model, which is the radiogroup pattern and not a second one.**
+   *
+   * A roving tabindex over `role="radio"` chips: exactly one is in the tab order, `←`/`→` (and `↑`/`↓`,
+   * because the chips are one row of a vertical form) move **and select**, `Home`/`End` reach the ends.
+   * That is R-lens-13's surviving requirement — one tab stop, arrows along the axis, the selection
+   * announced rather than merely coloured — applied to the second control this picker now has.
+   *
+   * It is a `radiogroup` rather than a `tablist` on purpose: a tab implies a `tabpanel`, and the thing it
+   * would control is a `listbox`, which cannot be one. A radiogroup says what this actually is — a
+   * single-choice narrowing of the list below it — and it needs no `aria-controls` fiction to say it.
+   *
+   * **Never a second focus trap.** The chips, the search field and the list are three ordinary tab stops
+   * inside the one dialog `Sheet` already traps; nothing here traps anything.
+   */
+  const pickHorizon = (h: Horizon) => {
+    setHorizon(h);
+    setActive(0);
+  };
+  const onHorizonKey = (e: ReactKeyboardEvent, index: number) => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    let next = -1;
+    if (step !== 0) next = (index + step + horizons.length) % horizons.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = horizons.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    pickHorizon(horizons[next]!);
+    document.getElementById(`${domId}-h-${horizons[next]}`)?.focus();
+  };
+
   const move = (to: number) => {
     if (rows.length === 0) return;
     const next = Math.max(0, Math.min(rows.length - 1, to));
@@ -471,6 +626,9 @@ export function GoalPickerList({
     }
   };
 
+  /** The account has legal options — just not at the horizon on screen. A3's third empty state. */
+  const scopedEmpty = scoped && !searching && options.length > 0 && visible.length === 0;
+
   const box = {
     border: `1px solid ${S.T.line}`,
     borderRadius: 12,
@@ -481,6 +639,42 @@ export function GoalPickerList({
 
   return (
     <div ref={rootRef}>
+      {/*
+       * ⚠ **A9 — the horizon selector, and why it comes FIRST.**
+       *
+       * The owner's proposal: choose the lens, then the goals in it. Putting it above the search field and
+       * the list makes the reading order the decision order, and makes the list's size a structural fact
+       * — one horizon's goals — rather than a number someone tuned.
+       *
+       * `S.chipBtn` is the product's existing segmented chip; no new colour and no new token, so
+       * `tests/screens/contrast.test.ts` has nothing new to check.
+       */}
+      {scoped && (
+        <div role="radiogroup" aria-label="Horizon" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {horizons.map((h, i) => {
+            const on = h === shownHorizon;
+            const count = options.filter((o) => o.horizon === h).length;
+            return (
+              <button
+                key={h}
+                id={`${domId}-h-${h}`}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                // The accessible name carries the count, so "this tab is empty" is heard and not only seen.
+                aria-label={`${h} — ${count} goal${count === 1 ? '' : 's'}`}
+                tabIndex={on ? 0 : -1}
+                onClick={() => pickHorizon(h)}
+                onKeyDown={(e) => onHorizonKey(e, i)}
+                style={S.chipBtn(on)}
+              >
+                {h}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {searchable && (
         <input
           ref={inputRef}
@@ -518,8 +712,13 @@ export function GoalPickerList({
       {isPending && rows.length === 0 && <div style={{ fontSize: 13, color: S.T.mut, padding: '12px 14px' }}>Loading…</div>}
 
       {!isPending && rows.length === 0 && (
-        <div style={{ fontSize: 13.5, color: S.T.mut, padding: searching ? '12px 2px' : '12px 14px' }}>
-          {searching ? `No goals match “${query}”.` : empty}
+        <div style={{ fontSize: 13.5, color: S.T.mut, padding: searching || scopedEmpty ? '12px 2px' : '12px 14px' }}>
+          {/*
+           * Three empty states, not one. ⚠ **A9 adds the middle one**: the account HAS legal goals, just
+           * none at the horizon on screen, and `empty`'s sentence ("nothing to file this under yet") would
+           * be a flat lie there. It names the way out rather than only the absence.
+           */}
+          {searching ? `No goals match “${query}”.` : scopedEmpty ? scopedEmptyNote(shownHorizon, searchable) : empty}
         </div>
       )}
 
@@ -594,8 +793,18 @@ export function GoalPickerList({
 }
 
 /**
- * The mode-driven picker, rendered in place: the whole body of a sheet whose only job is the choice (Move
- * goal), or an inline block on a screen (the Learnings tag, a backlog row's move).
+ * The mode-driven picker, **rendered in place as the inline list**.
+ *
+ * ⚠ **A9 — this is now the surface distinction, and it is the whole of the fix to the flooded sheet.**
+ * `GoalPicker` is for the places where the picker **is** the whole surface and has the room to be a list:
+ * `Move goal`, whose sheet body is nothing else; a backlog row's `Move to another goal`, on a screen; the
+ * Learnings tag, on a screen. Anywhere the picker is **one field among several in a form** it is
+ * `useGoalPicker` instead, which is a compact row at every option count.
+ *
+ * Before this the two shared one rule — eight options — and a `New Monthly goal` sheet with three legal
+ * parents got the inline list, ate the sheet with three two-line rows, and pushed `Save goal` off screen.
+ * A threshold cannot tell those two surfaces apart, because the difference is not how many options there
+ * are; it is whether anything else on screen needs the space.
  */
 export function GoalPicker(props: {
   mode: PickerMode;
@@ -609,7 +818,8 @@ export function GoalPicker(props: {
 }) {
   const { mode, ...rest } = props;
   const { options, groups, isPending, truncated } = useGoalOptions(mode);
-  return <GoalPickerList options={options} groups={groups} isPending={isPending} truncated={truncated} {...rest} />;
+  const horizons = useMemo(() => permittedHorizons(mode), [mode]);
+  return <GoalPickerList options={options} groups={groups} isPending={isPending} truncated={truncated} horizons={horizons} {...rest} />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -617,10 +827,16 @@ export function GoalPicker(props: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * §7.6 — **one threshold governs both presentations.**
+ * §7.6 — **the picker as a FIELD in a form: one row showing the current choice, at every option count.**
  *
- *  - **≤ 8 options** — the inline list, in the form, with no search field. Simpler than what shipped.
- *  - **> 8 options** — one row showing the current choice, which opens the full picker.
+ * ⚠ **A9 — the threshold is gone from this decision.** It used to read *"≤ 8 options — the inline list, in
+ * the form"*, and the owner found what that costs: his `New Monthly goal` sheet had three legal parents, so
+ * it rendered three two-line rows inline, and `Save goal` went below the fold. A form sheet has other
+ * fields and a save button; a list of any length is the wrong shape for one field in it. So a field it is,
+ * always — one line, the current choice with its line and period, tap to open.
+ *
+ * The threshold still governs the search field inside the opened picker (`PICKER_THRESHOLD`), which is the
+ * one job it was always right about.
  *
  * And the full picker **takes over the sheet it was opened from**: the sheet swaps its own body, its
  * heading becomes `Choose a goal`, and a back control naming where you came from appears beside it. The
@@ -658,12 +874,12 @@ export function useGoalPicker({
 } {
   const S = useSkin();
   const { options, groups, isPending, truncated } = useGoalOptions(mode);
+  const horizons = useMemo(() => permittedHorizons(mode), [mode]);
   const [taken, setTaken] = useState(false);
   const fieldRef = useRef<HTMLButtonElement>(null);
   const returning = useRef(false);
 
-  const asField = options.length > PICKER_THRESHOLD;
-  const open = taken && asField;
+  const open = taken;
 
   useEffect(() => {
     if (!open && returning.current) {
@@ -693,6 +909,7 @@ export function useGoalPicker({
       isPending={isPending}
       truncated={truncated}
       listLabel={listLabel}
+      horizons={horizons}
       tall={open}
       focusOnMount={open}
     />
@@ -714,12 +931,22 @@ export function useGoalPicker({
       </button>
     ) : null,
     panel: list,
-    control: asField ? (
+    // ⚠ **A9** — no `asField` branch any more: a picker inside a form is a row, at every option count.
+    control: (
       <button
         type="button"
         ref={fieldRef}
         onClick={() => setTaken(true)}
         aria-haspopup="listbox"
+        /**
+         * ⚠ **A9 — the field announces its PURPOSE and its VALUE, in that order.**
+         *
+         * It used to announce the value alone once something was chosen, which made an unlabelled control
+         * out of the one field in the form that now always renders. `Choose a goal: Rebuild the gym habit
+         * — Be strong at 60 · Q3 2026` is what a filled field should say, and it keeps the label stable
+         * whether or not there is a choice in it.
+         */
+        aria-label={chosen ? `${fieldLabel}: ${chosen.title} — ${flatDetail(chosen)}` : fieldLabel}
         style={{
           ...S.pickerRow('ok'),
           display: 'flex',
@@ -740,8 +967,6 @@ export function useGoalPicker({
           ›
         </span>
       </button>
-    ) : (
-      list
     ),
   };
 }

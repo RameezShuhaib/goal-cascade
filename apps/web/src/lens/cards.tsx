@@ -1,10 +1,9 @@
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import type { GoalRefView, GoalView, Horizon, TaskView } from '@goal-cascade/shared';
+import { taskWeekForMonth, type GoalRefView, type GoalView, type Horizon, type TaskView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
-import { weekForMonth } from '../utils/periodKeys';
 import { TaskRow } from '../components/TaskRow';
 import { goalPath } from '../routes';
 import { shortDate } from '../utils/dates';
@@ -204,13 +203,22 @@ export function MonthlyCard({ goal, canCreate, parent }: { goal: GoalView; canCr
   const clock = useWeekClock();
   const b = goal.weeklyBreakdown;
   /**
-   * R-task-49 / R-lens-9 / R-goal-47 — **the one answer to "which week does this month mean"**: the week
-   * containing today when the viewed month contains today, otherwise the first week whose MONDAY falls in
-   * it. The same clamp serves the Monthly → Weekly zoom, this card's `+ Task`, and the planned-ness line's
-   * scope, so the three can never disagree. Both inputs are the server's (`WeekView.weekStart` and the
-   * owner's today), so no Monday is derived here.
+   * ⚠ **A9 (R-task-49) — the target week must be INSIDE the month this card is in.**
+   *
+   * This used to call `weekForMonth`, whose first branch compares today's **calendar** month with the
+   * card's — so on Wed 2 Sep 2026 a September card resolved the week of Mon 31 Aug, a week that belongs to
+   * **August** by the product's own Monday rule (R-goal-33). The task went into a month the owner was not
+   * looking at, R-goal-47's September line went on saying `Nothing planned yet`, and the app navigated
+   * them into August. `taskWeekForMonth` compares the month of the **current week** instead, so its answer
+   * is inside `goal.periodKey` by construction: the week you are living in when this month holds it, and
+   * this month's first week when it does not.
+   *
+   * The zoom keeps the old behaviour under its own name (`zoomWeekForMonth`) — landing on the week you are
+   * living in is right for a zoom and wrong for a create, which is why they are two functions now.
+   *
+   * `clock.today` is the SERVER's clock in the owner's stored zone (R-auth-5); no Monday is derived here.
    */
-  const targetWeek = clock.currentMonday ? weekForMonth(goal.periodKey, clock.currentMonday, clock.todayMonthKey) : undefined;
+  const targetWeek = taskWeekForMonth(goal.periodKey, clock.today);
   const line = b ? plannedNess(b) : null;
   return (
     <CardShell label={line ? `${goal.title}, ${line.replace(/ · /g, ', ').toLowerCase()}.` : undefined}>

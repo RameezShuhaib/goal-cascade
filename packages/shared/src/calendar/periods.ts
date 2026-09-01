@@ -301,20 +301,60 @@ export function zoomTo(target: Horizon, anchor: string, today: string): string {
   if (target !== 'Weekly') return periodKeyOf(target, anchor);
   // Weekly is the exception, and it is the correction: a week belongs to its MONDAY's month, so the
   // destination is the first week whose Monday falls in the anchor's month — never the week containing
-  // the 1st, which would land in the previous month. See `weekForMonth`.
-  return weekForMonth(periodKeyOf('Monthly', anchor), today);
+  // the 1st, which would land in the previous month. See `zoomWeekForMonth`.
+  return zoomWeekForMonth(periodKeyOf('Monthly', anchor), today);
 }
 
 /**
- * R-lens-9 / R-goal-47 / R-task-49 — **the one answer to "which week does this month mean"**.
+ * **R-lens-9's zoom rule, and only that** — which week the Monthly → Weekly zoom lands on.
  *
- * The week containing today when the month contains today; otherwise the first week whose **Monday**
- * falls in that month. One rule serves the Monthly → Weekly zoom, `+ Task` from a Monthly card, and the
- * planned-ness line's scope, so the three can never disagree.
+ * The week containing today when today's **calendar month** is `monthKey`; otherwise the first week whose
+ * **Monday** falls in that month.
+ *
+ * ⚠ **A9 — this used to be called `weekForMonth` and claimed to be "the one answer to which week does this
+ * month mean" for three consumers.** It is not one answer, because its first branch tests the calendar
+ * month of `today` while every other rule in this product tests the month a **week's Monday** belongs to
+ * (R-goal-33, R-lens-28). The two disagree for the one to six days between a month starting and its first
+ * Monday, and the disagreement is correct here and wrong everywhere else:
+ *
+ *   - **Zoom (this function)** — landing on the week you are *living in* is right even when that week
+ *     belongs to the previous month. It is where you are, and R-lens-29's `This week is in Aug 2026` pill
+ *     already names the seam. Zoom is about the owner, not about the month.
+ *   - **Creating work** — landing outside the month you are looking at is wrong, because the month's own
+ *     lens will never show what you just made. That caller takes `taskWeekForMonth` instead (R-task-49).
+ *   - **R-goal-47's planned-ness scope** — never reaches this branch at all; it is a `BETWEEN
+ *     firstMondayIn … lastMondayIn` range scan and is unaffected either way.
+ *
+ * The name says `zoom` so the next reader does not have to rediscover which of the three it answers.
  */
-export function weekForMonth(monthKey: string, today: string): string {
+export function zoomWeekForMonth(monthKey: string, today: string): string {
   if (periodKeyOf('Monthly', today) === monthKey) return weekStartOfDate(today);
   return firstMondayIn(monthKey);
+}
+
+/**
+ * **R-task-49 (A9) — which week a task created from a Monthly goal lands in.** Always a week *inside*
+ * `monthKey`, which is the whole difference from `zoomWeekForMonth`.
+ *
+ * The week you are living in when **that week belongs to this month**, otherwise the month's **first**
+ * week. The predicate is the product's own Monday rule applied to the current week, not a calendar-month
+ * comparison against `today`, so the answer is inside `monthKey` by construction:
+ *
+ * ```
+ * taskWeekForMonth('2026-09', today = '2026-09-02')  =  2026-09-07   (Wed 2 Sep sits in August's week)
+ * taskWeekForMonth('2026-08', today = '2026-09-02')  =  2026-08-31   (…which is exactly August's week)
+ * ```
+ *
+ * The old shared rule answered `2026-08-31` to *both*, so `+ Task` on a September goal on 2 September
+ * created a Weekly goal in August, was not counted by R-goal-47's September scope, and navigated the owner
+ * into August. Three defects, one predicate.
+ *
+ * It never prefers a past week over the current one: when the month holds the current week that week wins,
+ * and the first-week fallback only fires for a month the current week is not in.
+ */
+export function taskWeekForMonth(monthKey: string, today: string): string {
+  const thisWeek = weekStartOfDate(today);
+  return periodKeyOf('Monthly', thisWeek) === monthKey ? thisWeek : firstMondayIn(monthKey);
 }
 
 /**

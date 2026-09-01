@@ -9,8 +9,9 @@ import {
   periodKeyOf,
   replanPeriods,
   stepPeriod,
-  weekForMonth,
+  taskWeekForMonth,
   zoomTo,
+  zoomWeekForMonth,
 } from '../src/index';
 
 /**
@@ -157,12 +158,40 @@ describe('R-lens-9 / R-lens-18 — zooming between lenses', () => {
     expect(firstMondayIn('2026-06')).toBe('2026-06-01');
   });
 
-  it('R-lens-9 / R-task-49 / R-goal-47 — ONE rule answers "which week does this month mean"', () => {
-    // The week containing today when the month contains today; otherwise the first Monday in it. The
-    // same answer serves the zoom, `+ Task` from a Monthly card, and the planned-ness line's scope, so
-    // the three can never disagree.
-    expect(weekForMonth('2026-09', '2026-09-16')).toBe('2026-09-14'); // the week containing today
-    expect(weekForMonth('2026-11', '2026-09-16')).toBe('2026-11-02'); // first Monday in November
+  it('R-lens-9 — `zoomWeekForMonth` lands on the week you are LIVING in, seam and all', () => {
+    // Away from the seam the two rules agree, which is why one function passed for three consumers.
+    expect(zoomWeekForMonth('2026-09', '2026-09-16')).toBe('2026-09-14'); // the week containing today
+    expect(zoomWeekForMonth('2026-11', '2026-09-16')).toBe('2026-11-02'); // first Monday in November
+    /**
+     * ⚠ **A9 — the seam, asserted rather than left implicit.** On Wed 2 Sep 2026 the zoom answers the week
+     * of Mon 31 Aug, which belongs to AUGUST. That is correct for a zoom — it is the week the owner is
+     * living in — and R-lens-29's `This week is in Aug 2026` pill is what names it. It is the same answer
+     * that was wrong for task creation, which is why the two are now two functions.
+     */
+    expect(zoomWeekForMonth('2026-09', '2026-09-02')).toBe('2026-08-31');
+    expect(periodKeyOf('Monthly', '2026-08-31')).toBe('2026-08');
+  });
+
+  it('R-task-49 (A9) — `taskWeekForMonth` never answers a week outside the month it was asked about', () => {
+    /**
+     * The owner's exact case. `+ Task` on a **September** Monthly goal on Wed 2 Sep 2026 must land in a
+     * week September's own lens shows; the old clamp answered Mon 31 Aug and the work vanished.
+     */
+    expect(taskWeekForMonth('2026-09', '2026-09-02')).toBe('2026-09-07');
+    // …and the SAME day, asked about August, answers the week the owner is standing in, not Mon 3 Aug:
+    // the month holding the current week keeps it, so nothing is ever pushed backwards into a past week.
+    expect(taskWeekForMonth('2026-08', '2026-09-02')).toBe('2026-08-31');
+
+    // Away from the seam it is the ordinary answer, and it agrees with the zoom.
+    expect(taskWeekForMonth('2026-09', '2026-09-16')).toBe('2026-09-14');
+    expect(taskWeekForMonth('2026-11', '2026-09-16')).toBe('2026-11-02');
+
+    // The property that makes it safe: every answer's own month IS the month asked for.
+    for (const month of ['2026-01', '2026-02', '2026-08', '2026-09', '2026-10', '2026-11', '2027-02']) {
+      for (const today of ['2026-09-01', '2026-09-02', '2026-09-07', '2026-11-01', '2027-02-03']) {
+        expect(periodKeyOf('Monthly', taskWeekForMonth(month, today))).toBe(month);
+      }
+    }
   });
 
   it('R-goal-47 — the range read’s two ends are both Mondays inside the month', () => {

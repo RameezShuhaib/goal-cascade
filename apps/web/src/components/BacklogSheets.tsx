@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import type { Horizon } from '@goal-cascade/shared';
+import { labelOf, periodKeyOf, type Horizon } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useBacklog, useCreateBacklogItem, useConvertBacklogItem, useCreateTask, useGoal } from '../api/queries';
 import { toApiError } from '../api/errors';
@@ -12,7 +12,7 @@ import { recentGoalIds, useGoalPicker } from './GoalPicker';
 import { hostOf } from '../utils/tree';
 import { shortDate } from '../utils/dates';
 import { lensPath, BACKLOG_PATH } from '../routes';
-import { implicitWeeklyGoalNote } from '../lens/copy';
+import { implicitWeeklyGoalNote, taskDestinationNote } from '../lens/copy';
 
 /**
  * The `+` drawer, the task-create sheet, and the backlog pull — the places work enters this app.
@@ -244,6 +244,15 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
 }
 
 /**
+ * ⚠ **A9** — the month a target week belongs to, named the way the Monthly lens names it.
+ *
+ * Both halves are `@goal-cascade/shared`'s, called in the order the server calls them: a week belongs to
+ * its **Monday's** month (R-goal-33), and the label is rendered from the key (`Sep 2026`). No second
+ * calendar and no second spelling — the sheet says exactly what the lens says.
+ */
+const monthLabelOfWeek = (weekStart: string): string => labelOf('Monthly', periodKeyOf('Monthly', weekStart));
+
+/**
  * R-task-3/48/49 — the task-create sheet, used by every creation source (R-task-41).
  *
  * ── The one-step create, which is the whole of R-task-48 ───────────────────────
@@ -315,16 +324,28 @@ export function TaskCreateSheet({
   const item = fromBacklogId ? (backlogQ.data?.items ?? []).find((b) => b.id === fromBacklogId) : undefined;
   const choices = weeklyPicker.options;
 
-  // R-task-49 — more than one candidate: **the first is preselected**, so accepting costs zero taps. It
-  // is written into state rather than left as a fallback so the row renders as selected and is announced
-  // (R-lens-13), which the chip row it replaces never did.
+  /**
+   * ⚠ **A9 — the first candidate is preselected at EVERY count, including one.**
+   *
+   * This used to read `choices.length > 1`, and the gap was the whole defect: with exactly one candidate
+   * nothing was written into state, the destination block did not render, and the code path was — in its
+   * own comment — *"used silently"*. The owner added three tasks from a Monthly goal, was never told which
+   * weekly goal or which week they went to, and could not find them again.
+   *
+   * Writing it into state rather than leaving it as a `??` fallback is what makes the row render as
+   * SELECTED and be announced (R-lens-13). A single candidate is now a filled choice, not an absence.
+   */
   useEffect(() => {
-    if (!initialGoalId && picked === null && choices.length > 1) setPicked(choices[0]!.id);
+    if (!initialGoalId && picked === null && choices.length > 0) setPicked(choices[0]!.id);
   }, [initialGoalId, picked, choices]);
-  // Exactly one → used silently. More than one → the first is preselected, so accepting costs zero taps.
   const resolved = initialGoalId ?? picked ?? choices[0]?.id ?? null;
   const willCreateGoal = !initialGoalId && !!newWeekly && choices.length === 0;
   const week = clock.offsetOf(weekStart);
+  /**
+   * ⚠ **A9 — the destination block renders whenever this sheet resolves one, at every candidate count.**
+   * Zero, one or several: the sheet names the weekly goal and the week before `Save task` is reachable.
+   */
+  const resolvesDestination = !initialGoalId && (!!newWeekly || !!serverCandidates);
 
   const close = () => ui.closeSheet();
   const busy = createTask.isPending || convertItem.isPending;
@@ -402,18 +423,35 @@ export function TaskCreateSheet({
           style={S.input}
         />
 
-        {/* More than one candidate: a picker with the first preselected. One tap to change, zero to accept. */}
-        {!initialGoalId && choices.length > 1 && (
+        {/*
+          * ⚠ **A9 — WHERE THIS GOES, at one candidate, at several, and at none.**
+          *
+          * The rule is now the same sentence at every count: **name the weekly goal, name the week, and
+          * offer a way to change it before saving.** What varies is only which of the two rows carries the
+          * goal — a filled picker row when one exists to choose, the create note when none does.
+          *
+          * One candidate used to render nothing at all, on the theory that a choice with one option is not
+          * a choice. It is not a choice; it is still an ANSWER, and the owner needed the answer, not the
+          * choice. A filled row costs one line and is the difference between work that landed somewhere
+          * and work that vanished.
+          */}
+        {resolvesDestination && (
           <div style={{ marginTop: 14 }}>
-            <div style={{ ...S.fieldLabel, marginBottom: 6 }}>WHICH WEEKLY GOAL?</div>
-            {weeklyPicker.control}
-          </div>
-        )}
-
-        {/* Stated before it happens. Nothing may be created invisibly (R-task-49). */}
-        {willCreateGoal && weekStart && (
-          <div style={{ fontSize: 13, color: S.body, background: S.T.paper, border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px', marginTop: 14 }}>
-            {implicitWeeklyGoalNote(newWeekly!.title, shortDate(weekStart))}
+            <div style={{ ...S.fieldLabel, marginBottom: 6 }}>WHERE THIS GOES</div>
+            {choices.length > 0 ? (
+              weeklyPicker.control
+            ) : (
+              /* Stated before it happens. Nothing may be created invisibly (R-task-49). */
+              <div style={{ fontSize: 13, color: S.body, background: S.T.paper, border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px' }}>
+                {weekStart ? implicitWeeklyGoalNote(newWeekly?.title ?? '', shortDate(weekStart)) : 'A weekly goal will be created for this task.'}
+              </div>
+            )}
+            {/*
+              * The week, always, and the month it belongs to beside it. A9's clamp fix puts that week
+              * inside the month the owner is looking at; naming the month is what makes that checkable
+              * from the sheet rather than only from the code.
+              */}
+            {weekStart && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>{taskDestinationNote(shortDate(weekStart), monthLabelOfWeek(weekStart))}</div>}
           </div>
         )}
         {item && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>From the backlog: {item.title}</div>}

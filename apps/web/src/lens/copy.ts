@@ -163,6 +163,19 @@ export const implicitWeeklyGoalNote = (title: string, week: string): string =>
   `This starts a weekly goal "${title}" for the week of ${week}. You can rename it after.`;
 
 /**
+ * ⚠ **A9 (R-task-49) — the week a task is about to land in, and the month that week belongs to.**
+ *
+ * Two facts, both of which the owner needed and neither of which the sheet said. The **week** because
+ * `+ Task` from a Monthly goal resolves one and never showed it; the **month** because the week and the
+ * month can honestly differ at a seam (a week belongs to its Monday's month) and a task that lands in a
+ * different month from the lens you are standing in is exactly how three of them were lost.
+ *
+ * It reads as a statement of fact, not a warning: there is nothing wrong here, and after A9's clamp fix
+ * the month named is the month you are looking at.
+ */
+export const taskDestinationNote = (week: string, month: string): string => `Lands in the week of ${week} · ${month}.`;
+
+/**
  * The rule, wherever it must be said. Never "leaves hold tasks" (R-goal-37).
  *
  * `lib/errorCopy.ts` is the one place it *is* said — the `NOT_A_WEEKLY_GOAL` refusal — and it imports

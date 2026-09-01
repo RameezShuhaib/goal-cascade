@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { firstDayOf, stepPeriod, weeksBetween } from '@goal-cascade/shared';
-import { enclosingKey, validKeyFor, weekForMonth } from '../../src/utils/periodKeys';
+import { firstDayOf, periodKeyOf, stepPeriod, taskWeekForMonth, weeksBetween, zoomWeekForMonth } from '@goal-cascade/shared';
+import { enclosingKey, validKeyFor } from '../../src/utils/periodKeys';
 
 /**
  * The period-key arithmetic, and the boundary cases that decide whether the client can disagree with the
@@ -13,9 +13,15 @@ import { enclosingKey, validKeyFor, weekForMonth } from '../../src/utils/periodK
  * implementations had agreed all along — and it is the last moment at which they could ever be asked,
  * because there is only one of them now.
  *
- * The three functions still imported from `utils/periodKeys` are the ones that are genuinely client
- * vocabulary rather than calendar: `enclosingKey` (a create-form scope), `validKeyFor` (a URL segment is
- * attacker-supplied) and `weekForMonth` (the shared rule under the signature the two call sites hold).
+ * ⚠ **A9 — `weekForMonth` is no longer imported from `utils/periodKeys`, because it is no longer declared
+ * there.** The client wrapper was the last of the six duplicated calendar functions this file's header
+ * describes, and it survived R-lens-30 only because its signature looked like vocabulary. It was not: it
+ * decided which week a month means, it was mis-named for two of its three consumers, and the one it was
+ * wrong for is the one the owner used. It is now two shared functions, `zoomWeekForMonth` and
+ * `taskWeekForMonth`, and both are named in `no-second-calendar.test.ts`'s census.
+ *
+ * The two still imported from `utils/periodKeys` are genuinely client vocabulary rather than calendar:
+ * `enclosingKey` (a create-form scope) and `validKeyFor` (a URL segment is attacker-supplied).
  */
 
 describe('stepPeriod — unbounded in both directions (R-lens-7, R-rm-3)', () => {
@@ -53,34 +59,49 @@ describe('enclosingKey — walking UP from a key we already hold (R-goal-5, §6.
   });
 });
 
-describe('weekForMonth — the one answer to "which week does this month mean"', () => {
-  const currentMonday = '2026-08-31';
-  const todayMonth = '2026-08';
-
-  it('R-task-49: the week containing today, when the month contains today', () => {
-    expect(weekForMonth('2026-08', currentMonday, todayMonth)).toBe('2026-08-31');
-  });
-
+describe('the target week a Monthly card resolves (R-task-49, A9)', () => {
   /**
-   * ⚠ **R-lens-9's correction.** The retired text said "the week containing the 1st" and accepted a Monday
-   * in the previous month — zooming into `Nov 2026` would have landed on the week of Mon 26 Oct, a week
-   * every other rule counts as October's. One Monday rule, three consumers (zoom, `+ Task` from a Monthly
-   * card, R-goal-47's scope), no disagreement.
+   * ⚠ **A9 — the defect the owner actually hit, pinned in the client that hit it.**
+   *
+   * `MonthlyCard` used to call `weekForMonth`, which compares today's **calendar month** with the card's.
+   * On Wed 2 Sep 2026 that answered Mon 31 Aug for a **September** card — a week August owns by the
+   * product's own Monday rule — so `+ Task` created a Weekly goal in August under a September parent,
+   * R-goal-47's September line went on saying `Nothing planned yet`, and the app navigated to August.
+   *
+   * `taskWeekForMonth` compares the month of the **current week** instead, which is the same predicate
+   * every other rule in the product uses, and its answer is inside the month asked for by construction.
    */
-  it('otherwise the first week whose MONDAY falls in that month — never one in the previous month', () => {
-    // 1 Nov 2026 is a Sunday, so the week containing it starts Mon 26 Oct. That week is October's.
-    expect(weekForMonth('2026-11', currentMonday, todayMonth)).toBe('2026-11-02');
-    // 1 Sep 2026 is a Tuesday; the first Monday whose own month is September is the 7th.
-    expect(weekForMonth('2026-09', currentMonday, todayMonth)).toBe('2026-09-07');
-    // A month that begins on a Monday keeps its own 1st.
-    expect(weekForMonth('2027-02', currentMonday, todayMonth)).toBe('2027-02-01');
+  it('R-task-49: the week the owner is living in, when THAT WEEK belongs to the month', () => {
+    expect(taskWeekForMonth('2026-08', '2026-08-31')).toBe('2026-08-31');
+    // The seam, from the other side: on 2 Sep the current week is still August's, and August keeps it —
+    // so nothing is pushed back to Mon 3 Aug, a week `+ Task` may not write into at all (R-goal-36).
+    expect(taskWeekForMonth('2026-08', '2026-09-02')).toBe('2026-08-31');
   });
 
-  it('works backwards from the known Monday too, and always lands on a Monday', () => {
+  it('otherwise the month’s FIRST week — and never one belonging to another month', () => {
+    // 1 Nov 2026 is a Sunday, so the week containing it starts Mon 26 Oct. That week is October's.
+    expect(taskWeekForMonth('2026-11', '2026-08-31')).toBe('2026-11-02');
+    // 1 Sep 2026 is a Tuesday; the first Monday whose own month is September is the 7th.
+    expect(taskWeekForMonth('2026-09', '2026-08-31')).toBe('2026-09-07');
+    // A month that begins on a Monday keeps its own 1st.
+    expect(taskWeekForMonth('2027-02', '2026-08-31')).toBe('2027-02-01');
+    // ⚠ **The owner's exact case.** Today is INSIDE September's calendar month and OUTSIDE its week range.
+    expect(taskWeekForMonth('2026-09', '2026-09-02')).toBe('2026-09-07');
+  });
+
+  it('R-lens-9 — the ZOOM keeps the old answer, under its own name, and that is correct', () => {
+    // Landing on the week you are living in is right for a zoom even when it belongs to last month;
+    // R-lens-29's `This week is in Aug 2026` pill is what names the seam. Two questions, two functions.
+    expect(zoomWeekForMonth('2026-09', '2026-09-02')).toBe('2026-08-31');
+    expect(periodKeyOf('Monthly', '2026-08-31')).toBe('2026-08');
+  });
+
+  it('always lands on a Monday, and always one whose own month is the month asked for', () => {
+    const currentMonday = '2026-08-31';
     for (const month of ['2026-01', '2026-05', '2025-12', '2027-06']) {
-      const monday = weekForMonth(month, currentMonday, todayMonth);
+      const monday = taskWeekForMonth(month, currentMonday);
       expect(weeksBetween(currentMonday, monday) * 7).toBe(Math.round((Date.parse(`${monday}T00:00:00Z`) - Date.parse(`${currentMonday}T00:00:00Z`)) / 86_400_000));
-      expect(monday.slice(0, 7)).toBe(month);
+      expect(periodKeyOf('Monthly', monday)).toBe(month);
     }
   });
 });

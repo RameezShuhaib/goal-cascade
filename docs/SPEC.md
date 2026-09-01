@@ -251,7 +251,7 @@ The entity is removed outright: no migration, no conversion, no export. The owne
 
 #### Reconciliation pass — dormancy's successor
 
-- **R-goal-47 (the planned-ness line, and dormancy's one surface)** ⚠ **modified by A8 — the line still counts WEEKLY GOALS and nothing else, and it still renders; but `Nothing planned yet` on a month holding three month tasks is a lie, so the empty case splits in two (one new row below), and the line now renders BENEATH the card's task list (R-lens-32)** — A Monthly goal's card, in the Monthly lens and on its detail page, carries **one muted line** stating how the month is broken into weeks. The scope is *Weekly goals whose parent chain reaches this Monthly goal and whose week's **Monday** falls in the viewed month* — the same Monday rule as R-lens-9's zoom and R-task-49's target week, so one answer serves all three and they can never disagree.
+- **R-goal-47 (the planned-ness line, and dormancy's one surface)** ⚠ **modified by A8 — the line still counts WEEKLY GOALS and nothing else, and it still renders; but `Nothing planned yet` on a month holding three month tasks is a lie, so the empty case splits in two (one new row below), and the line now renders BENEATH the card's task list (R-lens-32)** — A Monthly goal's card, in the Monthly lens and on its detail page, carries **one muted line** stating how the month is broken into weeks. The scope is *Weekly goals whose parent chain reaches this Monthly goal and whose week's **Monday** falls in the viewed month*. ⚠ **A9 — the claim that "one answer serves all three and they can never disagree" was false and is withdrawn.** This scope is a `BETWEEN firstMondayIn … lastMondayIn` range scan and is **unchanged**; R-lens-9's zoom asks a different question (the week you are living in) and keeps its own answer under its own name, `zoomWeekForMonth`; R-task-49's target week asks a third (a week inside this month) and takes `taskWeekForMonth`. What all three share is the **Monday rule**, which is R-goal-33's and is genuinely one rule; what they were wrongly sharing was one *function*, and this scope was the only one of the three the shared function never broke.
 
   | Situation | The line reads |
   |---|---|
@@ -320,7 +320,7 @@ The entity is removed outright: no migration, no conversion, no export. The owne
 - **R-lens-9 (zooming between lenses)** ⚠ **modified by the reconciliation pass — the Monthly → Weekly clamp is corrected, and the worked example was arithmetically wrong** — The lens control carries an **anchor date**, not a period label (R-lens-18 governs the anchor's lifecycle); each lens renders the period containing that anchor. Selecting a lens maps it:
   - **Zoom out** (shorter → longer, e.g. Monthly → Quarterly): the new period is the one **containing** the anchor. `Sep 2026` → `Q3 2026` → `2026`. Always unambiguous.
   - **Zoom in** (longer → shorter, e.g. Quarterly → Monthly): if the current period **contains today**, the new period is the one containing **today**. In `Q3 2026` on 31 Aug, zooming to Monthly gives **`Aug 2026`** — the month you are living in. ⚠ *The original text read `Sep 2026`, which is simply wrong: 31 Aug is in August. It is corrected here because it is the sentence a builder would copy.* Otherwise the new period is the **first** sub-period of the current one: `Q1 2027` → `Jan 2027`.
-  - Zooming **into Weekly** yields the week containing today when today is in that month, else the **first week whose Monday falls in that month**. ⚠ *The original text said "the week containing the 1st" and accepted a Monday in the previous month. That is retired: R-goal-33 keys a week by its Monday, so zooming into `Nov 2026` would have landed on the week of Mon 26 Oct — a week every other rule counts as October's, including R-goal-47's planned-ness scope and R-task-49's target week. One Monday rule, three consumers, no disagreement.*
+  - Zooming **into Weekly** yields the week containing today when today is in that month, else the **first week whose Monday falls in that month**. ⚠ **A9 — unchanged in behaviour, renamed to `zoomWeekForMonth` so its remaining purpose is legible.** Its today-branch tests today's *calendar* month, which is a zoom rule wearing a general name; landing on the week you are living in is right here even when that week belongs to the previous month, and R-lens-29's line names the seam. The two other consumers it was mis-serving are now their own rules (R-task-49, R-goal-47). ⚠ *The original text said "the week containing the 1st" and accepted a Monday in the previous month. That is retired: R-goal-33 keys a week by its Monday, so zooming into `Nov 2026` would have landed on the week of Mon 26 Oct — a week every other rule counts as October's, including R-goal-47's planned-ness scope and R-task-49's target week. One Monday rule, three consumers, no disagreement.*
   - **A week that straddles a month boundary belongs to its Monday's month.** Stated because otherwise it is arbitrary, and because the whole product already names a week by its Monday.
   - **Life has no period**, so zooming to Life discards the period; zooming out of Life uses the **anchor**, which Life leaves untouched (R-lens-18) — going up to Life and back down returns you where you were.
   - The anchor moves only when a period is chosen. Zooming never moves it, so Quarterly → Monthly → Quarterly returns you to the quarter you started in.
@@ -607,14 +607,19 @@ Every rule in this section describes the `weekly_focus` entity and the plan scre
 #### Reconciliation pass — creation from the Monthly lens, and a second home for exit 1
 
 - **R-task-49 (`+ Task` from a Monthly goal — the Weekly goal is inferred, never asked)** ⚠ **RETIRED IN FULL by A8 (R-task-51, R-task-57). It was built; it must be removed, not left dormant.** The inference existed only to paper over the missing month-level task, and it carried a latent defect verified against the code (§6, Amendment 8). A Monthly goal now holds the task itself, so there is nothing to infer. The `weekForMonth` clamp survives for its two *other* consumers — R-lens-9's zoom and R-goal-47's scope — and both are audited in §6 — `+ Task` and `Pull from backlog` on a **Monthly goal's card** create a task under a Weekly goal that the server resolves. *This is R-task-41's fourth source.* Tasks live on Weekly goals (R-goal-39), so this is structurally two creates; made literal it is the worst flow in the product, so the second step is inferred.
-  - **The target week** is the same clamp as R-lens-9's Monthly → Weekly zoom: the week containing today when the viewed month contains today, otherwise the **first week whose Monday falls in that month**. One rule answers *"which week does this month mean"* for zoom, for this creation and for R-goal-47's scope.
-  - **Resolution**, over the Weekly goals under this Monthly goal in the target week:
+  - ~~**The target week** is the same clamp as R-lens-9's Monthly → Weekly zoom: the week containing today when the viewed month contains today, otherwise the **first week whose Monday falls in that month**. One rule answers *"which week does this month mean"* for zoom, for this creation and for R-goal-47's scope.~~ ⚠ **AMENDED BY A9 — it is NOT the same clamp, and treating it as one is the defect §6 Amendment 8 verified and A9 fixes.** The zoom's clamp asks whether today's **calendar month** is the viewed month; every other rule in this product asks which month a **week's Monday** belongs to (R-goal-33, R-lens-28). The two disagree for the one to six days between a month starting and its first Monday, and the disagreement is correct for a zoom and wrong for a create. So the target week is now its own rule:
+    - **The week the owner is standing in when THAT WEEK belongs to the viewed month; otherwise the viewed month's FIRST week.** The answer is inside the viewed month by construction, which is the whole property that was missing. `taskWeekForMonth('2026-09', today = 2026-09-02) = 2026-09-07`, where the retired clamp answered `2026-08-31` — August's week.
+    - **The month's first week, and not the current week with a warning**, when the two differ. A task is created to be *seen* in the lens that created it; a week the viewed month's own lens will never show is not a destination, it is a leak, and R-goal-47's planned-ness line would go on reading `Nothing planned yet` immediately after the owner planned something. Naming the discrepancy instead would preserve all three of the defect's consequences and merely narrate them. The chosen week is always current-or-future at the seam, so R-goal-36 is not engaged and nothing is back-dated.
+    - **The zoom's clamp is unchanged and is renamed to say what it is** — `zoomWeekForMonth`. Landing on the week you are living in is right for a zoom even when that week belongs to last month; R-lens-29's `This week is in Aug 2026` line already names the seam. **R-goal-47's scope is unchanged** and never reached the branch at all.
+  - **Resolution**, over the Weekly goals under this Monthly goal in the target week. ⚠ **AMENDED BY A9 — the destination is NAMED at every count; "used silently" is retired.** The owner added three tasks from a Monthly goal, was never told which weekly goal or which week they landed in, and could not find them afterwards. **The sheet states the weekly goal and the week before `Save task` is reachable, and offers a way to change both, at every candidate count.**
 
     | Candidates | What happens |
     |---|---|
-    | exactly one | it is used — no picker, no extra field, no extra tap |
-    | more than one | the sheet shows a picker with the first preselected — one tap to change, zero to accept |
-    | none | one is **created**, using R-task-48's `newWeeklyGoal` in the same transaction |
+    | exactly one | ~~it is used — no picker, no extra field, no extra tap~~ ⚠ **A9** — it is shown as a **filled choice** in the picker's compact row and used. A choice with one option is not a choice, but it is still an ANSWER, and the answer is what was owed. Zero extra taps, as before. |
+    | more than one | the sheet shows the picker's compact row with the first preselected — one tap to change, zero to accept |
+    | none | one is **created**, using R-task-48's `newWeeklyGoal` in the same transaction, and the sentence saying so names the week |
+
+  - ⚠ **A9 — the week, and the month that week belongs to, are named in all three rows**: `Lands in the week of 7 Sep · Sep 2026.` The month is there because a week and a month can honestly differ at a seam (a week belongs to its Monday's month), and because a task landing in a month other than the one on screen is exactly how the owner's three went missing. After the clamp fix the month named is the month you are looking at, so the line reads as a statement of fact rather than a warning.
 
   - **The implicit Weekly goal takes the Monthly goal's title.** A Weekly goal is this week's version of the monthly one, so `Run 4 times a week in August` reads correctly as a weekly goal and is renamable in one tap. `This week` would be meaningless in a list grouped by Life goal; naming it after the task confuses the step with the intent behind it.
   - **Stated before, named after — nothing may be created invisibly.** The sheet says `This starts a weekly goal "<title>" for the week of <Mon d Mon>. You can rename it after.` On save the toast reads `Added to week of <Mon d Mon>`, the app **moves to the Weekly lens at that week**, scrolled to the new task with focus on its row, and the live region carries `Added to week of Mon 31 Aug, under Run 4 times a week in August.` — naming the goal that was created, because it was created without being asked for.
@@ -911,7 +916,17 @@ Every rule in this section describes the `weekly_focus` entity and the plan scre
     - **`backlogHost`** — **Yearly, Quarterly and Monthly only**: never a Life goal, never a Weekly goal (R-backlog-1/2/26).
     - **`weeklyTarget`** — **Weekly goals in one week**, under the chosen parent (R-goal-39, R-task-41, R-task-49). ⚠ **A8 — the mode survives with two callers instead of three: Park (R-task-56) and a backlog conversion targeting a week (R-backlog-31). `+ Task` from a Monthly goal no longer uses it, because it no longer resolves a week.** When the server has named the candidates (`409 AMBIGUOUS_CONVERSION_TARGET`) **its list wins**: only the server knows the subtree *at or under* the item's goal, and the client holds no tree (R-lens-16).
     - **`lifeLine`** — **Life goals only**, plus a leading `No goal` row (R-learning-2/3; a non-Life tag is `NOT_A_LIFE_GOAL`).
-  - **One threshold governs both presentations: at 8 options a picker stops being a list and starts being a field.** At or below eight it is an inline grouped listbox with **no search field** — searching a list you can see whole is chrome, and this is where the promise not to tax an account with ten goals is kept. Above eight it is one row showing the current choice (`Choose a goal` when empty), which opens the full picker.
+  - ~~**One threshold governs both presentations: at 8 options a picker stops being a list and starts being a field.** At or below eight it is an inline grouped listbox with **no search field**. Above eight it is one row showing the current choice (`Choose a goal` when empty), which opens the full picker.~~ ⚠ **AMENDED BY A9 — the threshold governs ONE thing, and the SURFACE governs the shape.** The owner's `New Monthly goal` sheet had three legal parents, so eight-or-fewer chose the inline list, and three two-line rows ate the sheet and pushed `Save goal` below the fold. A count cannot tell a form sheet from a picker-shaped one. So:
+    - **Inside a form sheet the picker is always the compact row**, at every option count — one line naming the current choice with its line and period (`Choose a goal` when empty), which opens the full picker. The sheet's other fields and its save button keep their space, which is the only thing that was ever wrong here.
+    - **Where the picker IS the whole surface it is the inline grouped listbox**, at every option count — `Move goal`, whose sheet body is nothing else, and a backlog row's `Move to another goal`, on a screen. Nothing is being crowded out, so nothing needs collapsing.
+    - **Eight remains the search threshold and nothing else**: at or below eight options the opened picker carries **no search field**, because searching a list you can see whole is chrome, and this is where the promise not to tax an account with ten goals is kept. The count is the **total across every horizon**, not the scoped one (below).
+  - ⚠ **A9 — the list is SCOPED BY HORIZON first, and defaults to the most specific legal one.** The owner: *"instead we put everything under with all the goals from all the lense. we can have another option to select which lense to focus on and based on it i get the goals for that lense."* A horizon selector sits above the list; the list is that horizon's goals. This bounds the list **structurally** — one horizon's goals — rather than by a tuned number, and it matches the product's own lens-shaped mental model.
+    - **Which horizons are offered comes from the mode's own rule and nothing else**, so a horizon the server would refuse is never offered: `parent` offers every strictly longer horizon (`Life` alone under `only: 'life'`), `backlogHost` offers Yearly/Quarterly/Monthly, and `weeklyTarget` and `lifeLine` are single-horizon and therefore **render no selector at all**.
+    - **The default is the most specific legal horizon that has something to offer** — for a new Monthly goal that is Quarterly, not Life — or, when something is already chosen, that goal's own horizon, so reopening a picker shows you where your goal lives. Opening on an empty tab is a dead end; opening on the broadest is backwards, because the nearer a parent is the likelier it is the one you meant.
+    - **Search crosses every horizon.** While the field is non-empty the scope is dropped and the ranker sees every option. **Scoping is a default view, not a filter** — it holds no state past the choice it was opened for, which is the same distinction that keeps this search out of R-lens-15's reach.
+    - A horizon with no goals renders `No <horizon> goal to choose here. Pick another horizon above, or search across all of them.` — a third empty state, distinct from "this account has nothing legal at all".
+    - The selector is a **`role="radiogroup"` of `role="radio"` chips with a roving tabindex**: one tab stop, `←`/`→`/`↑`/`↓` move **and** select, `Home`/`End` reach the ends, each chip's accessible name carries its count. It is deliberately not a `tablist`, because a tab implies a `tabpanel` and the thing it controls is a `listbox`. **It adds a tab stop, never a second focus trap.**
+  - ⚠ **A9 — the picker's field announces its purpose AND its value**: `Choose a goal: Rebuild the gym habit — Be strong at 60 · Q3 2026`. It previously announced the value alone once filled, which left the one always-rendered field in the form without a label.
   - **The full picker takes over the sheet it was opened from.** The calling sheet swaps its body, its heading becomes `Choose a goal`, and a back control naming where you came from appears beside it. **There is never a second `aria-modal` dialog**, so there is never a second focus trap; the sheet does not unmount, so typed work survives by construction. Where the picker *is* the whole task (Move goal, moving a backlog item) it is simply the sheet's or the row's only body.
   - **Search ranks with the one shared ranker** (`packages/shared/src/search/rank-goals.ts`), which is `find_goal`'s: exact title `1.0`, prefix `0.9`, substring `0.75`, **Life line `0.5`**, `why` `0.35`, ties broken by horizon then `createdAt`. The assistant and the owner therefore order the same words the same way. It filters the already-loaded option set and fires no read; **when the field is non-empty the grouping collapses to one flat ranked list**, because a ranked list re-sorted into groups is not ranked.
   - **This does not reopen R-lens-15 or R-rm-4.** R-lens-15 forbids *search-as-filter in any lens* — a screen, and persistent filter state a user has to remember they set. **A picker is not a lens and its search is not state**: it lives inside a modal, resets to empty on every open, and cannot outlive the choice it was typed for. No lens read gains a parameter (S-lens-3-3 untouched).
@@ -1416,6 +1431,18 @@ Every scenario below asserts `weekly_focus` behaviour. Two survive as re-pointed
 - **S-measure-8-3** (R-measure-8, unhappy — ratios, checklists, recurrence) — *Then* no schema accepts a numerator/denominator pair, no measure holds a list of named items, and no template entity, series id, materialisation job, detached-from-series state or edit-this-versus-all-future decision exists anywhere (R-goal-46, unchanged).
 - **S-measure-9-1** (R-measure-9, happy — an agent gets the model, not a verdict) — *When* the server-instructions block is read. *Then* it states the two kinds, the implied direction, the optional target, that `current` is derived from the readings, and that readings follow the task and never the week. *And when* an agent is asked whether the owner is on track for a measure. *Then* the instructions require it to report the recorded numbers and refuse the verdict, exactly as they already refuse a report.
 - **S-measure-9-2** (R-measure-9, unhappy) — *Then* no MCP tool completes a task as a consequence of its target being met, and none records a reading as a side effect of completing a task.
+
+### Amendment 9 — a horizon-scoped picker, named task destinations, and the month clamp
+
+- **S-nav-31-14** (R-nav-31 / A9, happy — the surface decides the shape) — *Given* the create sheet for a Quarterly goal with **four** legal parents, comfortably under the threshold. *Then* the picker renders as **one compact row** and there is no `role="listbox"` and no `role="option"` anywhere in the sheet; the form's own fields and `Save goal` are unobstructed. *And given* `Move goal`, where the picker is the sheet's whole body. *Then* it is the inline listbox, with no compact row.
+- **S-nav-31-15** (R-nav-31 / A9, happy and unhappy — horizon scoping) — *Given* the picker opened from `New Quarterly goal`. *Then* the horizon selector offers exactly `Life` and `Yearly` — the mode's rule, read a second way — with `Yearly` selected, and **no** chip for Quarterly, Monthly or Weekly. *And* no illegal goal is reachable through any chip. *And given* `backlogHost`. *Then* the chips are exactly `Yearly · Quarterly · Monthly`, opening on `Monthly`. *And given* `weeklyTarget` or `lifeLine`. *Then* there is **no selector at all**, because the mode has one legal horizon.
+- **S-nav-31-16** (R-nav-31 / A9, happy — the default and the escape) — *Given* a picker whose most specific legal horizon holds goals. *Then* it opens on that horizon; *given* one that is empty, on the most specific that is not; *given* an existing choice, on that goal's own horizon with the goal `aria-selected`. *And when* anything is typed. *Then* the scope is dropped and the ranked results cross **every** horizon, and the search field's own threshold counts the **total** options, not the scoped ones.
+- **S-nav-31-17** (R-nav-31 / A9, happy — the selector's keyboard, and the third empty state) — *When* the horizon selector is operated by keyboard. *Then* it is **one** tab stop (`tabIndex` 0 on the selected chip, −1 on the rest), `←`/`→` move **and** select and move focus, `Home`/`End` reach the ends, and there is still exactly **one** `role="dialog"` on screen. *And given* a horizon with no goals while other horizons have some. *Then* the list is replaced by `No <horizon> goal to choose here. Pick another horizon above, or search across all of them.` — never the account-level empty sentence.
+- **S-goal-5-2** (R-goal-5 / R-nav-31 / A9, happy — the default parent) — *Given* `New Monthly goal` in `Sep 2026` with a Life goal, a Yearly goal for `2026` and a Quarterly goal for `Q3 2026` all legal. *Then* the parent field reads the **Quarterly goal for Q3 2026** — the deepest goal whose period contains the new one — it is `aria-selected` in the picker, saving without touching the field writes that `parentId`, and the Life goal is neither chosen nor made to look chosen.
+- **S-task-49-1** (R-task-49 / A9, happy — the destination is named at every count) — *Given* `+ Task` on a Monthly goal. *Then* the sheet renders `WHERE THIS GOES` with the resolved weekly goal as a **filled** choice at **one** candidate and at **several** (the first preselected), the create sentence naming the week at **none**, and in all three the line `Lands in the week of <d Mon> · <Month YYYY>.` before `Save task` is reachable. *And* the row opens the picker with the current choice selected, so the destination can be changed.
+- **S-task-49-2** (R-task-49 / A9, unhappy — the target week is inside the month) — *Given* the `Sep 2026` Monthly lens on **Wed 2 Sep 2026**, the day the owner lost three tasks. *Then* `+ Task` resolves the week of **Mon 7 Sep**, the sheet says `Sep 2026`, the write and the navigation both land on `2026-09-07`, and neither `31 Aug` nor `Aug 2026` appears anywhere in the sheet. *And given* the same day and the `Aug 2026` lens. *Then* it resolves **Mon 31 Aug** — the week the owner is standing in, which is August's — so the fix never pushes work backwards into a past week.
+- **S-lens-9-7** (R-lens-9 / A9, happy — the zoom keeps its answer) — *Given* `zoomWeekForMonth('2026-09', today = 2026-09-02)`. *Then* it is `2026-08-31`, a week `periodKeyOf('Monthly', …)` calls `2026-08`, and that is correct: a zoom lands on the week you are living in and R-lens-29's line names the seam. *And* `zoomWeekForMonth` and `taskWeekForMonth` are both declared only under `packages/shared/src/calendar/` (`no-second-calendar.test.ts`), and `apps/web/src/utils/periodKeys.ts` declares neither.
+
 
 ### Auth
 
@@ -2226,7 +2253,7 @@ exactly as it did.
 | Does a search field in a picker reopen R-lens-15 / R-rm-4? | **No.** R-lens-15's every clause is about **a lens** — a screen — and about **persistent filter state a user has to remember they set**. This search lives inside a modal, resets to empty on every open, cannot outlive the choice it was typed for, and adds no parameter to any lens read. What R-rm-4 deleted was a row of pills that changed what a *screen* showed until you changed it back; this changes what a *list you are standing in* offers, for two seconds. | R-nav-31, R-lens-15 |
 | How does the full picker open without stacking sheets? | **It takes over the sheet it was opened from.** Two of the sites already render their picker inside a sheet, so a picker that were always a sheet would need a sheet stack — two `aria-modal` dialogs and two focus traps, which is the bug `docs/work/09-e2e-browser` finding A already fixed once. The sheet swaps its body, its heading becomes `Choose a goal`, a back control names where you came from, and **the sheet never unmounts**, so typed work is preserved by construction — no draft to hoist, no z-index stack, and no change to `Sheet` at all. | R-nav-31 |
 | Should the ranking be promoted to `packages/shared`, and should an HTTP goal search ship with it? | **Promote the ranking; defer the endpoint.** MCP's `find_goal` already ranks exactly this question, and two implementations of "does this phrase mean that goal" would disagree on the first near-miss — the drift A5 moved the calendar to end. The **endpoint** is a different matter: no mode of this picker reaches 200 without a data pathology, so an endpoint would be built for a case that has not occurred, which R-nav-26 exists to refuse. What the picker owes the owner meanwhile is not reach but **honesty**: when a read came back capped, it says so. | R-nav-31 |
-| Where does the threshold sit, and does it govern one thing or three? | **Eight, and one thing.** Above eight the search field appears, `RECENT` becomes worth rendering, and the inline list becomes a field — three consequences of one number, roughly a phone screenful of two-line rows inside a sheet. One number to remember, one number to retune. | R-nav-31 |
+| Where does the threshold sit, and does it govern one thing or three? | **Eight, and one thing.** Above eight the search field appears, `RECENT` becomes worth rendering, and the inline list becomes a field — three consequences of one number, roughly a phone screenful of two-line rows inside a sheet. One number to remember, one number to retune. ⚠ **Answered again by A9, and the third consequence is withdrawn**: the inline-list-becomes-a-field half was the wrong half, because the question it answers is *how much room does the rest of this surface need*, and a count cannot see the rest of the surface. A picker in a form sheet is a row at every count; a picker that is the whole surface is a list at every count; eight still governs the search field, and `RECENT` with it. | R-nav-31 |
 
 #### Consequences checked and found to hold unchanged
 
@@ -2375,6 +2402,16 @@ open item is therefore narrower than it looked: **`weekForMonth`'s first branch 
 a general name**, and it should be renamed to say so rather than generalised. Recorded here, not
 actioned, because A8 removes the only caller for which it was wrong.
 
+⚠ **ACTIONED BY A9, ahead of A8 and for a different reason: the defect above is LIVE and the owner lost
+work to it, and A8 is a later, larger pass.** A9 does not wait for the caller to be deleted; it gives the
+caller a correct rule. `weekForMonth` is split in two — `zoomWeekForMonth` (unchanged body, R-lens-9's
+consumer, the recommended rename) and `taskWeekForMonth` (R-task-49's, whose predicate is the month of the
+**current week** rather than of `today`, so its answer is inside the month asked for by construction). Both
+names join `packages/shared/tests/no-second-calendar.test.ts`'s census, and the web wrapper in
+`apps/web/src/utils/periodKeys.ts` — the last of R-lens-30's six duplicated calendar functions, which
+survived only because its signature looked like vocabulary — is deleted rather than renamed. When A8
+deletes R-task-49's caller it will delete `taskWeekForMonth` with it; until then the rule is right.
+
 #### Consequences checked and found to hold unchanged
 
 - **R-task-13 (exactly three exits)** — unchanged. `retarget` is not an exit (R-task-56), and all three
@@ -2415,3 +2452,94 @@ actioned, because A8 removes the only caller for which it was wrong.
   body text beside a title.
 - **`prefers-reduced-motion`** — still has nothing to honour. A sparkline is a static path; it does not
   animate, draw in, or transition between values.
+
+### Amendment 9 — a horizon-scoped picker, named task destinations, and the month clamp
+
+Four defects the owner hit in real use, in one pass because three of them meet in the same sheet. This
+amendment builds **none** of Amendment 8's body — no month tasks, no measurables, no migration. It fixes
+what is live.
+
+**The owner, on the picker:**
+
+> *"instead we put everything under with all the goals from all the lense. we can have another option to
+> select which lense to focus on and based on it i get the goals for that lense."*
+
+That is a better answer than the threshold tweak the symptom invited, and it is the one built. The four:
+
+1. **The picker floods a form sheet.** R-nav-31's one threshold governed the search field *and* the shape,
+   and the shape half was wrong: a `New Monthly goal` sheet with three legal parents rendered three
+   two-line rows inline and pushed `Save goal` below the fold. A count cannot see the rest of the surface.
+   **The surface now decides the shape** — a compact row in a form, the inline list where the picker is the
+   whole surface — and the list is **scoped by horizon**, which bounds it structurally rather than by a
+   number.
+2. **The default parent was the wrong one, and was not even a default.** `GoalFormSheet` preselected only
+   when *exactly one* parent was legal; with three it selected nothing, and the roving-focus ring sat on
+   row 0 — which is a Life goal. The owner reported that `Sep 2026` "preselects" *Be financially
+   independent*; it did not, which is worse. It now defaults to the **nearest legal ancestor**.
+3. **`+ Task` on a Monthly goal never said where the task went.** The weekly-goal picker rendered only at
+   `choices.length > 1`; at exactly one the code path was, in its own comment, *"used silently"*. Three
+   tasks went somewhere the owner was never told and could not find. **The destination is named at every
+   count.**
+4. **The target-week clamp put tasks outside the month on screen.** Verified live, not inferred:
+   `weekForMonth('2026-09', '2026-09-02') = '2026-08-31'` and `periodKeyOf('Monthly', '2026-08-31') =
+   '2026-08'`. A8 recorded this and deferred it because A8 deletes the caller; A9 does not wait, because
+   the defect is live and it is how the three tasks were lost.
+
+**Added:** 0 rules. **Total rules unchanged at 256.**
+**Scenarios added:** 8 — `S-nav-31-14 … S-nav-31-17`, `S-goal-5-2`, `S-task-49-1`, `S-task-49-2`,
+`S-lens-9-7` (354 → **362**).
+**Retired outright:** 0 rules.
+**Existing rules modified, each marked `⚠` in §2:** 4 — `R-nav-31` (the threshold governs the search field
+alone; the surface governs the shape; horizon scoping and its default; the field's accessible name),
+`R-task-49` (its target-week clamp, and the retirement of "used silently"), `R-lens-9` (unchanged in
+behaviour, renamed `zoomWeekForMonth`), `R-goal-47` (its claim that one answer serves all three consumers
+is withdrawn; the scope itself is untouched).
+Running totals across all nine amendments: **121 rules superseded, retired or modified**, **33 retired
+outright** (unchanged — A9 retires none).
+**No new wire field, endpoint, error code, MCP tool, colour token, type size, dependency or migration.**
+One function splits into two, both inside `packages/shared/src/calendar/periods.ts`, and one client wrapper
+is deleted.
+
+#### The three questions this amendment had to settle
+
+| Question | Ruling | Rule |
+|---|---|---|
+| Scope the picker by horizon, or just raise the threshold? | **Scope it, which is the owner's own proposal.** A threshold is a number someone tuned against one account's shape; it says nothing about *why* eight is the line and it is wrong again the moment an account grows. Scoping by horizon bounds the list **structurally** — the list is one horizon's goals — and it fits the mental model the product already has, which is lens-shaped end to end. It also costs nothing new: the reads were already one per horizon (`useParentOptions`' four, `backlogHost`'s three), so the scope is a filter over data already in hand, not a new query. The threshold survives for the one job it was always right about: whether a list you can see whole needs a search field. | R-nav-31 |
+| Which week should `+ Task` from a Monthly goal use at the seam — the month's first week, or the current week with the month named? | **The month's first week.** Both options are honest, and only one of them is *useful*. A task is created to be seen in the lens that created it; a week the viewed month's lens will never show is a leak, not a destination, and naming it preserves all three of the defect's consequences (a Weekly goal minted in the wrong month, R-goal-47's line still reading `Nothing planned yet`, a navigation into the previous month) while merely narrating them. The first-week answer is always current-or-future at the seam, so nothing is back-dated and R-goal-36 is not engaged. And the month is named **anyway**, in all three destination rows — the fix and the disclosure are not alternatives. | R-task-49 |
+| Rename `weekForMonth`, or fix it in place? | **Split it, and rename the survivor.** The two questions genuinely differ: "which week am I living in, viewed from this month" (zoom) and "which week inside this month should new work go to" (create). One function answering both is how a zoom rule ended up deciding where work lands. A8's spec pass already recommended `zoomWeekForMonth`; A9 takes it and adds `taskWeekForMonth` beside it, puts **both** in `no-second-calendar.test.ts`'s census, and deletes the web wrapper — the last of R-lens-30's six duplicated calendar functions, which survived only because its signature looked like vocabulary rather than calendar. | R-lens-9, R-task-49 |
+
+#### Consequences checked and found to hold unchanged
+
+- **R-lens-15 / R-rm-4 (no filters in a lens)** — untouched, and the horizon selector does not reopen it
+  for the reason A7 already gave: it lives inside a modal, resets on every open, holds no state past the
+  choice it was typed for, and adds no parameter to any lens read (S-lens-3-3 untouched). It narrows a
+  *list you are standing in*, not a *screen you have to change back*.
+- **R-lens-13's surviving accessibility clause** — met by the second control as it is by the first: one tab
+  stop, arrows along the axis the control runs, the selection announced (`aria-checked` plus a
+  `role="status"` count) and never merely coloured. **Two tab stops, never two focus traps** — the picker
+  still renders inside the one dialog `Sheet` already traps, and A7's `aria-modal` stacking rule is
+  untouched.
+- **R-lens-16 / R-lens-27 (no read loads the whole goal list)** — untouched. A9 adds no read, no endpoint
+  and no query parameter; horizon scoping filters options the picker already held.
+- **R-goal-36 (nothing is created into a past period)** — honoured by construction at the seam. The month
+  holding the current week keeps it, so the first-week fallback only fires for a month the current week is
+  not in, and can therefore never answer a week earlier than the one the owner is standing in.
+- **R-goal-47's planned-ness scope** — literally unchanged, and now *correct in company*: the week
+  `+ Task` targets is inside the viewed month, so the line counts what the owner just planned instead of
+  reading `Nothing planned yet` immediately after they planned it.
+- **R-nav-19 / R-task-41 (nothing is created into a period and then vanishes)** — strengthened. The forced
+  move to the Weekly lens now lands on a week the viewed month actually contains, which is what that rule
+  was always trying to guarantee.
+- **D-18 (array order is not a decision)** — untouched. The server still refuses an ambiguous conversion
+  and still names its candidates, and its list still wins over the client's filter. What A9 changes is a
+  *client-side default the owner can see and change in one tap*, which is the distinction D-18 turns on.
+- **D-5 (a disabled button is a hint, not an invariant)** — honoured. `permittedHorizons` is the mode's own
+  legality rule read a second way rather than a second rule, so a horizon chip can never offer what the
+  server would refuse; where the two could ever disagree the server still wins and its refusal still
+  renders at the form.
+- **R-nav-27 (two rows of chrome)** — untouched. Nothing here renders on a lens.
+- **Contrast (`tests/screens/contrast.test.ts`)** — no new colour and no new token: the horizon chips are
+  the product's existing `S.chipBtn`, the destination lines are `T.mut` body text.
+- **`docs/BUSINESS-RULES.md`** — one sentence changes, in the Goal section's create bullet (the parent
+  default and the horizon scoping). `apps/api/src/api/mcp/business-rules.ts` is regenerated in the same
+  commit, and `apps/api/tests/mcp/verbatim.test.ts` is what proves it.
