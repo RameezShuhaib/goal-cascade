@@ -42,10 +42,12 @@ describe('Creating a goal (§6.7)', () => {
     const sheet = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
 
     // A Quarterly goal's legal parents are the Life goals and the Yearly goals of the enclosing year.
-    expect(await within(sheet).findByRole('button', { name: /Get back under 80kg/ })).toBeInTheDocument();
-    expect(within(sheet).getByRole('button', { name: /Be strong at 60/ })).toBeInTheDocument();
+    // ⚠ **R-nav-31** — the rows are `role="option"` in one listbox now, and each name carries the Life
+    // line and the period, so two same-titled goals in different lines are one utterance apart.
+    expect(await within(sheet).findByRole('option', { name: 'Get back under 80kg — Be strong at 60 · Yearly · 2026' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('option', { name: /^Be strong at 60/ })).toBeInTheDocument();
     // Never a shorter or equal horizon: a Monthly goal cannot parent a Quarterly one (R-goal-5).
-    expect(within(sheet).queryByRole('button', { name: /Lift three times a week/ })).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole('option', { name: /Lift three times a week/ })).not.toBeInTheDocument();
   });
 
   it('the per-group create knows the line as well as the period, and writes the canonical key', async () => {
@@ -56,8 +58,8 @@ describe('Creating a goal (§6.7)', () => {
 
     const sheet = await screen.findByRole('dialog', { name: 'New Monthly goal' });
     // Narrowed to that line: `Launch v1` belongs to the other one and is not offered.
-    const parent = await within(sheet).findByRole('button', { name: /Rebuild the gym habit/ });
-    expect(within(sheet).queryByRole('button', { name: /Launch v1/ })).not.toBeInTheDocument();
+    const parent = await within(sheet).findByRole('option', { name: /^Rebuild the gym habit/ });
+    expect(within(sheet).queryByRole('option', { name: /^Launch v1/ })).not.toBeInTheDocument();
 
     await user.click(parent);
     await user.type(within(sheet).getByLabelText('Goal title'), 'Deadlift twice a week');
@@ -108,7 +110,7 @@ describe('Creating a goal (§6.7)', () => {
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
     await user.click((await screen.findAllByRole('button', { name: '+ Quarterly goal' }))[0]!);
     const sheet = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
-    await user.click(await within(sheet).findByRole('button', { name: /Get back under 80kg/ }));
+    await user.click(await within(sheet).findByRole('option', { name: /^Get back under 80kg/ }));
     await user.type(within(sheet).getByLabelText('Goal title'), 'Something');
     await user.click(within(sheet).getByRole('button', { name: 'Save goal' }));
 

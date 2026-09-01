@@ -69,9 +69,11 @@ describe('Learnings', () => {
 
     await user.click(await screen.findByText('“Evening sessions never survive a busy week”'));
     await user.click(screen.getByRole('button', { name: 'Attach to a goal' }));
-    // Two `No goal` chips exist by design: the capture form's tag row and this card's re-tag row.
-    const chips = screen.getAllByRole('button', { name: 'No goal' });
-    await user.click(chips[chips.length - 1]!);
+    // Two `No goal` rows exist by design: the capture form's picker and this card's re-tag picker.
+    // ⚠ **R-nav-31** — they are `role="option"` rows in a listbox now, not chips: the selection is
+    // announced rather than merely coloured (R-lens-13's one surviving requirement).
+    const rows = screen.getAllByRole('option', { name: 'No goal' });
+    await user.click(rows[rows.length - 1]!);
 
     await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/learnings/'))).toMatchObject({ goalId: null }));
   });
@@ -82,8 +84,8 @@ describe('Learnings', () => {
     await go(user, 'Learnings');
 
     await screen.findByText('“Evening sessions never survive a busy week”');
-    expect(screen.queryByRole('button', { name: 'Rebuild the gym habit' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Be strong at 60' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /^Rebuild the gym habit/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Be strong at 60 — Life goal' })).toBeInTheDocument();
   });
 
   it('R-learning-2: a refused tag is stated, not swallowed', async () => {

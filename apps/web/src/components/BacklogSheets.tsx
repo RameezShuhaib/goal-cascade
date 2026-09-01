@@ -1,17 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import type { GoalView, Horizon } from '@goal-cascade/shared';
+import type { Horizon } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useBacklog, useCreateBacklogItem, useConvertBacklogItem, useCreateTask, useGoal, useLens } from '../api/queries';
+import { useBacklog, useCreateBacklogItem, useConvertBacklogItem, useCreateTask, useGoal } from '../api/queries';
 import { toApiError } from '../api/errors';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
 import { FieldError, Loading, commandError } from './states';
+import { recentGoalIds, useGoalPicker } from './GoalPicker';
 import { hostOf } from '../utils/tree';
 import { shortDate } from '../utils/dates';
 import { lensPath, BACKLOG_PATH } from '../routes';
-import { useWeeklyGoalsUnder } from '../lens/useParentOptions';
 import { implicitWeeklyGoalNote } from '../lens/copy';
 
 /**
@@ -19,9 +19,6 @@ import { implicitWeeklyGoalNote } from '../lens/copy';
  *
  * Neither mints an id. Q-8 makes every id a server-side ULID and the request schemas are `.strict()`.
  */
-
-/** R-backlog-14 — the drawer's goal defaults to the last one used, this page load only, validated first. */
-let lastUsedGoalId: string | null = null;
 
 /**
  * R-backlog-27 — the `+` drawer. Unchanged except in its target resolution: with `Add to this week
@@ -31,9 +28,12 @@ let lastUsedGoalId: string | null = null;
  * D-21 — exactly ONE entity, ever. The mockup's label promised "also", which would have been a data bug
  * for the first person who went looking in the backlog for something that was never put there.
  *
- * The goal chips list Yearly/Quarterly/Monthly goals only — never Life, and now never **Weekly**
+ * The goal picker lists Yearly/Quarterly/Monthly goals only — never Life, and now never **Weekly**
  * (R-backlog-2): the whole point of a backlog item is that it has no week, and a Weekly goal would give
  * it one.
+ *
+ * ⚠ **R-nav-31** — the wrapping wall of `chipBtn` pills, titles only, is gone. This is the site the owner
+ * named, and it is now the one picker in `backlogHost` mode.
  */
 export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
   const S = useSkin();
@@ -43,17 +43,7 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
   const createItem = useCreateBacklogItem();
   const createTask = useCreateTask();
 
-  // The three horizons that may hold a backlog item, each at the period containing today (the server
-  // answers with the current one when we send none). Four small indexed reads, all cached.
-  const yearly = useLens('Yearly');
-  const quarterly = useLens('Quarterly');
-  const monthly = useLens('Monthly');
-  const targets: GoalView[] = [...(yearly.data?.items ?? []), ...(quarterly.data?.items ?? []), ...(monthly.data?.items ?? [])];
-
-  const remembered = lastUsedGoalId && targets.some((g) => g.id === lastUsedGoalId) ? lastUsedGoalId : null;
-  const [goalId, setGoalId] = useState<string | null>(
-    (initialGoalId && targets.some((g) => g.id === initialGoalId) ? initialGoalId : null) ?? remembered ?? null,
-  );
+  const [goalId, setGoalId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [linkDraft, setLinkDraft] = useState('');
@@ -61,16 +51,54 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
   const [toWeek, setToWeek] = useState(false);
   const [chosen, setChosen] = useState<string | null>(null);
 
+  const goalPicker = useGoalPicker({
+    mode: { kind: 'backlogHost' },
+    value: goalId,
+    onChange: (id) => {
+      setGoalId(id);
+      setChosen(null);
+    },
+    from: 'Add to Backlog',
+    empty: 'Nothing to file this under yet — a backlog item needs a Yearly, Quarterly or Monthly goal.',
+    listLabel: 'Goals that can hold a backlog item',
+  });
+  const targets = goalPicker.options;
+
+  /**
+   * ⚠ **R-backlog-14, generalised.** The drawer still opens on the goal you filed under last, this page
+   * load only, validated first — but the memory is now the picker's `RECENT` list, shared with every
+   * other mode, rather than this file's own private one-goal variable. The default lands when the
+   * options do, because a default naming a goal the account no longer has is worse than no default.
+   */
+  useEffect(() => {
+    if (goalId !== null || targets.length === 0) return;
+    const seed =
+      (initialGoalId && targets.some((g) => g.id === initialGoalId) ? initialGoalId : null) ??
+      recentGoalIds().find((id) => targets.some((g) => g.id === id)) ??
+      null;
+    if (seed) setGoalId(seed);
+  }, [goalId, initialGoalId, targets]);
+
   const chosenGoal = targets.find((g) => g.id === goalId) ?? null;
-  const { candidates } = useWeeklyGoalsUnder(goalId ?? '', clock.currentMonday ?? undefined, toWeek && !!goalId);
+  /**
+   * R-task-49 — the Weekly goals under the chosen goal, in the current week. `weekStart` is `undefined`
+   * until the box is ticked, which is what keeps the read from firing for a drawer nobody has asked to
+   * put work in this week.
+   */
+  const weeklyPicker = useGoalPicker({
+    mode: {
+      kind: 'weeklyTarget',
+      parentId: goalId ?? '',
+      weekStart: toWeek && goalId ? (clock.currentMonday ?? undefined) : undefined,
+    },
+    value: chosen,
+    onChange: setChosen,
+    from: 'Add to Backlog',
+    listLabel: 'Weekly goals in this week',
+  });
+  const candidates = weeklyPicker.options;
   const target = candidates.length === 1 ? candidates[0]!.id : chosen && candidates.some((c) => c.id === chosen) ? chosen : null;
   const close = () => ui.closeSheet();
-
-  const pickGoal = (id: string) => {
-    setGoalId(id);
-    setChosen(null);
-    lastUsedGoalId = id;
-  };
 
   const save = () => {
     if (!goalId || !title.trim()) return;
@@ -95,124 +123,122 @@ export function BacklogDrawer({ goalId: initialGoalId }: { goalId?: string }) {
   const busy = createItem.isPending || createTask.isPending;
   const blocked = !goalId || !title.trim() || busy || (toWeek && candidates.length > 1 && !target);
 
+  const taken = goalPicker.taken || weeklyPicker.taken;
+
   return (
     <Sheet
-      label="Add to Backlog"
+      label={taken ? goalPicker.heading : 'Add to Backlog'}
       onClose={close}
       headerRight={
-        <button
-          type="button"
-          style={{ minHeight: 36, border: 'none', background: 'none', fontSize: 13, fontWeight: 700, color: S.T.accentLink, cursor: 'pointer', fontFamily: 'inherit' }}
-          onClick={() => {
-            close();
-            navigate(BACKLOG_PATH);
-          }}
-        >
-          View Backlog →
-        </button>
+        taken ? (
+          (goalPicker.headerRight ?? weeklyPicker.headerRight)
+        ) : (
+          <button
+            type="button"
+            style={{ minHeight: 36, border: 'none', background: 'none', fontSize: 13, fontWeight: 700, color: S.T.accentLink, cursor: 'pointer', fontFamily: 'inherit' }}
+            onClick={() => {
+              close();
+              navigate(BACKLOG_PATH);
+            }}
+          >
+            View Backlog →
+          </button>
+        )
       }
     >
-      <div style={{ ...S.fieldLabel, marginBottom: 6 }}>GOAL</div>
-      {targets.length === 0 ? (
-        // R-auth-6 / D-10 — a brand-new account has nothing. There is no fallback goal to invent.
-        <div style={{ fontSize: 13.5, color: S.T.mut, marginBottom: 14 }}>
-          Nothing to file this under yet — a backlog item needs a Yearly, Quarterly or Monthly goal.
-        </div>
+      {taken ? (
+        goalPicker.taken ? (
+          goalPicker.panel
+        ) : (
+          weeklyPicker.panel
+        )
       ) : (
-        <div data-h-scroll style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
-          {targets.map((g) => (
-            <button key={g.id} type="button" style={S.chipBtn(goalId === g.id)} onClick={() => pickGoal(g.id)}>
-              {g.title}
-            </button>
+        <>
+        <div style={{ ...S.fieldLabel, marginBottom: 6 }}>GOAL</div>
+        {/* R-auth-6 / D-10 — a brand-new account has nothing, and the picker's own empty state says so. */}
+        <div style={{ marginBottom: 14 }}>{goalPicker.control}</div>
+
+        <input
+          aria-label="What needs doing, someday?"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="What needs doing, someday?"
+          style={{ ...S.input, marginBottom: 12 }}
+        />
+        <textarea
+          aria-label="Description"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+          placeholder="Description (optional)"
+          style={{ ...S.textarea, marginBottom: 12 }}
+        />
+
+        <div style={{ ...S.fieldLabel, marginBottom: 6 }}>LINKS</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 6 }}>
+          {links.map((url, i) => (
+            <div key={url + i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: S.T.paper, borderRadius: 10, padding: '6px 6px 6px 12px' }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: S.T.ink }}>
+                {hostOf(url)}
+              </div>
+              <button
+                type="button"
+                aria-label={`Remove link ${hostOf(url)}`}
+                onClick={() => setLinks(links.filter((_, j) => j !== i))}
+                style={{ minWidth: 36, minHeight: 36, border: 'none', background: 'none', color: S.T.mut, fontSize: 15, cursor: 'pointer' }}
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
-      )}
-
-      <input
-        aria-label="What needs doing, someday?"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="What needs doing, someday?"
-        style={{ ...S.input, marginBottom: 12 }}
-      />
-      <textarea
-        aria-label="Description"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        rows={2}
-        placeholder="Description (optional)"
-        style={{ ...S.textarea, marginBottom: 12 }}
-      />
-
-      <div style={{ ...S.fieldLabel, marginBottom: 6 }}>LINKS</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 6 }}>
-        {links.map((url, i) => (
-          <div key={url + i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: S.T.paper, borderRadius: 10, padding: '6px 6px 6px 12px' }}>
-            <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: S.T.ink }}>
-              {hostOf(url)}
-            </div>
-            <button
-              type="button"
-              aria-label={`Remove link ${hostOf(url)}`}
-              onClick={() => setLinks(links.filter((_, j) => j !== i))}
-              style={{ minWidth: 36, minHeight: 36, border: 'none', background: 'none', color: S.T.mut, fontSize: 15, cursor: 'pointer' }}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <input
-          aria-label="Link URL"
-          value={linkDraft}
-          onChange={(e) => setLinkDraft(e.target.value)}
-          placeholder="https://…"
-          style={{ ...S.input, flex: 1, minHeight: 44, borderRadius: 10, fontSize: 13.5 }}
-        />
-        <button
-          type="button"
-          aria-label="Add link"
-          style={S.menuBtn}
-          onClick={() => {
-            if (!linkDraft.trim()) return;
-            setLinks([...links, linkDraft.trim()]);
-            setLinkDraft('');
-          }}
-        >
-          Add
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 14 }}>
-        <button type="button" aria-label="Add to this week instead" style={S.checkBox(toWeek)} onClick={() => setToWeek(!toWeek)}>
-          {toWeek ? '✓' : ''}
-        </button>
-        <div style={{ fontSize: 14, fontWeight: 600, color: S.T.ink }}>Add to this week instead</div>
-      </div>
-
-      {toWeek && candidates.length === 0 && (
-        <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>
-          No weekly goal under {chosenGoal?.title ?? 'this goal'} this week — it will be parked in the Backlog.
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            aria-label="Link URL"
+            value={linkDraft}
+            onChange={(e) => setLinkDraft(e.target.value)}
+            placeholder="https://…"
+            style={{ ...S.input, flex: 1, minHeight: 44, borderRadius: 10, fontSize: 13.5 }}
+          />
+          <button
+            type="button"
+            aria-label="Add link"
+            style={S.menuBtn}
+            onClick={() => {
+              if (!linkDraft.trim()) return;
+              setLinks([...links, linkDraft.trim()]);
+              setLinkDraft('');
+            }}
+          >
+            Add
+          </button>
         </div>
-      )}
-      {toWeek && candidates.length > 1 && (
-        <>
-          <div style={{ ...S.fieldLabel, margin: '12px 0 6px 0' }}>WHICH WEEKLY GOAL?</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {candidates.map((c) => (
-              <button key={c.id} type="button" style={S.chipBtn(target === c.id)} onClick={() => setChosen(c.id)}>
-                {c.title}
-              </button>
-            ))}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginTop: 14 }}>
+          <button type="button" aria-label="Add to this week instead" style={S.checkBox(toWeek)} onClick={() => setToWeek(!toWeek)}>
+            {toWeek ? '✓' : ''}
+          </button>
+          <div style={{ fontSize: 14, fontWeight: 600, color: S.T.ink }}>Add to this week instead</div>
+        </div>
+
+        {toWeek && candidates.length === 0 && (
+          <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>
+            No weekly goal under {chosenGoal?.title ?? 'this goal'} this week — it will be parked in the Backlog.
           </div>
+        )}
+        {toWeek && candidates.length > 1 && (
+          <>
+            <div style={{ ...S.fieldLabel, margin: '12px 0 6px 0' }}>WHICH WEEKLY GOAL?</div>
+            {weeklyPicker.control}
+          </>
+        )}
+
+        <FieldError>{commandError(createItem.error) ?? commandError(createTask.error)}</FieldError>
+        <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
+          Save
+        </button>
         </>
       )}
-
-      <FieldError>{commandError(createItem.error) ?? commandError(createTask.error)}</FieldError>
-      <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
-        Save
-      </button>
     </Sheet>
   );
 }
@@ -261,7 +287,6 @@ export function TaskCreateSheet({
   const convertItem = useConvertBacklogItem();
   const backlogQ = useBacklog();
 
-  const { candidates } = useWeeklyGoalsUnder(newWeekly?.parentId ?? '', weekStart, !!newWeekly);
   const [picked, setPicked] = useState<string | null>(null);
   const [title, setTitle] = useState(initialTitle ?? '');
   const [cond, setCond] = useState('');
@@ -269,8 +294,33 @@ export function TaskCreateSheet({
   /** D-18 / S-backlog-26-3 — the server's own candidate list, when it refuses an ambiguous conversion. */
   const [serverCandidates, setServerCandidates] = useState<{ id: string; title: string }[] | null>(null);
 
+  /**
+   * ⚠ **R-nav-31** — the same picker as everywhere else, in `weeklyTarget` mode. When the server has
+   * named the candidates it wins: it knows the subtree *at or under* the item's goal, and the client is
+   * not allowed to hold one (R-lens-16), so a level-skipped Weekly goal reaches this list only that way.
+   */
+  const weeklyPicker = useGoalPicker({
+    mode: {
+      kind: 'weeklyTarget',
+      parentId: newWeekly?.parentId ?? '',
+      weekStart: newWeekly ? weekStart : undefined,
+      ...(serverCandidates ? { candidates: serverCandidates } : {}),
+    },
+    value: picked,
+    onChange: setPicked,
+    from: 'New task',
+    listLabel: 'Weekly goals in the target week',
+  });
+
   const item = fromBacklogId ? (backlogQ.data?.items ?? []).find((b) => b.id === fromBacklogId) : undefined;
-  const choices = serverCandidates ?? candidates.map((c) => ({ id: c.id, title: c.title }));
+  const choices = weeklyPicker.options;
+
+  // R-task-49 — more than one candidate: **the first is preselected**, so accepting costs zero taps. It
+  // is written into state rather than left as a fallback so the row renders as selected and is announced
+  // (R-lens-13), which the chip row it replaces never did.
+  useEffect(() => {
+    if (!initialGoalId && picked === null && choices.length > 1) setPicked(choices[0]!.id);
+  }, [initialGoalId, picked, choices]);
   // Exactly one → used silently. More than one → the first is preselected, so accepting costs zero taps.
   const resolved = initialGoalId ?? picked ?? choices[0]?.id ?? null;
   const willCreateGoal = !initialGoalId && !!newWeekly && choices.length === 0;
@@ -332,48 +382,48 @@ export function TaskCreateSheet({
   };
 
   return (
-    <Sheet label="New task" onClose={close}>
-      <input
-        aria-label="What needs doing?"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="What needs doing?"
-        style={{ ...S.input, marginBottom: 12 }}
-      />
-      <input
-        aria-label="How will you know it's done?"
-        value={cond}
-        onChange={(e) => setCond(e.target.value)}
-        placeholder="How will you know it's done?"
-        style={S.input}
-      />
-
-      {/* More than one candidate: a picker with the first preselected. One tap to change, zero to accept. */}
-      {!initialGoalId && choices.length > 1 && (
+    <Sheet label={weeklyPicker.taken ? weeklyPicker.heading : 'New task'} headerRight={weeklyPicker.headerRight} onClose={close}>
+      {weeklyPicker.taken ? (
+        weeklyPicker.panel
+      ) : (
         <>
-          <div style={{ ...S.fieldLabel, margin: '14px 0 6px 0' }}>WHICH WEEKLY GOAL?</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {choices.map((c) => (
-              <button key={c.id} type="button" style={S.chipBtn(resolved === c.id)} onClick={() => setPicked(c.id)}>
-                {c.title}
-              </button>
-            ))}
+        <input
+          aria-label="What needs doing?"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="What needs doing?"
+          style={{ ...S.input, marginBottom: 12 }}
+        />
+        <input
+          aria-label="How will you know it's done?"
+          value={cond}
+          onChange={(e) => setCond(e.target.value)}
+          placeholder="How will you know it's done?"
+          style={S.input}
+        />
+
+        {/* More than one candidate: a picker with the first preselected. One tap to change, zero to accept. */}
+        {!initialGoalId && choices.length > 1 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ ...S.fieldLabel, marginBottom: 6 }}>WHICH WEEKLY GOAL?</div>
+            {weeklyPicker.control}
           </div>
+        )}
+
+        {/* Stated before it happens. Nothing may be created invisibly (R-task-49). */}
+        {willCreateGoal && weekStart && (
+          <div style={{ fontSize: 13, color: S.body, background: S.T.paper, border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px', marginTop: 14 }}>
+            {implicitWeeklyGoalNote(newWeekly!.title, shortDate(weekStart))}
+          </div>
+        )}
+        {item && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>From the backlog: {item.title}</div>}
+
+        <FieldError>{refused ?? commandError(createTask.error) ?? commandError(convertItem.error)}</FieldError>
+        <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
+          Save task
+        </button>
         </>
       )}
-
-      {/* Stated before it happens. Nothing may be created invisibly (R-task-49). */}
-      {willCreateGoal && weekStart && (
-        <div style={{ fontSize: 13, color: S.body, background: S.T.paper, border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px', marginTop: 14 }}>
-          {implicitWeeklyGoalNote(newWeekly!.title, shortDate(weekStart))}
-        </div>
-      )}
-      {item && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>From the backlog: {item.title}</div>}
-
-      <FieldError>{refused ?? commandError(createTask.error) ?? commandError(convertItem.error)}</FieldError>
-      <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
-        Save task
-      </button>
     </Sheet>
   );
 }

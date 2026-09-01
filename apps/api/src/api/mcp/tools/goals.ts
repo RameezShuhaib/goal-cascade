@@ -8,13 +8,15 @@ import {
   Ulid,
   WeekOffset,
   WeekStart,
+  isAmbiguous,
   isPeriodKeyFor,
+  rankGoals,
 } from '@goal-cascade/shared';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { BootstrapService, GoalService, GoalTreeGuard } from '../../../application/services';
 import { guard } from '../errors';
-import { goalOut, isAmbiguous, lensOutline, ok, rankGoals, stampIdempotencyKey, week, weekOut, type McpDeps } from '../shapes';
+import { goalOut, lensOutline, ok, stampIdempotencyKey, week, weekOut, type McpDeps } from '../shapes';
 
 /**
  * The week input every week-scoped read tool shares. `WeekOffset` is the repo's own schema, reused

@@ -5,6 +5,7 @@ import { resetRequests, server } from './msw/handlers';
 import { resetServerClock } from '../src/lib/serverClock';
 import { resetOwnerClock } from '../src/lib/ownerClock';
 import { resetPeriodEchoWarning } from '../src/lens/assertPeriodAgrees';
+import { forgetRecentGoals } from '../src/components/GoalPicker';
 import { DEFAULT_NOW, resetFixtureNow } from './msw/fixtures';
 
 /**
@@ -83,6 +84,9 @@ afterEach(() => {
   // session — so one test's day must not leak into the next's.
   resetOwnerClock();
   resetPeriodEchoWarning();
+  // R-nav-31 — the goal picker's `RECENT` list is session-scoped module state, exactly as the drawer's
+  // `lastUsedGoalId` was. One test's choice must not preselect the next test's picker.
+  forgetRecentGoals();
   try {
     localStorage.clear();
     sessionStorage.clear();

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PULSES, type DeleteGoalResponse, type Horizon, type Pulse } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
@@ -9,7 +9,7 @@ import { Sheet } from './Sheet';
 import { FieldError, Loading, commandError } from './states';
 import { plural } from '../utils/tree';
 import { PERIOD_UNIT } from '../utils/periodKeys';
-import { useParentOptions } from '../lens/useParentOptions';
+import { GoalPicker, useGoalPicker } from './GoalPicker';
 import { lensPath } from '../routes';
 
 /**
@@ -34,8 +34,13 @@ import { lensPath } from '../routes';
  * **Creating a goal into a period you are not looking at is impossible**, which is what makes R-nav-19's
  * "moves you to the target week" case unreachable from here.
  *
- * The parent picker lists only legal parents in the enclosing period (R-goal-5, `useParentOptions`), and
- * **when there is exactly one it is preselected** and the picker collapses to a single confirming row.
+ * The parent picker lists only legal parents in the enclosing period (R-goal-5), and **when there is
+ * exactly one it is preselected** and the picker collapses to a single confirming row.
+ *
+ * ⚠ **R-nav-31** — `UNDER` is no longer a flat 200-pixel scroller listing every goal at every longer
+ * horizon with a horizon tag and nothing else. It is the one goal picker in `parent` mode: grouped by
+ * Life goal, every row carrying its line and its period, searchable above eight options, and above eight
+ * it **takes over this sheet** rather than opening a second one over it.
  */
 export function GoalFormSheet({
   editId,
@@ -61,11 +66,27 @@ export function GoalFormSheet({
   const editQ = useGoal(editId);
   const create = useCreateGoal();
   const patch = usePatchGoal();
-  const parents = useParentOptions(horizon, periodKey, lifeGoalId);
-
   const editing = editQ.data?.goal;
   const [draft, setDraft] = useState<{ title: string; why: string; pulse: Pulse } | null>(null);
   const [chosenParent, setChosenParent] = useState<string | null>(parentId ?? null);
+
+  const isLife = horizon === 'Life';
+  const needsParent = !editId && !isLife;
+  const picker = useGoalPicker({
+    mode: { kind: 'parent', horizon, periodKey, lifeGoalId },
+    value: chosenParent,
+    onChange: setChosenParent,
+    from: `New ${horizon} goal`,
+    listLabel: 'Goals this one can hang off',
+  });
+
+  // §6.7, unchanged in substance — with exactly one legal parent it is preselected and the picker
+  // collapses to a single confirming row. It is an effect rather than a fallback so that the row it picks
+  // renders as SELECTED (R-lens-13: the selection is announced, never merely coloured).
+  const only = needsParent && picker.options.length === 1 ? picker.options[0]! : null;
+  useEffect(() => {
+    if (only && chosenParent === null) setChosenParent(only.id);
+  }, [only, chosenParent]);
 
   const close = () => ui.closeSheet();
   const fields = draft ?? { title: editing?.title ?? title ?? '', why: editing?.why ?? '', pulse: editing?.pulse ?? 'On track' };
@@ -79,10 +100,7 @@ export function GoalFormSheet({
     );
   }
 
-  const isLife = horizon === 'Life';
-  const only = parents.options.length === 1 ? parents.options[0]! : null;
   const parent = chosenParent ?? only?.id ?? null;
-  const needsParent = !editId && !isLife;
   const label = periodLabel ?? periodKey;
 
   /**
@@ -90,7 +108,7 @@ export function GoalFormSheet({
    * Life lens **and opens `New Life goal`**, so the loop closes in one tap: a handoff that dropped the
    * user's intent is exactly the nit this design exists to avoid.
    */
-  if (needsParent && !parents.isPending && parents.options.length === 0) {
+  if (needsParent && !picker.isPending && picker.options.length === 0) {
     const above = horizon === 'Yearly' ? 'a Life goal' : `a Life or ${horizon === 'Quarterly' ? 'Yearly' : horizon === 'Monthly' ? 'Quarterly' : 'Monthly'} goal`;
     return (
       <Sheet label={`New ${horizon} goal`} onClose={close}>
@@ -138,45 +156,47 @@ export function GoalFormSheet({
   };
 
   return (
-    <Sheet label={editing ? 'Edit goal' : `New ${horizon} goal`} onClose={close}>
-      <input aria-label="Goal title" value={fields.title} onChange={(e) => set({ title: e.target.value })} placeholder="Goal title" style={{ ...S.input, marginBottom: 10 }} />
-      <input aria-label="Why? (optional)" value={fields.why} onChange={(e) => set({ why: e.target.value })} placeholder="Why? (optional)" style={{ ...S.input, marginBottom: 14 }} />
-
-      {!isLife && !editing && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-          <span style={{ ...S.chipBtn(false), display: 'inline-flex', alignItems: 'center', cursor: 'default' }}>{label}</span>
-          <span style={{ flex: 1, fontSize: 12.5, color: S.T.mut }}>Because you&apos;re looking at {label}.</span>
-        </div>
-      )}
-
-      {needsParent && (
+    <Sheet
+      label={picker.taken ? picker.heading : editing ? 'Edit goal' : `New ${horizon} goal`}
+      headerRight={picker.headerRight}
+      onClose={close}
+    >
+      {picker.taken ? (
+        picker.panel
+      ) : (
         <>
-          <div style={{ ...S.fieldLabel, marginBottom: 6 }}>UNDER</div>
-          <div style={{ border: `1px solid ${S.T.line}`, borderRadius: 12, maxHeight: 200, overflow: 'auto', marginBottom: 14 }}>
-            {parents.isPending && <div style={{ fontSize: 13, color: S.T.mut, padding: '12px 14px' }}>Loading…</div>}
-            {parents.options.map((g) => (
-              <button key={g.id} type="button" style={S.pickerRow(parent === g.id ? 'sel' : 'ok')} onClick={() => setChosenParent(g.id)}>
-                <span style={{ flex: 1, minWidth: 0 }}>{g.title}</span>
-                <span style={{ fontSize: 10.5, fontWeight: 800, color: S.T.mut, marginLeft: 7 }}>{g.horizon.toUpperCase()}</span>
-              </button>
-            ))}
+        <input aria-label="Goal title" value={fields.title} onChange={(e) => set({ title: e.target.value })} placeholder="Goal title" style={{ ...S.input, marginBottom: 10 }} />
+        <input aria-label="Why? (optional)" value={fields.why} onChange={(e) => set({ why: e.target.value })} placeholder="Why? (optional)" style={{ ...S.input, marginBottom: 14 }} />
+
+        {!isLife && !editing && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <span style={{ ...S.chipBtn(false), display: 'inline-flex', alignItems: 'center', cursor: 'default' }}>{label}</span>
+            <span style={{ flex: 1, fontSize: 12.5, color: S.T.mut }}>Because you&apos;re looking at {label}.</span>
           </div>
+        )}
+
+        {needsParent && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ ...S.fieldLabel, marginBottom: 6 }}>UNDER</div>
+            {picker.control}
+          </div>
+        )}
+
+        <div style={{ ...S.fieldLabel, marginBottom: 6 }}>PULSE</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {PULSES.map((p) => (
+            <button key={p} type="button" style={S.chipBtn(fields.pulse === p)} onClick={() => set({ pulse: p })}>
+              {p}
+            </button>
+          ))}
+        </div>
+
+        <FieldError>{commandError(create.error) ?? commandError(patch.error)}</FieldError>
+        <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
+          {editing ? 'Save changes' : 'Save goal'}
+        </button>
         </>
       )}
-
-      <div style={{ ...S.fieldLabel, marginBottom: 6 }}>PULSE</div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {PULSES.map((p) => (
-          <button key={p} type="button" style={S.chipBtn(fields.pulse === p)} onClick={() => set({ pulse: p })}>
-            {p}
-          </button>
-        ))}
-      </div>
-
-      <FieldError>{commandError(create.error) ?? commandError(patch.error)}</FieldError>
-      <button type="button" style={S.saveBtn(blocked)} disabled={blocked} onClick={save}>
-        {editing ? 'Save changes' : 'Save goal'}
-      </button>
     </Sheet>
   );
 }
@@ -199,11 +219,22 @@ export function MoveGoalSheet({ goalId, lifeGoalsOnly }: { goalId: string; lifeG
   const ui = useUI();
   const detailQ = useGoal(goalId);
   const move = useMoveGoal();
-  const [target, setTarget] = useState<string | null>(null);
+  const [target, setTarget] = useState<{ id: string; title: string } | null>(null);
 
   const moving = detailQ.data?.goal;
   const close = () => ui.closeSheet();
-  const parents = useParentOptions(moving?.horizon ?? 'Weekly', moving?.periodKey ?? '');
+  /**
+   * ⚠ **R-nav-31** — the picker is this sheet's whole body, so it needs no field and no takeover (§7.6).
+   *
+   * `exclude` states R-goal-18 rather than relying on it: the goal itself, and the children this read
+   * already handed us. Every *other* descendant is unlistable by construction — a descendant is strictly
+   * shorter-horizon than the goal, and every option is strictly longer — which is why the client can be
+   * complete here without holding a subtree it is not allowed to hold (R-lens-16).
+   */
+  const exclude = useMemo(
+    () => [goalId, ...(detailQ.data?.children ?? []).map((c) => c.id)],
+    [goalId, detailQ.data?.children],
+  );
 
   if (!moving) {
     return (
@@ -213,23 +244,19 @@ export function MoveGoalSheet({ goalId, lifeGoalsOnly }: { goalId: string; lifeG
     );
   }
 
-  // R-lens-20 — `Put under a Life goal…` opens this same sheet with the Life goals pre-listed.
-  const rows = parents.options.filter((g) => (lifeGoalsOnly ? g.horizon === 'Life' : g.id !== moving.id));
-
   return (
     <Sheet label={lifeGoalsOnly ? 'Put under a Life goal' : 'Move goal'} onClose={close}>
       <div style={{ fontSize: 13.5, color: S.T.mut, margin: '0 0 12px 0' }}>
         Pick a new parent for &quot;{moving.title}&quot;. Its children move with it.
       </div>
-      <div style={{ border: `1px solid ${S.T.line}`, borderRadius: 12, maxHeight: 230, overflow: 'auto' }}>
-        {rows.map((g) => (
-          <button key={g.id} type="button" onClick={() => setTarget(g.id)} style={S.pickerRow(target === g.id ? 'sel' : 'ok')}>
-            <span style={{ flex: 1, minWidth: 0 }}>{g.title}</span>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: S.T.mut, marginLeft: 7 }}>{g.horizon.toUpperCase()}</span>
-          </button>
-        ))}
-        {rows.length === 0 && <div style={{ fontSize: 13, color: S.T.mut, padding: '12px 14px' }}>No goal on a longer horizon yet.</div>}
-      </div>
+      <GoalPicker
+        // R-lens-20 — `Put under a Life goal…` opens this same sheet with the Life goals pre-listed.
+        mode={{ kind: 'parent', horizon: moving.horizon, periodKey: moving.periodKey, exclude, ...(lifeGoalsOnly ? { only: 'life' as const } : {}) }}
+        value={target?.id ?? null}
+        onChange={(id, title) => setTarget(id ? { id, title: title ?? '' } : null)}
+        empty="No goal on a longer horizon yet."
+        listLabel="Goals this one can move under"
+      />
       <FieldError>{commandError(move.error)}</FieldError>
       <button
         type="button"
@@ -237,7 +264,7 @@ export function MoveGoalSheet({ goalId, lifeGoalsOnly }: { goalId: string; lifeG
         disabled={!target || move.isPending}
         onClick={() =>
           target &&
-          move.mutate({ id: moving.id, parentId: target, version: moving.version }, { onSuccess: () => { close(); ui.showToast(`Moved under ${rows.find((r) => r.id === target)?.title ?? 'it'}`); } })
+          move.mutate({ id: moving.id, parentId: target.id, version: moving.version }, { onSuccess: () => { close(); ui.showToast(`Moved under ${target.title || 'it'}`); } })
         }
       >
         Move it
