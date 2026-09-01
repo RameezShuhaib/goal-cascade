@@ -109,6 +109,35 @@ export function enclosingKey(horizon: Horizon, of: Horizon, key: string): string
   return containingKey(horizon, firstDayOf(of, key));
 }
 
+/**
+ * R-goal-48 — the `periodKey` a new SUB-GOAL at `horizon` defaults to, under a parent of `parentHorizon`
+ * sitting in `parentKey`.
+ *
+ * **The current period of the child's own horizon, or the parent's first enclosed period when the parent
+ * begins later** — never a past one, so `PERIOD_IN_PAST` (R-goal-36) is unreachable from the affordance
+ * without the client owning that rule. The comparison is a plain `>` because same-horizon keys sort
+ * chronologically by construction (R-goal-33) — that is the entire reason the format exists.
+ *
+ * Periods do not nest (R-goal-35), so this is an *offer*: a Quarterly child of a `2027` Yearly goal is
+ * perfectly legal in `2026-Q4`, it is merely a surprising default.
+ *
+ * **The Weekly case takes the Monday the server sent and derives none** (D-1) — the same `currentMonday`
+ * the old `+ Weekly goal` on a Monthly page used. `''` until bootstrap lands, which is why the caller
+ * keeps the control inert until it has one.
+ */
+export function subGoalPeriodKey(horizon: Horizon, parentHorizon: Horizon, parentKey: string, today: string, currentMonday: string | null): string {
+  if (horizon === 'Weekly') return currentMonday ?? '';
+  const now = containingKey(horizon, today);
+  if (parentHorizon === 'Life') return now;
+  const inside = containingKey(horizon, firstDayOf(parentHorizon, parentKey));
+  return inside > now ? inside : now;
+}
+
+/** R-goal-5 / R-goal-32 — the horizons a child of `parent` may take: every one of strictly higher rank. */
+export function childHorizons(parent: Horizon): Horizon[] {
+  return HORIZONS.filter((h) => rank(h) > rank(parent));
+}
+
 const MS_DAY = 86_400_000;
 const utc = (isoDate: string) => Date.parse(`${isoDate}T00:00:00.000Z`);
 

@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import type { BacklogItemView } from '@goal-cascade/shared';
+import type { BacklogItemView, GoalView, Horizon } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useCreateBacklogItem, useGoal } from '../api/queries';
-import { useWeekClock } from '../lib/weekClock';
+import { useCreateBacklogItem, useCreateGoal, useGoal } from '../api/queries';
+import { useWeekClock, type WeekClock } from '../lib/weekClock';
 import { TaskRow } from '../components/TaskRow';
 import { BacklogItemCard } from '../components/BacklogItemCard';
 import { useReorderList } from '../components/ReorderableList';
@@ -11,6 +11,7 @@ import { TopActions } from '../components/TopActions';
 import { FieldError, Loading, LoadError, commandError } from '../components/states';
 import { useSkin } from '../skin';
 import { capturedLabel } from '../utils/dates';
+import { childHorizons, subGoalPeriodKey } from '../utils/periodKeys';
 import { goalPath, lensPath, BACKLOG_PATH, LEARNINGS_PATH } from '../routes';
 import { plannedNess, stalePlanLine } from '../lens/copy';
 
@@ -63,31 +64,16 @@ export function GoalDetailScreen() {
           ))}
         </div>
         {/*
-         * R-nav-25 — one primary action per page, and the mapping is the horizon's: `+ Weekly goal` on a
-         * Monthly goal (Q-20 — a detail page is not a lens, so this is where laying out a week from above
-         * still lives), `+ Task` on a Weekly goal, and **nothing on Life, Yearly or Quarterly**. The
-         * comment used to promise `+ Add` on Yearly/Quarterly; no such branch was ever written, and
-         * backlog capture on those two is the global `+` drawer's job, which reaches any goal.
+         * ⚠ **A3 (R-nav-29)** — this page's mapping is now **`+ Task` on a Weekly goal and nothing at any
+         * other horizon**, superseding R-nav-25's (`+ Weekly goal` on Monthly, `+ Add` on
+         * Yearly/Quarterly, none on Life). R-nav-25's FORM is untouched: at most one primary action.
+         *
+         * `+ Weekly goal` is **dropped, not moved**: R-goal-48's `Sub-goals` section now offers that
+         * create on every horizon that can hold children, a screen-inch below, and keeping both would
+         * leave one horizon of four with two routes to the same write (R-nav-27). `More…` inside the
+         * capture opens the very sheet this button opened, pre-filled the same way, so nothing is lost.
          */}
         <TopActions>
-          {goal.horizon === 'Monthly' && (
-            <button
-              type="button"
-              style={S.topBtn}
-              onClick={() =>
-                ui.openSheet({
-                  kind: 'goalForm',
-                  editId: null,
-                  horizon: 'Weekly',
-                  periodKey: clock.currentMonday ?? '',
-                  parentId: goal.id,
-                  lifeGoalId: goal.lifeRootId,
-                })
-              }
-            >
-              + Weekly goal
-            </button>
-          )}
           {isWeekly && (
             <button type="button" style={S.topBtn} onClick={() => ui.openSheet({ kind: 'taskCreate', goalId: goal.id, weekStart: goal.periodKey })}>
               + Task
@@ -133,7 +119,14 @@ export function GoalDetailScreen() {
         </button>
       </div>
 
-      {detail.children.length > 0 && (
+      {/*
+       * R-goal-48 — the `Sub-goals` section renders **unconditionally at every horizon that can hold
+       * children**, empty or not: hiding it when there are none hides the affordance exactly when it is
+       * needed. A Weekly goal is terminal (R-goal-31) so it gets no section — unless it somehow HOLDS
+       * children, in which case the list still renders (a data problem must surface) with nothing to add
+       * another with.
+       */}
+      {(!isWeekly || detail.children.length > 0) && (
         <>
           <div style={{ ...S.sectionLabel, margin: '20px 0 8px 0' }}>Sub-goals</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -163,6 +156,8 @@ export function GoalDetailScreen() {
               </button>
             ))}
           </div>
+          {detail.children.length === 0 && <div style={{ fontSize: 13, color: S.T.mut, padding: '2px 0' }}>Nothing under this goal yet.</div>}
+          {!isWeekly && <AddSubGoal parent={goal} clock={clock} />}
         </>
       )}
 
@@ -313,6 +308,116 @@ function OwnBacklog({
           reorder={{ control: list.controlProps(b), menu: list.menuFor(b), grabbed: list.grabbedId === b.id }}
         />
       ))}
+    </div>
+  );
+}
+
+/**
+ * R-goal-48 — the inline `+ Sub-goal` capture, deliberately the same shape as R-backlog-11's `+ Add` one
+ * section below: it opens in place, `Enter` or `Save sub-goal` commits, `Never mind` cancels, and focus
+ * returns to the control that opened it either way. Consistency on one screen beats novelty, and it
+ * sidesteps R-nav-25's one-primary-action rule rather than fighting it (R-nav-29).
+ *
+ * It is named `+ Sub-goal` and not `+ Add` because the backlog's `+ Add` is on this same page, and two
+ * controls with one accessible name is a control you cannot ask for (D-20).
+ *
+ * **Everything the page already knows is pre-filled.** The parent is this goal; the horizon is the legal
+ * set and is not asked at all when that set has one member; the period follows the horizon. **The horizon
+ * rule itself stays the server's** — this reads the shared `HORIZONS` order to SHAPE the picker and never
+ * restates the comparison, and a `HORIZON_CONFLICT` or `PERIOD_IN_PAST` refusal renders under the field
+ * (D-5 — a picker is a hint, not an invariant).
+ */
+function AddSubGoal({ parent, clock }: { parent: GoalView; clock: WeekClock }) {
+  const S = useSkin();
+  const ui = useUI();
+  const create = useCreateGoal();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const toggle = useRef<HTMLButtonElement>(null);
+
+  // R-goal-5 / R-goal-32 — every horizon of strictly higher rank, longest first, so `[0]` is the next
+  // shorter one. Non-empty by construction: this component is not rendered on a Weekly goal.
+  const legal = childHorizons(parent.horizon);
+  const [horizon, setHorizon] = useState<Horizon>(legal[0] ?? 'Weekly');
+  const periodKey = subGoalPeriodKey(horizon, parent.horizon, parent.periodKey, clock.today, clock.currentMonday);
+
+  const close = () => {
+    setOpen(false);
+    toggle.current?.focus();
+  };
+
+  const commit = () => {
+    const title = text.trim();
+    // The key must be real before anything is written: a Weekly child waits for the server's Monday.
+    if (!title || !periodKey) return;
+    create.mutate(
+      { title, why: '', horizon, parentId: parent.id, periodKey, pulse: 'On track' },
+      {
+        onSuccess: () => {
+          setText('');
+          close();
+        },
+      },
+    );
+  };
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      {open && (
+        <>
+          {/* One legal horizon is not a question (R-goal-48): a Monthly goal can only hold weeks. */}
+          {legal.length > 1 && (
+            <div role="group" aria-label="Sub-goal horizon" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+              {legal.map((h) => (
+                <button key={h} type="button" aria-pressed={horizon === h} style={S.chipBtn(horizon === h)} onClick={() => setHorizon(h)}>
+                  {h}
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            aria-label="Sub-goal title"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && commit()}
+            placeholder={`${horizon} sub-goal…`}
+            autoFocus
+            style={{ ...S.input, minHeight: 44, borderRadius: 10, fontSize: 14, background: S.T.cardSoft }}
+          />
+        </>
+      )}
+      <FieldError>{commandError(create.error)}</FieldError>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <button
+          ref={toggle}
+          type="button"
+          style={{ ...S.linkBtn, padding: '4px 0' }}
+          disabled={create.isPending}
+          onClick={() => {
+            if (open && text.trim()) commit();
+            else if (open) close();
+            else {
+              setOpen(true);
+              setText('');
+            }
+          }}
+        >
+          {open ? (text.trim() ? 'Save sub-goal' : 'Never mind') : '+ Sub-goal'}
+        </button>
+        {/* R-goal-48 — the way out to the full form, carrying across what has already been typed. */}
+        {open && (
+          <button
+            type="button"
+            style={{ ...S.linkBtn, padding: '4px 0', color: S.T.mut }}
+            onClick={() => {
+              setOpen(false);
+              ui.openSheet({ kind: 'goalForm', editId: null, horizon, periodKey, parentId: parent.id, lifeGoalId: parent.lifeRootId, title: text.trim() });
+            }}
+          >
+            More…
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -75,6 +75,7 @@ function GoalFormWithLabel() {
       periodLabel={lens.data?.period?.label}
       lifeGoalId={form.lifeGoalId}
       parentId={form.parentId}
+      title={form.title}
     />
   );
 }

@@ -86,10 +86,131 @@ describe('Goal detail', () => {
     expect(screen.getByText('3 weekly goals · 1 this week')).toBeInTheDocument();
   });
 
-  it('R-nav-25 / Q-20: a Monthly goal keeps `+ Weekly goal` on its DETAIL page — a page is not a lens', async () => {
+  /**
+   * ⚠ **RETIRED — `R-nav-25 / Q-20: a Monthly goal keeps + Weekly goal on its DETAIL page`.**
+   *
+   * **Verdict: R-nav-29 (A3).** R-goal-48 puts an inline `+ Sub-goal` in the `Sub-goals` section on every
+   * horizon that can hold children, so the top action became a second route to the same write, on one
+   * horizon of four, a screen-inch away. The assertion is INVERTED rather than deleted, so the duplicate
+   * cannot quietly return.
+   */
+  it('S-nav-29-1 (retired R-nav-25 / Q-20): a Monthly goal has NO `+ Weekly goal` — the section is the one path', async () => {
     withDetail(F.M);
     renderApp(<AppShell />, { route: `/goal/${F.M}` });
-    expect(await screen.findByRole('button', { name: '+ Weekly goal' })).toBeInTheDocument();
+    await screen.findByRole('heading', { level: 1, name: 'Lift three times a week' });
+
+    expect(screen.queryByRole('button', { name: '+ Weekly goal' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '+ Sub-goal' })).toBeInTheDocument();
+  });
+
+  it('S-goal-48-1: a Yearly goal with no children still gets the section, and the first sub-goal goes in from it', async () => {
+    server.use(http.get('/api/goals/:id', () => HttpResponse.json({ ...F.detailOf(F.Y), children: [] })));
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.Y}` });
+
+    // R-goal-48 — the empty section IS the case it exists for.
+    expect(await screen.findByText('Sub-goals')).toBeInTheDocument();
+    expect(screen.getByText('Nothing under this goal yet.')).toBeInTheDocument();
+
+    const add = screen.getByRole('button', { name: '+ Sub-goal' });
+    await user.click(add);
+    await user.type(screen.getByLabelText('Sub-goal title'), 'Rebuild the gym habit{Enter}');
+
+    // The parent is this goal, the horizon is the next shorter one, the period is the current quarter.
+    await waitFor(async () =>
+      expect(await bodyOf(lastRequest('POST', '/api/goals'))).toMatchObject({
+        parentId: F.Y,
+        horizon: 'Quarterly',
+        periodKey: '2026-Q3',
+        title: 'Rebuild the gym habit',
+      }),
+    );
+    // Focus returns to the control that opened it, and the field closes.
+    await waitFor(() => expect(screen.queryByLabelText('Sub-goal title')).not.toBeInTheDocument());
+    expect(add).toHaveFocus();
+  });
+
+  it('S-goal-48-2: one legal horizon is not a question — a Monthly goal is never asked, and gets the week', async () => {
+    withDetail(F.M);
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.M}` });
+    await user.click(await screen.findByRole('button', { name: '+ Sub-goal' }));
+
+    expect(screen.queryByRole('group', { name: 'Sub-goal horizon' })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Sub-goal title'), 'Three easy runs{Enter}');
+    // The server's Monday (D-1), which is the key `+ Weekly goal` used before R-nav-29 removed it.
+    await waitFor(async () =>
+      expect(await bodyOf(lastRequest('POST', '/api/goals'))).toMatchObject({ parentId: F.M, horizon: 'Weekly', periodKey: F.THIS_MONDAY }),
+    );
+  });
+
+  it('S-goal-48-3: several legal horizons default to the next shorter one, and never offer their own', async () => {
+    withDetail(F.L, { backlogIsAggregate: true });
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.L}` });
+    await user.click(await screen.findByRole('button', { name: '+ Sub-goal' }));
+
+    const picker = screen.getByRole('group', { name: 'Sub-goal horizon' });
+    expect(within(picker).getAllByRole('button').map((b) => b.textContent)).toEqual(['Yearly', 'Quarterly', 'Monthly', 'Weekly']);
+    // R-goal-5 — a child of equal or longer horizon is not offered at all.
+    expect(within(picker).queryByRole('button', { name: 'Life' })).not.toBeInTheDocument();
+    expect(within(picker).getByRole('button', { name: 'Yearly' })).toHaveAttribute('aria-pressed', 'true');
+
+    // …and it is changeable: the picker is an offer, not a fixed answer.
+    await user.click(within(picker).getByRole('button', { name: 'Monthly' }));
+    await user.type(screen.getByLabelText('Sub-goal title'), 'Write the changelog{Enter}');
+    await waitFor(async () =>
+      expect(await bodyOf(lastRequest('POST', '/api/goals'))).toMatchObject({ parentId: F.L, horizon: 'Monthly', periodKey: '2026-08' }),
+    );
+  });
+
+  it('S-goal-48-4: a parent whose period starts later takes the parent’s first period, never a past one', async () => {
+    const base = F.detailOf(F.Y);
+    server.use(http.get('/api/goals/:id', () => HttpResponse.json({ ...base, goal: { ...base.goal, periodKey: '2027', period: '2027' }, children: [] })));
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.Y}` });
+
+    await user.click(await screen.findByRole('button', { name: '+ Sub-goal' }));
+    await user.type(screen.getByLabelText('Sub-goal title'), 'Rebuild the gym habit{Enter}');
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/api/goals'))).toMatchObject({ periodKey: '2027-Q1' }));
+  });
+
+  it('S-goal-48-5: a Weekly goal is terminal — no Sub-goals section and no affordance anywhere on it', async () => {
+    withDetail(F.W);
+    renderApp(<AppShell />, { route: `/goal/${F.W}` });
+    await screen.findByRole('heading', { level: 1, name: 'Three easy runs and one long run' });
+
+    expect(screen.queryByText('Sub-goals')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Sub-goal' })).not.toBeInTheDocument();
+    // R-nav-29 — its one primary action is unchanged.
+    expect(screen.getByRole('button', { name: '+ Task' })).toBeInTheDocument();
+  });
+
+  it('S-goal-48-7: the server’s refusal renders under the field, and what was typed survives it', async () => {
+    withDetail(F.Q);
+    server.use(http.post('/api/goals', () => HttpResponse.json({ error: { code: 'PERIOD_IN_PAST', message: 'that month has already passed' } }, { status: 409 })));
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.Q}` });
+
+    await user.click(await screen.findByRole('button', { name: '+ Sub-goal' }));
+    await user.type(screen.getByLabelText('Sub-goal title'), 'Lift three times a week{Enter}');
+
+    // D-5 — the picker is a hint; the refusal is the rule, rendered from the CODE (Q-10) and never guessed.
+    // The same copy also reaches the toast, as it does from the create sheet; the inline `alert` is the one
+    // being asserted, because it is what keeps the message next to the field that caused it.
+    const shown = await screen.findAllByText(/That period has already passed/);
+    expect(shown.some((el) => el.getAttribute('role') === 'alert')).toBe(true);
+    expect(screen.getByLabelText('Sub-goal title')).toHaveValue('Lift three times a week');
+  });
+
+  it('S-goal-48-6: `More…` opens the full form carrying the title, the horizon, the period and the parent', async () => {
+    withDetail(F.Q);
+    const { user } = renderApp(<AppShell />, { route: `/goal/${F.Q}` });
+    await user.click(await screen.findByRole('button', { name: '+ Sub-goal' }));
+    await user.type(screen.getByLabelText('Sub-goal title'), 'Lift three times a week');
+    await user.click(screen.getByRole('button', { name: 'More…' }));
+
+    const sheet = await screen.findByRole('dialog', { name: 'New Monthly goal' });
+    expect(within(sheet).getByLabelText('Goal title')).toHaveValue('Lift three times a week');
+    await user.click(within(sheet).getByRole('button', { name: 'Save goal' }));
+    await waitFor(async () =>
+      expect(await bodyOf(lastRequest('POST', '/api/goals'))).toMatchObject({ parentId: F.Q, horizon: 'Monthly', periodKey: '2026-08' }),
+    );
   });
 
   it('R-goal-41 / R-backlog-28: a Weekly goal shows its tasks and its pull list, and no backlog of its own', async () => {

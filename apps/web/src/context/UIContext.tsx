@@ -60,8 +60,13 @@ export type Sheet =
    * ⚠ **A2 (UX §6.7)** — the create form. The horizon and the period are the LENS's and are not editable:
    * the period is a read-only chip with its reason beside it, and if you want another one you navigate
    * there. `lifeGoalId` narrows the parent picker to one line (the per-group `+ <Horizon> goal`).
+   *
+   * ⚠ **A3 (R-goal-48)** — `title` seeds the title field on a CREATE. It exists for exactly one caller:
+   * `More…` in the goal page's inline `+ Sub-goal` capture, which hands over what has already been typed
+   * so that changing your mind about which form you wanted costs nothing. It is ignored when editing,
+   * where the goal's own title wins.
    */
-  | { kind: 'goalForm'; editId: string | null; horizon: Horizon; periodKey: string; lifeGoalId?: string | null; parentId?: string | null }
+  | { kind: 'goalForm'; editId: string | null; horizon: Horizon; periodKey: string; lifeGoalId?: string | null; parentId?: string | null; title?: string }
   | { kind: 'moveGoal'; goalId: string; lifeGoalsOnly?: boolean }
   /** R-lens-17 — the Zoom sheet. The lens title is its only trigger. */
   | { kind: 'zoom' }

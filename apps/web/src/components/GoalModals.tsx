@@ -44,6 +44,7 @@ export function GoalFormSheet({
   periodLabel,
   lifeGoalId,
   parentId,
+  title,
 }: {
   editId: string | null;
   horizon: Horizon;
@@ -51,6 +52,8 @@ export function GoalFormSheet({
   periodLabel?: string;
   lifeGoalId?: string | null;
   parentId?: string | null;
+  /** R-goal-48 — a title typed into the inline `+ Sub-goal` capture before `More…` was used. */
+  title?: string;
 }) {
   const S = useSkin();
   const ui = useUI();
@@ -65,7 +68,7 @@ export function GoalFormSheet({
   const [chosenParent, setChosenParent] = useState<string | null>(parentId ?? null);
 
   const close = () => ui.closeSheet();
-  const fields = draft ?? { title: editing?.title ?? '', why: editing?.why ?? '', pulse: editing?.pulse ?? 'On track' };
+  const fields = draft ?? { title: editing?.title ?? title ?? '', why: editing?.why ?? '', pulse: editing?.pulse ?? 'On track' };
   const set = (p: Partial<typeof fields>) => setDraft({ ...fields, ...p });
 
   if (editId && !editing) {
