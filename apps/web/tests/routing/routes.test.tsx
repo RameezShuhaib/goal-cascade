@@ -12,18 +12,30 @@ import * as F from '../msw/fixtures';
  * Before A2 the screen and the open overlay were React state with the URL mirrored one way afterwards, so
  * back, forward and a pasted link all did the wrong thing. These are the properties that decision cost and
  * this one buys back — plus the one it must NOT buy: an overlay that survives a reload (S-nav-24-2).
+ *
+ * ⚠ **What identifies a lens on screen changed with R-lens-17.** It used to be the title button's
+ * accessible name (`Monthly lens, Aug 2026 · … . Change lens or period.`); the title is text now and the
+ * lens is the **selected tab** (R-lens-33). Every assertion below names both halves — which tab is
+ * selected, and which period is printed — so it is if anything stricter than the one string was.
  */
+
+/** The lens on screen: the selected tab, and the period the row prints. */
+const atLens = async (lens: string, period: string) => {
+  expect(await screen.findByRole('tab', { name: lens, selected: true })).toBeInTheDocument();
+  // `lens-period`, not `getByText`: `Life` is a tab label as well as a period title.
+  expect(screen.getByTestId('lens-period')).toHaveTextContent(period);
+};
 
 describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
   it.each([
-    ['/life', 'Life lens, Life. Change lens or period.'],
-    ['/year/2026', 'Yearly lens, 2026 · Mon 5 Jan 2026 – Sun 3 Jan 2027. Change lens or period.'],
-    ['/quarter/2026-Q3', 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.'],
-    ['/month/2026-08', 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.'],
-    ['/week/2026-08-31', 'Weekly lens, Week of 31 Aug. Change lens or period.'],
-  ])('%s opens its lens at its period', async (route, title) => {
+    ['/life', 'Life', 'Life'],
+    ['/year/2026', 'Yearly', '2026'],
+    ['/quarter/2026-Q3', 'Quarterly', 'Q3 2026'],
+    ['/month/2026-08', 'Monthly', 'Aug 2026'],
+    ['/week/2026-08-31', 'Weekly', 'Week of 31 Aug'],
+  ])('%s opens its lens at its period', async (route, lens, period) => {
     renderApp(<AppShell />, { route });
-    expect(await screen.findByRole('button', { name: title })).toBeInTheDocument();
+    await atLens(lens, period);
   });
 
   /**
@@ -45,7 +57,7 @@ describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
   it('R-lens-14 / R-lens-30: `/month` resolves the current period locally, in ONE request', async () => {
     // `browserHistory`, so the address-bar rewrite is observable — it is half of what this asserts.
     renderApp(<AppShell />, { browserHistory: true, route: '/month' });
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Monthly', 'Aug 2026');
     await waitFor(() => expect(requests('GET', '/api/goals').length).toBeGreaterThan(0));
     // The URL is canonicalised before the read, so the address bar is absolute and the key never moves.
     await waitFor(() => expect(window.location.pathname).toBe('/month/2026-08'));
@@ -58,7 +70,7 @@ describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
 
   it('an unparseable period is dropped rather than trusted — a URL segment is attacker-supplied', async () => {
     renderApp(<AppShell />, { route: '/quarter/2026-Q9' });
-    await screen.findByRole('button', { name: /Quarterly lens/ });
+    await screen.findByRole('tab', { name: 'Quarterly', selected: true });
     // `2026-Q9` is not a canonical key for any horizon, so it never reaches the wire.
     await waitFor(() => expect(requests('GET', '/api/goals').length).toBeGreaterThan(0));
     for (const r of requests('GET', '/api/goals')) expect(new URL(r.url).searchParams.get('period')).not.toBe('2026-Q9');
@@ -67,22 +79,23 @@ describe('Routes — a pasted link lands where it says (S-lens-14-1)', () => {
   it('S-nav-24-1: an unknown path lands on the remembered lens, not a blank page', async () => {
     renderApp(<AppShell />, { route: '/nowhere-at-all' });
     // R-nav-28 — a cold start opens the Weekly lens at the week containing today.
-    expect(await screen.findByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Weekly', 'Week of 31 Aug');
   });
 
   it('R-nav-28: `/` opens the Weekly lens on a cold start, and the lens the tab remembers after that', async () => {
     const { user } = renderApp(<AppShell />, { route: '/' });
-    expect(await screen.findByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Weekly', 'Week of 31 Aug');
 
-    // Visit another lens, then come back through the tab: it returns you there, at the current period.
-    await user.click(await screen.findByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' }));
-    await user.click(await screen.findByRole('button', { name: /Monthly/ }));
-    await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' });
+    // Visit another lens, then come back through the tab bar: it returns you there, at the current period.
+    // ⚠ **R-lens-33 — that is ONE tap now, not two.** It was: open the Zoom sheet from the title, then
+    // choose a row. The strip is why this line got shorter.
+    await user.click(screen.getByRole('tab', { name: 'Monthly' }));
+    await atLens('Monthly', 'Aug 2026');
 
     await user.click(screen.getByRole('button', { name: 'Learnings' }));
     await screen.findByRole('heading', { level: 1, name: 'Learnings' });
     await user.click(screen.getByRole('button', { name: 'Goals' }));
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Monthly', 'Aug 2026');
   });
 });
 
@@ -93,9 +106,9 @@ describe('Routes — back and forward (S-nav-24-1)', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Rebuild the gym habit' })).toBeInTheDocument();
 
     history.back();
-    expect(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Quarterly', 'Q3 2026');
     history.back();
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Monthly', 'Aug 2026');
   });
 
   it('S-lens-14-2: a task page opened from a past week goes back to that week, not to the current one', async () => {
@@ -108,7 +121,7 @@ describe('Routes — back and forward (S-nav-24-1)', () => {
     // lines up, so it held both spellings of one week at once; the back button now uses the server's.
     expect(screen.getByRole('button', { name: '‹ Week of 24 Aug' })).toBeInTheDocument();
     history.back();
-    expect(await screen.findByRole('button', { name: 'Weekly lens, Week of 24 Aug. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Weekly', 'Week of 24 Aug');
   });
 });
 
@@ -119,20 +132,37 @@ describe('Routes — what is deliberately NOT addressable (R-lens-14, S-nav-24-2
     await screen.findByRole('dialog', { name: 'Add to Backlog' });
 
     // The `+` drawer is a two-second interaction whose URL nobody wants.
-    expect(screen.getByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Weekly', 'Week of 31 Aug');
     unmount();
 
     // "Reload" — a fresh mount at the same route. The drawer is not part of the address, so it is gone.
     renderApp(<AppShell />, { route: '/week/2026-08-31' });
-    await screen.findByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' });
+    await atLens('Weekly', 'Week of 31 Aug');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('and the Zoom sheet is an overlay too, not a route', async () => {
-    const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
-    await user.click(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' }));
-    await screen.findByRole('dialog', { name: 'Change lens' });
-    // Still the Monthly lens's URL behind it — the sheet chose nothing yet.
-    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+  /**
+   * ⚠ **RETIRED — `and the Zoom sheet is an overlay too, not a route`.**
+   *
+   * **Verdict: superseded by the owner's own reversal, recorded against `R-lens-17` (rewritten) and
+   * `R-lens-22` (deleted).** *"i dont need to click on a dropdown to change the lense as it adds
+   * friction."* The Zoom sheet is deleted in full, so the property this asserted — that opening it does
+   * not change the URL — has no subject. What replaces it is stronger and is asserted next door: changing
+   * lens **is** a route change, and it is one tap.
+   *
+   * The overlay-is-not-a-route rule itself is untouched and is still covered by the test above, by
+   * `sheetDismissal.test.tsx` and by the create sheet's own tests.
+   */
+  it('R-lens-33: changing lens IS a route change, and it is one tap from every lens', async () => {
+    const { user } = renderApp(<AppShell />, { browserHistory: true, route: '/month/2026-08' });
+    await atLens('Monthly', 'Aug 2026');
+    // No sheet is opened on the way, and none is left behind.
+    await user.click(screen.getByRole('tab', { name: 'Quarterly' }));
+    await atLens('Quarterly', 'Q3 2026');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(window.location.pathname).toBe('/quarter/2026-Q3'));
+    // …and it is in the history, so back returns to the lens you came from (R-nav-24).
+    history.back();
+    await atLens('Monthly', 'Aug 2026');
   });
 });

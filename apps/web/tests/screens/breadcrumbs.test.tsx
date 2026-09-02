@@ -247,9 +247,12 @@ describe('`Where this sits` — the full ancestry, with its periods (R-goal-41, 
 });
 
 describe('The other two places a long title used to break a line (§4.5)', () => {
-  it('a lens card’s `under <parent>` line is one line, with the full name in its accessible name', async () => {
+  it('a lens card’s `under <Life goal>` line is one line, with the full name in its accessible name', async () => {
     renderApp(<AppShell />, { route: '/month/2026-08' });
-    const line = await screen.findByRole('button', { name: 'under Rebuild the gym habit, Q3 2026. Open goal.' });
+    // ⚠ **R-lens-23, rewritten** — it names the LIFE goal now, at every horizon and with no suppression,
+    // so the accessible name is `under <Life goal>. Open goal.` and carries no period (a Life goal has
+    // none, R-goal-3). The clamp this test exists for is unchanged.
+    const line = await screen.findByRole('button', { name: 'under Be strong at 60. Open goal.' });
 
     expect(line.style.whiteSpace).toBe('nowrap');
     expect(line.style.textOverflow).toBe('ellipsis');

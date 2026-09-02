@@ -121,6 +121,19 @@
        * any other fixed chrome to consume.
        */
       :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+      /*
+       * The top inset, published for the same reason as `--safe-bottom`: the lens tab strip and the period
+       * row are `position: sticky` as one block (R-lens-33, sticky per the owner's override of
+       * `29-ux-navigation` §2.7), so `top: 0` alone would pin them under a notched phone's status bar.
+       * `#root` already pads the same inset, so nothing scrolls through the strip above the pinned block.
+       */
+      :root { --safe-top: env(safe-area-inset-top, 0px); }
+      /*
+       * R-lens-33 — the lens tab strip is an ordinary horizontal scroller and must not draw a scrollbar
+       * under five words of chrome. Firefox is handled inline with `scrollbar-width: none`; this is the
+       * WebKit half, which has no inline-style spelling.
+       */
+      [data-lens-tabs]::-webkit-scrollbar { display: none; }
       #root { padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
     </style>
   </head>

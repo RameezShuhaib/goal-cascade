@@ -181,7 +181,21 @@ export class GoalService {
     ]);
 
     const view = await this.viewContext(ctx, { interior, today, rendered, backlogRows });
-    const items = page.items.map((g) => this.toView(g, view));
+    /**
+     * ⚠ **R-lens-5, rewritten — `items` leaves in the FLAT TOTAL ORDER the lens renders in.**
+     *
+     * The client used to partition this page by Life root and draw a header per group; it does not any
+     * more (R-lens-3, deleted), so the flat order is load-bearing **on the wire** rather than a client
+     * concern. This is the reading order of the previously grouped screen with its headers removed — Life
+     * root by `createdAt asc` then `id asc`, then the item by the same, root-less last — so the same goal
+     * is in the same place before and after the change and muscle memory survives.
+     *
+     * It is a sort of the page, deliberately **after** `nextCursor` was taken: the cursor is the
+     * `(createdAt, id)` pair the underlying query pages on, and re-keying pagination on a walked-up Life
+     * root would need a denormalised `life_root_id` column this design does not have (R-lens-27). One page
+     * is what one screen renders, which is exactly the scope the client's own partition covered.
+     */
+    const items = this.inLineOrder(interior, page.items).map((g) => this.toView(g, view));
     const carriedViews = carried.map((g) => this.toView(g, view));
 
     return {
@@ -540,20 +554,32 @@ export class GoalService {
    * complexity this redesign is removing. A repeating intention costs one tap per week and produces
    * ordinary rows that can be edited, moved and deleted like any other.
    *
-   * Per line rather than account-wide (Q-22): account-wide creates twenty goals in one tap with no
-   * review. Offered only on the current week or a later one, and a no-op when the previous week held
-   * nothing (S-goal-46-2).
+   * ⚠ **R-goal-46, amended — `lifeGoalId` is optional, and absent means EVERY Life line.**
+   *
+   * Q-22 required it per line because the control lived at a group foot, and there are no group feet any
+   * more (R-lens-3, deleted): `Repeat last week` is one link at the foot of the Weekly list. The old
+   * objection to account-wide — *twenty goals in one tap with no review* — is answered by the cap rather
+   * than by the parameter: the copies count against `MAX_WEEKLY_GOALS_PER_WEEK` like any other Weekly
+   * goal and an overflowing repeat is refused **whole**, so the blast radius is bounded by the same
+   * number that bounds a week. When the id IS supplied the behaviour is byte-for-byte what it was, which
+   * is what keeps the MCP tool and its tests unchanged.
+   *
+   * Offered only on the current week or a later one, and a no-op when the previous week held nothing
+   * (S-goal-46-2).
    */
   async repeatWeek(ctx: RequestContext, input: RepeatWeekRequest): Promise<{ created: GoalView[]; serverNow: string }> {
     const today = this.today(ctx);
     this.assertNotPast('Weekly', input.weekStart, today);
 
-    const lifeGoal = await this.require(ctx, input.lifeGoalId);
-    if (!isLifeHorizon(lifeGoal.horizon)) {
-      throw new DomainError('NOT_A_LIFE_GOAL', 'Repeat last week works on one Life line at a time', {
-        goalId: input.lifeGoalId,
-        horizon: lifeGoal.horizon,
-      });
+    const lifeGoalId = input.lifeGoalId;
+    if (lifeGoalId !== undefined) {
+      const lifeGoal = await this.require(ctx, lifeGoalId);
+      if (!isLifeHorizon(lifeGoal.horizon)) {
+        throw new DomainError('NOT_A_LIFE_GOAL', 'Repeat last week works on one Life line at a time', {
+          goalId: lifeGoalId,
+          horizon: lifeGoal.horizon,
+        });
+      }
     }
 
     const previousWeek = addWeeks(input.weekStart, -1);
@@ -562,7 +588,7 @@ export class GoalService {
       this.goals.listInterior(ctx.userId),
     ]);
     const interior = indexTree(interiorRows);
-    const mine = source.filter((g) => this.lifeRootIdOf(interior, g) === lifeGoal.id);
+    const mine = lifeGoalId === undefined ? source : source.filter((g) => this.lifeRootIdOf(interior, g) === lifeGoalId);
     if (mine.length === 0) return { created: [], serverNow: ctx.now };
 
     // Q-12 — the copies count against the target week's cap like any other Weekly goal. A repeat that
@@ -910,7 +936,25 @@ export class GoalService {
     return { interior: input.interior, today: input.today, currentWeekStart: ctx.currentWeekStart, tz: ctx.tz, backlogCounts, carrying, weeklyBreakdown };
   }
 
-  /** R-lens-3/4/5/19/20 — the group headers, already ordered, with the empty ones omitted. */
+  /**
+   * R-lens-5 — the page, in the order the flat lens renders it: by the item's Life root's own
+   * `createdAt`/`id`, then by the item's, with root-less items last (R-lens-20).
+   *
+   * The Life-root ranking is `groupsOf`'s, read a second way rather than written a second time, so the
+   * two can never disagree about which line comes first.
+   */
+  private inLineOrder(interior: TreeIndex<Goal>, page: readonly Goal[]): Goal[] {
+    const order = new Map<string, number>();
+    for (const life of interior.all.filter((g) => isLifeHorizon(g.horizon)).sort(siblingCompare)) order.set(life.id, order.size);
+    // Root-less LAST, and after every real line however many there are.
+    const rankOf = (g: Goal) => {
+      const root = this.lifeRootIdOf(interior, g);
+      return root === null ? Number.MAX_SAFE_INTEGER : (order.get(root) ?? Number.MAX_SAFE_INTEGER - 1);
+    };
+    return [...page].sort((a, b) => rankOf(a) - rankOf(b) || siblingCompare(a, b));
+  }
+
+  /** R-lens-4/20 — the Life lines a page touches, ordered, with the empty ones omitted. */
   private groupsOf(
     interior: TreeIndex<Goal>,
     rendered: readonly GoalView[],

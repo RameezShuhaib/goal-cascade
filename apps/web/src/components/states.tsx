@@ -23,7 +23,7 @@ import { toApiError } from '../api/errors';
  * the list it replaces.
  *
  * ⚠ **R-nav-30 — retired from every full screen.** `LensScreen`, `GoalDetailScreen`, `TaskPage` and
- * `ZoomSheet` each rendered this; the first three now render a skeleton and the fourth does not load at
+ * `ZoomSheet` each rendered this; the first three now render a skeleton and the fourth is deleted (R-lens-17, rewritten) — it did not load at
  * all (R-lens-30). One line, no spinner, no layout shift worth the name.
  */
 export function Loading({ label = 'Loading…' }: { label?: string }) {

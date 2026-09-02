@@ -1,3 +1,5 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
@@ -12,11 +14,22 @@ import * as F from '../msw/fixtures';
  * point of the redesign.
  *
  * Every one of these renders `AppShell` at a URL, because the lens IS the URL now (R-nav-24).
+ *
+ * ⚠ **What identifies a lens on screen changed with R-lens-17.** The title stopped being a button, so
+ * `Monthly lens, Aug 2026 · … . Change lens or period.` no longer exists anywhere. The lens is the
+ * **selected tab** and the period is `lens-period`'s text — two facts where there was one string.
  */
 
 const withLens = (body: LensResponse) => server.use(http.get('/api/goals', () => HttpResponse.json(body)));
 
-describe('Lenses — a flat list, grouped by Life goal', () => {
+/** The lens on screen: the selected tab, and the period the row prints. */
+const atLens = async (lens: string, period: string) => {
+  expect(await screen.findByRole('tab', { name: lens, selected: true })).toBeInTheDocument();
+  // `lens-period`, not `getByText`: `Life` is a tab label as well as a period title.
+  expect(screen.getByTestId('lens-period')).toHaveTextContent(period);
+};
+
+describe('Lenses — a flat list, at every horizon', () => {
   it('S-lens-1-1: the Quarterly lens lists every quarterly goal from every line, with no tree to walk', async () => {
     withLens(
       F.lens({
@@ -39,49 +52,84 @@ describe('Lenses — a flat list, grouped by Life goal', () => {
     expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
   });
 
-  it('S-lens-4-1 / R-lens-4: the group header carries the open count, and a zero count is not rendered', async () => {
-    withLens(F.lensFor('Quarterly'));
-    renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    // One group, so no header at all (R-lens-19) — proven by the count being nowhere on screen.
-    expect(await screen.findByText('Rebuild the gym habit')).toBeInTheDocument();
-    expect(screen.queryByText(/2 open/)).not.toBeInTheDocument();
+  /**
+   * ⚠ **REWRITTEN — was `S-lens-4-1 / R-lens-4: the group header carries the open count`.**
+   *
+   * **Verdict: superseded by the owner's own reversal, recorded against `R-lens-4` (rewritten) and
+   * `R-lens-3` (deleted).** *"lets not categorise based on life in any horizon."* There is no group
+   * header to carry a count. What the rule protects is unchanged and is asserted here instead: **the
+   * count renders on the Life lens's card and nowhere else**, and a zero is still never rendered.
+   */
+  it('R-lens-4: the open count renders on the Life lens card, and on NO other lens', async () => {
+    withLens(F.lensFor('Life'));
+    const life = renderApp(<AppShell />, { route: '/life' });
+    expect(await screen.findByText('2 open')).toBeInTheDocument();
+    // R-lens-4 — a ZERO count is never rendered, so the second line reads as a bare title.
+    expect(screen.queryByText(/0 open/)).not.toBeInTheDocument();
+    life.unmount();
 
+    for (const [lens, route] of [
+      ['Quarterly', '/quarter/2026-Q3'],
+      ['Monthly', '/month/2026-08'],
+      ['Weekly', '/week/2026-08-31'],
+    ] as const) {
+      withLens(F.lensFor(lens));
+      const { unmount } = renderApp(<AppShell />, { route });
+      await atLens(lens, lens === 'Quarterly' ? 'Q3 2026' : lens === 'Monthly' ? 'Aug 2026' : 'Week of 31 Aug');
+      // The count is a fact about a LINE. On a flat list three cards from one line would print it three
+      // times, so it is stated once, on the roster, and one tap away from here.
+      expect(screen.queryByText(/\d+ open\b/)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  /**
+   * ⚠ **REWRITTEN — was three tests about group rendering, collapse and suppression (`R-lens-19`).**
+   *
+   * **Verdict: `R-lens-19` is deleted outright by the owner's reversal.** A group that is not rendered, a
+   * header that is suppressed at one group and a group that collapses are all properties of a thing that
+   * no longer exists. What replaces them is the property the reversal actually asks for, asserted at
+   * every horizon: **no group header renders anywhere.**
+   */
+  it('R-lens-3 / R-lens-19, deleted: no Life-goal group header renders at any horizon', async () => {
+    for (const [lens, route] of [
+      ['Yearly', '/year/2026'],
+      ['Quarterly', '/quarter/2026-Q3'],
+      ['Monthly', '/month/2026-08'],
+      ['Weekly', '/week/2026-08-31'],
+      ['Life', '/life'],
+    ] as const) {
+      withLens(F.lensFor(lens));
+      const { unmount } = renderApp(<AppShell />, { route });
+      await atLens(lens, lens === 'Yearly' ? '2026' : lens === 'Quarterly' ? 'Q3 2026' : lens === 'Monthly' ? 'Aug 2026' : lens === 'Life' ? 'Life' : 'Week of 31 Aug');
+      // No header, no collapse toggle, no `· N open` eyebrow — at any horizon, at any group count.
+      expect(screen.queryByRole('button', { name: /Collapse group|Expand group/ })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Be strong at 60 · /)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  /**
+   * R-lens-5, rewritten — **the flat list is today's grouped list with the headers removed.** The order
+   * is the property the whole item turns on: cards from one line stay adjacent and the same goal is in
+   * the same place before and after.
+   */
+  it('R-lens-5: the flat order is the previously grouped reading order, headers removed', async () => {
     withLens(F.lensFor('Monthly'));
-    renderApp(<AppShell />, { route: '/month/2026-08' });
-    expect(await screen.findByText('Be strong at 60 · 2 open')).toBeInTheDocument();
-    // R-lens-4, amended — the second line has no open work, so it reads as a bare title.
-    expect(screen.getByText('Ship the thing')).toBeInTheDocument();
-    expect(screen.queryByText(/Ship the thing · 0 open/)).not.toBeInTheDocument();
-  });
-
-  it('R-lens-19: with exactly one group the header does not render at all', async () => {
-    withLens(F.lensFor('Quarterly'));
-    renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await screen.findByText('Rebuild the gym habit');
-    // A header over the only group names the card beneath it. There is nothing to disambiguate.
-    expect(screen.queryByRole('button', { name: /Be strong at 60.*group/ })).not.toBeInTheDocument();
-  });
-
-  it('R-lens-19: a group with no items in this period is not rendered — a lens is not a roster', async () => {
-    withLens(F.lens({ lens: 'Monthly', period: F.period({ periodKey: '2026-08' }), items: [F.monthlyGoals()[0]!], groups: [F.group({ id: F.L, openTasks: 2 }), F.group({ id: F.L2 })] }));
     renderApp(<AppShell />, { route: '/month/2026-08' });
     await screen.findByText('Lift three times a week');
-    expect(screen.queryByText('Ship the thing')).not.toBeInTheDocument();
+    // `Be strong at 60` was created first, so its line's items come first — exactly as the grouped
+    // screen read top to bottom, and with `Ship the thing`'s line after it.
+    const titles = screen.getAllByTestId('lens-card').map((c) => c.textContent);
+    expect(titles[0]).toContain('Lift three times a week');
+    expect(titles[1]).toContain('Write the changelog');
   });
 
-  it('R-lens-19: a group collapses, and it is one row that does it', async () => {
-    withLens(F.lensFor('Monthly'));
-    const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
-    const header = await screen.findByRole('button', { name: /^Be strong at 60, 2 open tasks this week\. Collapse group\.$/ });
-    expect(header).toHaveAttribute('aria-expanded', 'true');
-
-    await user.click(header);
-
-    expect(screen.queryByText('Lift three times a week')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Expand group\.$/ })).toHaveAttribute('aria-expanded', 'false');
-  });
-
-  it('R-lens-20: a goal whose chain does not reach a Life goal surfaces under UNSORTED, last', async () => {
+  /**
+   * R-lens-20, rewritten — there is no `UNSORTED` group and no group note. The state is a **line on the
+   * card**, and it is the first time it has had a keyboard-reachable action at all.
+   */
+  it('R-lens-20: a goal with no Life ancestor says so on its own card, sorts last, and offers the fix', async () => {
     withLens(
       F.lens({
         lens: 'Monthly',
@@ -90,33 +138,68 @@ describe('Lenses — a flat list, grouped by Life goal', () => {
         groups: [F.group({ id: F.L, openTasks: 2 }), F.group({ id: null })],
       }),
     );
-    renderApp(<AppShell />, { route: '/month/2026-08' });
+    const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
 
     expect(await screen.findByText('An orphan')).toBeInTheDocument();
-    expect(screen.getByText('UNSORTED')).toBeInTheDocument();
-    expect(screen.getByText("These aren't under a Life goal yet.")).toBeInTheDocument();
-    // R-lens-20 — no count on the group, ever. It is a data-integrity surface, not an ordinary state.
-    expect(screen.queryByText(/UNSORTED · /)).not.toBeInTheDocument();
+    // Last, without a header to pin it there.
+    const cards = screen.getAllByTestId('lens-card');
+    expect(cards[cards.length - 1]!.textContent).toContain('An orphan');
+    // The group header and its note are gone; the card carries the state instead.
+    expect(screen.queryByText('UNSORTED')).not.toBeInTheDocument();
+    expect(screen.queryByText("These aren't under a Life goal yet.")).not.toBeInTheDocument();
+
+    const line = screen.getByRole('button', { name: 'Not under a Life goal yet. Put it under one.' });
+    expect(line).toHaveTextContent('Not under a Life goal yet');
+    // R-lens-20 — the Move sheet in `only: 'life'` mode, which is the caller that mode never had.
+    await user.click(line);
+    expect(await screen.findByRole('dialog', { name: 'Put under a Life goal' })).toBeInTheDocument();
   });
 });
 
-describe('Lenses — the chrome budget (R-nav-27)', () => {
-  it('the current period draws exactly two rows above the first item: the cluster and the lens row', async () => {
+describe('Lenses — the chrome budget (R-nav-27, rewritten)', () => {
+  it('the current period draws exactly three rows: the cluster, the tab strip and the period row', async () => {
     withLens(F.lensFor('Monthly'));
     renderApp(<AppShell />, { route: '/month/2026-08' });
     await screen.findByText('Lift three times a week');
 
-    // Row 1 — the cluster. Row 2 — `‹ Aug 2026 ▾ ›`. And that is all that is unconditional.
-    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
-    // The cluster's create button and the per-group one are the same label by design (§6.7): one asks
-    // "add to this period", the other "add to this line in this period", and both are the same act.
-    expect(screen.getAllByRole('button', { name: '+ Monthly goal' }).length).toBeGreaterThan(0);
+    // Row 1 — the cluster. Row 2 — the five tabs. Row 3 — `‹ Aug 2026 ›`. And that is all.
+    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    await atLens('Monthly', 'Aug 2026');
+    // ⚠ **R-nav-25, amended — ONE create action, `+ Goal`, and exactly one of it.** The per-group
+    // `+ <Horizon> goal` is the clutter the owner named, and it is gone at every horizon.
+    expect(screen.getAllByRole('button', { name: '+ Goal' })).toHaveLength(1);
+    for (const h of ['Life', 'Yearly', 'Quarterly', 'Monthly', 'Weekly']) {
+      expect(screen.queryByRole('button', { name: `+ ${h} goal` })).not.toBeInTheDocument();
+    }
     // The off-now row is conditional and this period is now, so it is absent entirely.
     expect(screen.queryByRole('button', { name: 'Now ›' })).not.toBeInTheDocument();
     expect(screen.queryByText(/still editable|planning ahead/)).not.toBeInTheDocument();
     // R-rm-5 / R-nav-27 — the four rows the Tasks screen carried are gone with the screen.
     expect(screen.queryByRole('button', { name: 'Edit plan' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Tasks')).not.toBeInTheDocument();
+  });
+
+  /**
+   * R-nav-32 — **no `+ <horizon> goal` control renders inside any lens list, at any horizon.** This is
+   * the owner's literal complaint (*"we dont need `+ Monthly goal` everywhere as it looks too
+   * clutered"*), asserted as a property rather than at one lens.
+   */
+  it('R-nav-32: no per-list create renders inside any lens, and the one that does is in the cluster', async () => {
+    for (const [lens, route] of [
+      ['Life', '/life'],
+      ['Yearly', '/year/2026'],
+      ['Quarterly', '/quarter/2026-Q3'],
+      ['Monthly', '/month/2026-08'],
+      ['Weekly', '/week/2026-08-31'],
+    ] as const) {
+      withLens(F.lensFor(lens));
+      const { unmount } = renderApp(<AppShell />, { route });
+      await screen.findByRole('tab', { name: lens, selected: true });
+      expect(screen.queryAllByRole('button', { name: /^\+ (Life|Yearly|Quarterly|Monthly|Weekly) goal$/ })).toHaveLength(0);
+      // The one create action is in the cluster, outside the panel the tab strip controls.
+      const create = screen.getByRole('button', { name: '+ Goal' });
+      expect(screen.getByTestId('lens-body').contains(create)).toBe(false);
+      unmount();
+    }
   });
 
   it('S-nav-23-1: the tab bar has exactly three items, and none of them is a horizon', async () => {
@@ -146,7 +229,7 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
     await user.click(later);
 
     // The clamp that used to pin every forward step to "now" is deleted, not relaxed.
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Sep 2026 · Mon 7 Sep – Sun 4 Oct. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Monthly', 'Sep 2026');
   });
 
   it('R-lens-21 / R-lens-11: a future period is badged as planning ahead, never as late, and offers Now ›', async () => {
@@ -167,7 +250,7 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
 
     expect(await screen.findByText('Past month — still editable')).toBeInTheDocument();
     // Absent, not disabled: a disabled create button invites "why?" on every past screen.
-    expect(screen.queryByRole('button', { name: '+ Monthly goal' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Goal' })).not.toBeInTheDocument();
     expect(screen.getByText('Nothing was set for May 2026.')).toBeInTheDocument();
     expect(screen.getByText('This month went unplanned. History stays as it was.')).toBeInTheDocument();
   });
@@ -192,12 +275,15 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
 
     // The lens chrome is up — this is a real pending render, not an unmounted one.
     expect(await screen.findByRole('button', { name: /Later month/ })).toBeInTheDocument();
-    const create = screen.getByRole('button', { name: '+ Monthly goal' });
+    const create = screen.getByRole('button', { name: '+ Goal' });
     await user.click(create);
 
     // The sheet opened on August, not on `''`. Its own read-only period chip is what names the period the
-    // goal would be created into (UX §6.7), so this is the assertion that the key was right.
-    expect(await screen.findByText('Aug 2026')).toBeInTheDocument();
+    // goal would be created into (R-nav-32), so this is the assertion that the key was right — read
+    // inside the sheet, because the lens row behind it now prints the same string.
+    const sheet = await screen.findByRole('dialog', { name: 'New goal' });
+    expect(within(sheet).getByText('Aug 2026')).toBeInTheDocument();
+    expect(within(sheet).getByText("Because you're looking at Aug 2026.")).toBeInTheDocument();
   });
 
   it('R-lens-2: the Life lens still offers create once its read lands, though it has no period', async () => {
@@ -207,7 +293,7 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
     renderApp(<AppShell />, { route: '/life' });
 
     // A populated lens, so the empty state's own CTA is not on screen to be confused with this one.
-    expect(await screen.findByRole('button', { name: '+ Life goal' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '+ Goal' })).toBeInTheDocument();
   });
 
   it('R-lens-26: the forward chevron carries a dot when a later period holds something', async () => {
@@ -226,12 +312,15 @@ describe('Lenses — the period control (R-lens-7, R-lens-17, R-lens-21)', () =>
     // A control that vanishes moves everything after it in the tab order; a control that greys out does not.
     expect(screen.getByRole('button', { name: 'Earlier period' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Later period' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Life lens, Life. Change lens or period.' })).toBeEnabled();
+    // ⚠ **R-lens-17, rewritten — the title is TEXT, not a button.** That is what pays for part of the tab
+    // row: row 3 loses its only non-chevron control and one tab stop.
+    expect(screen.getByTestId('lens-period')).toHaveTextContent('Life');
+    expect(screen.queryByRole('button', { name: /Change lens or period/ })).not.toBeInTheDocument();
   });
 });
 
 describe('Lenses — the Life lens (R-lens-2, §6.1)', () => {
-  it('has no group headers, and the count and backlog line move onto the card', async () => {
+  it('is the roster: the count, the backlog line and the one surviving `why` all sit on the card', async () => {
     withLens(
       F.lens({
         lens: 'Life',
@@ -244,8 +333,40 @@ describe('Lenses — the Life lens (R-lens-2, §6.1)', () => {
     expect(await screen.findByText('3 open · 2 in backlog')).toBeInTheDocument();
     // C-18 / R-goal-24 — the product's one quiet signal renders on the Life lens card.
     expect(screen.getByText('2 tasks carrying · oldest 3 weeks')).toBeInTheDocument();
-    // Each Life goal IS a group of one, so a header would name the card beneath it.
     expect(screen.queryByRole('button', { name: /Collapse group/ })).not.toBeInTheDocument();
+    /*
+     * §5.2 — **`why` survives here and nowhere else, clamped to one line.** There are five or six Life
+     * goals, they carry no ancestry line to compete with, and *why* is the entire reason a Life goal
+     * exists. Unbounded it wrapped a two-line card into four.
+     */
+    expect(screen.getAllByText('so the next thirty years are mine')[0]).toHaveStyle({ whiteSpace: 'nowrap', textOverflow: 'ellipsis' });
+    // A Life goal is the root, so it carries no `under` line at all.
+    expect(screen.queryByRole('button', { name: /^under / })).not.toBeInTheDocument();
+  });
+
+  /**
+   * §5.2 — **`why` leaves the four working lenses**, which is what pays, line for line, for R-lens-23's
+   * `under <Life goal>` line. A Monthly card ends up one line SHORTER than it was.
+   */
+  it('§5.2: `why` renders on no lens but Life', async () => {
+    for (const [lens, route] of [
+      ['Yearly', '/year/2026'],
+      ['Quarterly', '/quarter/2026-Q3'],
+      ['Monthly', '/month/2026-08'],
+      ['Weekly', '/week/2026-08-31'],
+    ] as const) {
+      withLens(
+        F.lens({
+          lens,
+          items: [F.goal({ id: F.ulid(70), parentId: F.L, horizon: lens, title: 'A goal with a reason', why: 'because it matters', periodKey: lens === 'Yearly' ? '2026' : lens === 'Quarterly' ? '2026-Q3' : lens === 'Monthly' ? '2026-08' : F.THIS_MONDAY, period: 'x', lifeRootId: F.L })],
+          groups: [F.group({ id: F.L })],
+        }),
+      );
+      const { unmount } = renderApp(<AppShell />, { route });
+      expect(await screen.findByText('A goal with a reason')).toBeInTheDocument();
+      expect(screen.queryByText('because it matters')).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('§7.2: the first-run state is kept verbatim — it is the best line in the app', async () => {
@@ -291,6 +412,7 @@ describe('Lenses — the Monthly lens (R-goal-47)', () => {
     expect(screen.getAllByRole('button', { name: 'Pull from backlog' }).length).toBeGreaterThan(0);
     // A create button for the horizon below, on every card, is a tree growing back one affordance at a time.
     expect(screen.queryByRole('button', { name: '+ Weekly goal' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Monthly goal' })).not.toBeInTheDocument();
   });
 });
 
@@ -311,7 +433,7 @@ describe('Lenses — the one gesture, and its keyboard equal (R-lens-25)', () =>
     screen.getByTestId('lens-body').focus();
     await user.type(screen.getByTestId('lens-body'), '{ArrowLeft}');
 
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Jul 2026 · Mon 6 Jul – Sun 2 Aug. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Monthly', 'Jul 2026');
   });
 
   it('Shift+↓ zooms in one altitude, and Shift+↑ zooms back out', async () => {
@@ -321,7 +443,9 @@ describe('Lenses — the one gesture, and its keyboard equal (R-lens-25)', () =>
 
     withLens(F.lensFor('Monthly'));
     await user.type(screen.getByTestId('lens-body'), '{Shift>}{ArrowDown}{/Shift}');
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+    // ⚠ It lands on `Aug 2026`, the month holding the anchor — R-lens-9's clamp, which is now the SAME
+    // call the tab strip makes. It used to navigate with no period at all and quietly drop the anchor.
+    await atLens('Monthly', 'Aug 2026');
   });
 
   it('and a shortcut never fires while a field has focus — the arrows belong to the caret there', async () => {
@@ -332,7 +456,7 @@ describe('Lenses — the one gesture, and its keyboard equal (R-lens-25)', () =>
 
     const field = within(sheet).getByLabelText('What needs doing, someday?');
     await user.type(field, 'abc{ArrowLeft}{ArrowLeft}');
-    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+    expect(screen.getByTestId('lens-period')).toHaveTextContent('Aug 2026');
   });
 
   it('R-lens-25: the Life lens has no periods, so it has no gesture and no arrow shortcut either', async () => {
@@ -340,7 +464,7 @@ describe('Lenses — the one gesture, and its keyboard equal (R-lens-25)', () =>
     const { user } = renderApp(<AppShell />, { route: '/life' });
     await screen.findByText('Be strong at 60');
     await user.type(screen.getByTestId('lens-body'), '{ArrowLeft}{ArrowRight}');
-    expect(screen.getByRole('button', { name: 'Life lens, Life. Change lens or period.' })).toBeInTheDocument();
+    expect(screen.getByTestId('lens-period')).toHaveTextContent('Life');
   });
 });
 
@@ -351,44 +475,196 @@ describe('Lenses — announcements (§8.2)', () => {
     await screen.findByText('Three easy runs and one long run');
     await waitFor(() => {
       const live = container.querySelector('[aria-live="polite"]');
-      expect(live?.textContent).toBe('Week of 31 Aug. 1 goal in 1 group, 1 carried.');
+      // ⚠ **`in N groups` is deleted, because there are no groups** (§7.3). The rendered-group counting
+      // that existed only to stop this describing the payload instead of the screen goes with it.
+      expect(live?.textContent).toBe('Week of 31 Aug. 1 goal, 1 carried.');
     });
   });
 });
 
-describe('Lenses — the Zoom sheet (R-lens-17, R-lens-22)', () => {
-  it('the title opens a ladder of five, each naming where it would land, with zero counts omitted', async () => {
-    withLens(F.lensFor('Quarterly'));
+/**
+ * ⚠ **RETIRED IN FULL — `Lenses — the Zoom sheet (R-lens-17, R-lens-22)`, three tests.**
+ *
+ * **Verdict: superseded by the owner's own reversal**, recorded against `R-lens-17` (rewritten) and
+ * `R-lens-22` (deleted): *"i dont need to click on a dropdown to change the lense as it adds friction.
+ * instead can we have a tabs in the top where i dont need double clicking to change lense."* The sheet is
+ * deleted in full — the file, `useZoom`, the `▾` and the title's button — so a ladder of five, its
+ * per-lens counts and its `Jump to now` footer have no subject.
+ *
+ * Each of the three, and where its property went:
+ *
+ *  - *`the title opens a ladder of five, each naming where it would land`* — **retired (R-lens-22).** The
+ *    destination is now named by the period row one line below the tab, in the same frame (R-lens-30),
+ *    after a tap that is free and one tap reversible. Asserted below.
+ *  - *`S-lens-9-3: choosing a row navigates to that lens at the period the SERVER computed`* — **kept, at
+ *    the tab.** It is the same clamp (R-lens-9) called from the strip; the scenario survives its surface.
+ *  - *`R-lens-17: 'Jump to now' is offered only when the period is not the current one`* — **retired as a
+ *    duplicate.** The off-now row's `Now ›` renders in exactly the same condition (R-lens-21) and is
+ *    already covered by this file's own off-now test. Nothing is lost; a duplicate is removed.
+ */
+describe('Lenses — the tab strip (R-lens-33)', () => {
+  it('S-lens-9-3: changing lens is ONE tap from every lens, and lands at R-lens-9\u2019s period', async () => {
+    // The default handler answers per `?lens=`, which is what a one-tap change across two lenses needs:
+    // a fixed body would answer a Monthly payload to the Quarterly key the strip is leaving.
     const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.' }));
+    await atLens('Quarterly', 'Q3 2026');
 
-    const sheet = await screen.findByRole('dialog', { name: 'Change lens' });
-    expect(within(sheet).getByText('everything')).toBeInTheDocument();
-    expect(within(sheet).getByText('Q3 2026')).toBeInTheDocument();
-    expect(within(sheet).getByText('Week of 31 Aug')).toBeInTheDocument();
-    // R-lens-13's one surviving requirement: the selection is announced, never merely coloured.
-    expect(within(sheet).getByRole('button', { name: /Quarterly/ })).toHaveAttribute('aria-current', 'true');
-    // R-lens-7 / §10 — no period picker anywhere in the sheet. One control per dimension.
-    expect(within(sheet).queryByRole('button', { name: /Earlier|Later/ })).not.toBeInTheDocument();
-  });
+    await user.click(screen.getByRole('tab', { name: 'Monthly' }));
 
-  it('S-lens-9-3: choosing a row navigates to that lens at the period the SERVER computed', async () => {
-    withLens(F.lensFor('Quarterly'));
-    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: 'Quarterly lens, Q3 2026 · Mon 6 Jul – Sun 4 Oct. Change lens or period.' }));
-
-    withLens(F.lensFor('Monthly'));
-    await user.click(within(await screen.findByRole('dialog', { name: 'Change lens' })).getByRole('button', { name: /Monthly/ }));
-
-    expect(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+    // `Aug 2026` — the month containing the anchor, which is today, because Q3 2026 contains today.
+    await atLens('Monthly', 'Aug 2026');
+    // No sheet was opened on the way and none is left behind: the strip replaced a modal, not added one.
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('R-lens-17: `Jump to now` is offered only when the period is not the current one', async () => {
+  it('R-lens-33: the strip names itself, is in horizon order, and shows the current lens', async () => {
+    withLens(F.lensFor('Monthly'));
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+    await screen.findByText('Lift three times a week');
+
+    const strip = screen.getByRole('tablist', { name: 'Lens' });
+    expect(strip).toHaveAttribute('aria-orientation', 'horizontal');
+    expect(within(strip).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Life', 'Yearly', 'Quarterly', 'Monthly', 'Weekly']);
+    expect(within(strip).getByRole('tab', { selected: true })).toHaveTextContent('Monthly');
+    // The body is the panel the strip controls, and it is named by the selected tab (§7.1).
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('id', 'lens-panel');
+    expect(panel).toHaveAttribute('aria-labelledby', 'lens-tab-Monthly');
+  });
+
+  /**
+   * ⚠ **The rule the whole pattern exists to hold** (`29-ux-navigation` §2.2): *no lens label may be
+   * shortened, abbreviated, truncated, ellipsised, wrapped or scaled down. The strip is as wide as its
+   * content and the window scrolls over it.* At 360px the 390px track scrolls 30px and clips `Weekly`'s
+   * tail **at the screen edge**; nothing is cut by a box and no glyph is lost from the DOM.
+   */
+  it('R-lens-33: the five labels render in full at 360px — unshortened and untruncated', async () => {
+    window.innerWidth = 360;
+    withLens(F.lensFor('Monthly'));
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+    await screen.findByRole('tablist', { name: 'Lens' });
+
+    for (const label of ['Life', 'Yearly', 'Quarterly', 'Monthly', 'Weekly']) {
+      const tab = screen.getByRole('tab', { name: label });
+      // The whole word, exactly — never `Qtr`, never `Quart…`.
+      expect(tab.textContent).toBe(label);
+      // …and nothing in its own styling can take it away: no ellipsis, no wrap, no shrink, no cap.
+      expect(tab).toHaveStyle({ whiteSpace: 'nowrap', flexShrink: '0' });
+      expect(tab.style.textOverflow).toBe('');
+      expect(tab.style.maxWidth).toBe('');
+      // 13px in both states, and 700 in both states — a weight change would reflow the whole track.
+      expect(tab).toHaveStyle({ fontSize: '13px', fontWeight: '700' });
+    }
+    // The viewport moves, not the words: the track is an ordinary horizontal scroller.
+    expect(screen.getByRole('tablist')).toHaveStyle({ overflowX: 'auto' });
+  });
+
+  /**
+   * §7.1 — **manual activation, not automatic.** Arrowing from `Life` to `Weekly` under automatic
+   * activation would fire three route changes, three lens reads and three history entries to reach one
+   * destination.
+   */
+  it('R-lens-33: full keyboard operation — one stop, arrows move, Enter changes, and it is announced', async () => {
+    withLens(F.lensFor('Monthly'));
+    const { user, container } = renderApp(<AppShell />, { route: '/month/2026-08' });
+    await screen.findByText('Lift three times a week');
+
+    // One tab stop for the whole strip: the selected tab is `0`, the rest `-1` (roving tabindex).
+    expect(screen.getAllByRole('tab').filter((t) => t.tabIndex === 0)).toHaveLength(1);
+
+    screen.getByRole('tab', { name: 'Monthly' }).focus();
+    await user.keyboard('{ArrowLeft}');
+    // Focus moved; selection did NOT follow it.
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Quarterly' }));
+    expect(screen.getByRole('tab', { name: 'Quarterly' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'Monthly' })).toHaveAttribute('aria-selected', 'true');
+
+    // `Home` and `End` reach the ends, and the strip does not wrap past either of them.
+    await user.keyboard('{Home}');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Life' }));
+    await user.keyboard('{ArrowLeft}');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Life' }));
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Weekly' }));
+    await user.keyboard('{ArrowRight}');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Weekly' }));
+
+    // …and `Enter` is what changes the lens.
+    withLens(F.lensFor('Weekly'));
+    await user.keyboard('{Enter}');
+    await atLens('Weekly', 'Week of 31 Aug');
+
+    // §7.3 — the change is announced: the tab's own `selected` state, plus the live region's payload.
+    await waitFor(() => {
+      expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe('Week of 31 Aug. 1 goal, 1 carried.');
+    });
+    // ⚠ **Focus is never dropped.** The strip is mounted in the shell above the router outlet, so
+    // activating a tab does not unmount the element holding focus (§2.12).
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Weekly' }));
+  });
+
+  /**
+   * ⚠ **The owner's override of `29-ux-navigation` §2.7.** The plan recommended *not* sticky and warned
+   * that if it were overturned the correct form is **both rows together as one block, or neither** — a
+   * strip that sticks without its period row lets you change lens but not period from the same place.
+   * One `position: sticky` wrapper is what makes that unbreakable.
+   */
+  it('R-lens-33: the tab strip and the period row are pinned as ONE block, and the strip still scrolls', async () => {
+    withLens(F.lensFor('Monthly'));
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+    await screen.findByText('Lift three times a week');
+
+    const pinned = screen.getByTestId('lens-sticky-nav');
+    expect(pinned).toHaveStyle({ position: 'sticky', top: 'var(--safe-top, 0px)' });
+    // Both rows, in one element: there is no scroll position at which one is pinned and the other is not.
+    expect(pinned.contains(screen.getByRole('tablist', { name: 'Lens' }))).toBe(true);
+    expect(pinned.contains(screen.getByTestId('lens-period'))).toBe(true);
+    expect(pinned.contains(screen.getByRole('button', { name: 'Later month' }))).toBe(true);
+    // Above the cards, below the bottom tab bar (20) and far below the sheet overlay (42/43).
+    expect(pinned.style.zIndex).toBe('10');
+    // ⚠ The pinned container must not clip or trap the horizontal scroller. `overflow` stays visible
+    // here — which is also the only way `position: sticky` works at all — and the scroller is one level
+    // down, inside the strip.
+    expect(pinned.style.overflow).toBe('');
+    expect(screen.getByRole('tablist')).toHaveStyle({ overflowX: 'auto', overscrollBehaviorX: 'contain' });
+    // The list scrolls under it: the body is a sibling of the pinned block, not inside it.
+    expect(pinned.contains(screen.getByTestId('lens-body'))).toBe(false);
+  });
+
+  /** §2.11 — the strip is marked so the body's period swipe can never fire from inside it. */
+  it('R-lens-25: the strip is marked `data-h-scroll` and `data-no-swipe`, under both code paths', async () => {
+    withLens(F.lensFor('Monthly'));
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+    const strip = await screen.findByRole('tablist', { name: 'Lens' });
+    expect(strip).toHaveAttribute('data-h-scroll');
+    expect(strip).toHaveAttribute('data-no-swipe');
+  });
+
+  /**
+   * ⚠ **The Zoom sheet is gone, and this is the assertion that it cannot come back quietly.** Its module
+   * is absent from the source tree, and there is no control anywhere on a lens that opens it.
+   */
+  it('R-lens-22, deleted: the Zoom sheet cannot be opened, and its module is absent', async () => {
     withLens(F.lensFor('Monthly'));
     const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
-    await user.click(await screen.findByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' }));
-    expect(within(await screen.findByRole('dialog', { name: 'Change lens' })).queryByRole('button', { name: 'Jump to now' })).not.toBeInTheDocument();
+    await screen.findByText('Lift three times a week');
+
+    // Nothing on the screen opens it: the title is not a button and the `▾` marker is deleted.
+    expect(screen.queryByTestId('lens-zoom-marker')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Change lens/ })).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('lens-period'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Change lens' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Jump to now' })).not.toBeInTheDocument();
+
+    // …and the module itself is deleted, not left dormant. `29-ux-navigation`: *"where it says a thing
+    // is deleted, the file is deleted, not left dormant."* A dynamic `import()` cannot say this — Vite
+    // resolves it statically and the test file would fail to load — so the filesystem is asked directly.
+    // `process.cwd()` is `apps/web` under vitest; `import.meta.url` is not a `file:` URL here.
+    const lensDir = resolve(process.cwd(), 'src/lens');
+    expect(existsSync(resolve(lensDir, 'ZoomSheet.tsx'))).toBe(false);
+    expect(readdirSync(lensDir)).not.toContain('ZoomSheet.tsx');
+    expect(readdirSync(lensDir).join(' ')).not.toMatch(/Zoom/);
   });
 });
 
@@ -399,35 +675,46 @@ describe('Lenses — the Zoom sheet (R-lens-17, R-lens-22)', () => {
  * and both were re-checked before being built: neither could have been resolved from a lens payload,
  * because a lens is one horizon and one period and holds neither the parent nor the account's history.
  */
-describe('R-lens-23 — the parent line', () => {
-  it('S-lens-23-1: renders for an item whose parent is OUTSIDE the period, and opens that parent', async () => {
-    // The Weekly lens is one week. `Lift three times a week` is a MONTHLY goal — it is not in `items`,
-    // not in `carried` and not in `groups`, so before `LensResponse.parents` there was nothing on the
-    // wire to render this line from, and the client may not go and fetch one (R-lens-16).
+/**
+ * ⚠ **R-lens-23 is REWRITTEN, and both halves of the old rule were broken by the reversal.**
+ *
+ * It named the *immediate* parent, suppressed when that parent was the group's own Life goal. Without
+ * groups the suppression has no referent, and a flat Yearly list would carry **no ancestry at all**,
+ * because a Yearly goal's parent is always a Life goal and was therefore always suppressed. The
+ * replacement is one rule at four horizons: **the Life goal the chain reaches, with no suppression.**
+ */
+describe('R-lens-23 — the Life line on every card', () => {
+  it('S-lens-23-1: every item outside the Life lens names its Life goal, and opens it', async () => {
     withLens(F.weeklyLens());
     const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
 
-    const line = await screen.findAllByRole('button', { name: 'under Lift three times a week, Aug 2026. Open goal.' });
-    expect(line[0]).toHaveTextContent('under Lift three times a week');
-    // R-lens-23 — the only way to walk UP one step without a tree. There is still no way to walk down.
+    const line = await screen.findAllByRole('button', { name: 'under Be strong at 60. Open goal.' });
+    expect(line[0]).toHaveTextContent('under Be strong at 60');
+    // The only way to walk UP without a tree. There is still no way to walk down.
     await user.click(line[0]!);
-    expect(await screen.findByRole('heading', { level: 1, name: 'Lift three times a week' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Be strong at 60' })).toBeInTheDocument();
   });
 
-  it('S-lens-23-2: nothing renders when the parent is the group’s own Life goal', async () => {
-    // The Yearly lens: every item's parent is a Life goal, so the server sends no parents at all and the
-    // client implements the suppression by rendering every hit it finds.
+  /**
+   * ⚠ **REWRITTEN — was `S-lens-23-2: nothing renders when the parent is the group's own Life goal`.**
+   *
+   * **Verdict: superseded, recorded against `R-lens-23` (rewritten).** The suppression it asserted is
+   * deleted: with it, a flat Yearly list would carry no ancestry whatsoever. The Yearly lens **gains**
+   * the line it did not have, which is the inverse of what this used to prove.
+   */
+  it('R-lens-23: the Yearly lens GAINS the line — no suppression, at any horizon', async () => {
     withLens(F.lensFor('Yearly'));
     renderApp(<AppShell />, { route: '/year/2026' });
     expect(await screen.findByText('Get back under 80kg')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^under / })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'under Be strong at 60. Open goal.' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'under Ship the thing. Open goal.' })).toBeInTheDocument();
   });
 
   it('R-lens-12: the carried band’s goals carry the line too', async () => {
     withLens(F.weeklyLens());
     renderApp(<AppShell />, { route: '/week/2026-08-31' });
     const band = await screen.findByTestId('carried-band');
-    expect(within(band).getByRole('button', { name: /^under Lift three times a week/ })).toBeInTheDocument();
+    expect(within(band).getByRole('button', { name: /^under Be strong at 60/ })).toBeInTheDocument();
   });
 });
 
@@ -440,7 +727,8 @@ describe('R-lens-24 — three empty states, and they are distinguishable', () =>
     expect(screen.getByText('A quarter is long enough to change something and short enough to finish.')).toBeInTheDocument();
     // `Q3 2026 is unclaimed` would be a different claim about a different thing.
     expect(screen.queryByText('Q3 2026 is unclaimed.')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '+ Quarterly goal' }).length).toBeGreaterThan(0);
+    // §3.1 — the empty state's CTA is kept (one button on an empty screen is not clutter) and relabelled.
+    expect(screen.getAllByRole('button', { name: '+ Goal' }).length).toBeGreaterThan(0);
   });
 
   it('S-lens-24-2: a horizon used in ANOTHER period gets the PERIOD-level state instead', async () => {
@@ -472,7 +760,7 @@ describe('R-lens-24 — three empty states, and they are distinguishable', () =>
     // that the URL carries the key and the screen shows the label, so the old expectation was pinning a
     // leaked identifier that the real server would never have sent.
     expect(await screen.findByText('Nothing was set for Q1 2026.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '+ Quarterly goal' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Goal' })).not.toBeInTheDocument();
     expect(screen.queryByText('Nothing quarterly yet.')).not.toBeInTheDocument();
   });
 
@@ -508,16 +796,18 @@ describe('R-lens-24 — three empty states, and they are distinguishable', () =>
  * Mon 31 Aug is August's and `Sep 2026` begins on the 7th. The model is right; the label was the defect.
  */
 describe('R-lens-28 — the lens title says what the period actually spans', () => {
-  it('the Monthly lens prints the range beneath the month, and names both in one accessible name', async () => {
+  it('the Monthly lens prints the range beneath the month, and announces both together', async () => {
     withLens(F.lensFor('Monthly'));
-    renderApp(<AppShell />, { route: '/month/2026-08' });
+    const { container } = renderApp(<AppShell />, { route: '/month/2026-08' });
     await screen.findByText('Lift three times a week');
 
-    // Two lines, one control: the eye reads `Aug 2026` over `Mon 3 Aug – Sun 6 Sep`…
+    // Two lines, one row: the eye reads `Aug 2026` over `Mon 3 Aug – Sun 6 Sep`…
     expect(screen.getByText('Mon 3 Aug – Sun 6 Sep')).toBeInTheDocument();
-    // …and the platform reads both, because the range line itself is `aria-hidden` (hearing it twice is
-    // worse than not hearing it). The `·` is what a line break cannot carry.
-    expect(screen.getByRole('button', { name: 'Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep. Change lens or period.' })).toBeInTheDocument();
+    // …and the platform hears both, because the range line is `aria-hidden` and the live region carries
+    // `label · range` instead (§7.3). The title is no longer a button with a name of its own.
+    await waitFor(() => {
+      expect(container.querySelector('[aria-live="polite"]')?.textContent).toMatch(/^Aug 2026 · Mon 3 Aug – Sun 6 Sep\./);
+    });
   });
 
   it('today’s real case: viewing Sep 2026 shows Mon 7 Sep – Sun 4 Oct', async () => {
@@ -553,26 +843,12 @@ describe('R-lens-28 — the lens title says what the period actually spans', () 
     // `Week of 31 Aug` already names a specific Monday, and a week is unambiguously the seven days from
     // it. A range under it would restate the title, which is chrome (R-nav-27).
     expect(screen.queryByText('Mon 31 Aug – Sun 6 Sep')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' })).toBeInTheDocument();
+    await atLens('Weekly', 'Week of 31 Aug');
     unmount();
 
     withLens(F.lens({ lens: 'Life', items: F.lifeGoals(), groups: [] }));
     renderApp(<AppShell />, { route: '/life' });
-    expect(await screen.findByRole('button', { name: 'Life lens, Life. Change lens or period.' })).toBeInTheDocument();
-  });
-
-  it('R-lens-22: the Zoom sheet shows every row’s span, so the destination is the whole destination', async () => {
-    withLens(F.lensFor('Quarterly'));
-    const { user } = renderApp(<AppShell />, { route: '/quarter/2026-Q3' });
-    await user.click(await screen.findByRole('button', { name: /^Quarterly lens, Q3 2026/ }));
-
-    const sheet = await screen.findByRole('dialog', { name: 'Change lens' });
-    expect(within(sheet).getByText('Mon 5 Jan 2026 – Sun 3 Jan 2027')).toBeInTheDocument();
-    expect(within(sheet).getByText('Mon 6 Jul – Sun 4 Oct')).toBeInTheDocument();
-    expect(within(sheet).getByText('Mon 3 Aug – Sun 6 Sep')).toBeInTheDocument();
-    expect(within(sheet).getByText('Mon 31 Aug – Sun 6 Sep')).toBeInTheDocument();
-    // The Life row spans everything, and `everything` has no dates to print.
-    expect(within(sheet).getByText('everything')).toBeInTheDocument();
+    await atLens('Life', 'Life');
   });
 });
 
@@ -616,7 +892,7 @@ describe('R-lens-29 — the flag for "this week is somewhere else"', () => {
 
     // `Aug 2026`, the month whose weeks include Mon 31 Aug — and NOT `lensPath(lens)` with no period,
     // which would ask for the current one and land straight back on September.
-    expect(await screen.findByRole('button', { name: /^Monthly lens, Aug 2026 · Mon 3 Aug – Sun 6 Sep\./ })).toBeInTheDocument();
+    await atLens('Monthly', 'Aug 2026');
     expect(screen.queryByText('This week is in Aug 2026')).not.toBeInTheDocument();
   });
 

@@ -23,8 +23,6 @@ export const keys = {
    */
   goalsAll: ['goals'] as const,
   lens: (lens: string, period: string | null) => ['goals', lens, period] as const,
-  zoomAll: ['zoom'] as const,
-  zoom: (anchor: string | null) => ['zoom', anchor] as const,
   goal: (id: string) => ['goal', id] as const,
   goalAll: (id: string) => ['goal', id] as const,
   tasksAll: ['tasks'] as const,

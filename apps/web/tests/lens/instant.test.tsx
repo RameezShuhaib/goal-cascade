@@ -33,15 +33,20 @@ describe('the header never waits, and `…` is never a label (R-lens-30)', () =>
     expect(screen.getByText('Mon 7 Sep – Sun 4 Oct')).toBeInTheDocument();
 
     /**
-     * **`…` IS NEVER A LABEL.** Scoped to the title control, deliberately, and it stays scoped there: the
+     * **`…` IS NEVER A LABEL.** Scoped to the period title, deliberately, and it stays scoped there: the
      * body renders `LensListSkeleton` while a cold read is in flight (R-nav-30, A6), and the `…` on the
      * goal page's trail is a real control with the accessible name `Show the full path`. What this pins is
      * the owner's actual complaint — the *name of the period* was an ellipsis — and it pins it where it can
      * never be satisfied by accident.
+     *
+     * ⚠ **R-lens-17, rewritten — the title is TEXT, not a button**, so this reads `lens-period` rather
+     * than an accessible name. The span the platform reads is the live region's, which is asserted in
+     * `lenses.test.tsx` where the payload it carries is the subject.
      */
-    const title = screen.getByRole('button', { name: /^Monthly lens, Sep 2026 · Mon 7 Sep – Sun 4 Oct\./ });
+    const title = screen.getByTestId('lens-period');
+    expect(title).toHaveTextContent('Sep 2026');
     expect(title.textContent).not.toContain('…');
-    expect(title).toHaveAccessibleName('Monthly lens, Sep 2026 · Mon 7 Sep – Sun 4 Oct. Change lens or period.');
+    expect(screen.getByRole('tab', { name: 'Monthly', selected: true })).toBeInTheDocument();
   });
 
   it('every horizon names its own period before any response', async () => {
@@ -60,37 +65,43 @@ describe('the header never waits, and `…` is never a label (R-lens-30)', () =>
 
   /**
    * A **week** names its own Monday already, so no range is printed under it (R-lens-28) — but the title
-   * still has to be there before the read, and it is the case where the label is longest and therefore
-   * where the chevron used to be eaten by the ellipsis (§5.1 defect 4).
+   * still has to be there before the read, and it is the case where the label is longest.
+   *
+   * ⚠ **REWRITTEN — was `…and the zoom marker survives the longest label there is`.**
+   * **Verdict: superseded, recorded against `R-lens-17` (rewritten).** There is no marker: the title is
+   * not a control and the Zoom sheet it opened is deleted. The property that is left — *the longest label
+   * in the product renders before any response, clamped to one line* — is what is asserted.
    */
-  it('the Weekly lens too, and the zoom marker survives the longest label there is', async () => {
+  it('the Weekly lens too, at the longest label there is', async () => {
     holdOpen();
     renderApp(<AppShell />, { route: '/week/2027-01-04' });
 
     expect(await screen.findByText('Week of 4 Jan')).toBeInTheDocument();
-    expect(screen.getByTestId('lens-zoom-marker')).toBeInTheDocument();
+    expect(screen.getByTestId('lens-period')).toHaveStyle({ whiteSpace: 'nowrap', textOverflow: 'ellipsis' });
   });
 
   /**
-   * ⚠ **UX-PLAN §5 (item F).** The marker is an inline `<svg>`, `flex: 0 0 auto`, in a row whose
-   * `alignItems` is `center` — so it is not `▾` (U+25BE, outside both Manrope `unicode-range` subsets and
-   * therefore drawn in the platform fallback font), it is not baseline-aligned against 21/800 text, and it
-   * is not inside the ellipsising span where a long label would eat it.
+   * ⚠ **RETIRED — `the zoom marker is an SVG outside the truncating span, centred, and never a text
+   * glyph`.**
+   *
+   * **Verdict: superseded by the owner's own reversal, recorded against `R-lens-17` (rewritten).** The
+   * marker existed to say *this title is a control*; the title is not a control any more, so the whole
+   * subject is gone — with it the `unicode-range` lottery, the baseline misalignment and the ellipsis
+   * that ate it. `UX-PLAN §5 (item F)`'s four defects are unreachable rather than fixed.
+   *
+   * The one clause worth keeping is kept, and strengthened to the whole document: **U+25BE appears
+   * nowhere in the product.**
    */
-  it('the zoom marker is an SVG outside the truncating span, centred, and never a text glyph', async () => {
+  it('R-lens-17: the title is not a control, and the `▾` is gone from the product', async () => {
     renderApp(<AppShell />, { route: '/month/2026-08' });
-    const marker = await screen.findByTestId('lens-zoom-marker');
+    await screen.findByText('Lift three times a week');
 
-    expect(marker.tagName.toLowerCase()).toBe('svg');
-    expect(marker).toHaveAttribute('aria-hidden', 'true');
-    expect(marker.style.flex).toBe('0 0 auto');
-    // The label is a SIBLING, not an ancestor: the ellipsis cannot reach the marker.
-    const label = screen.getByText('Aug 2026');
-    expect(label.contains(marker)).toBe(false);
-    expect(label.parentElement).toBe(marker.parentElement);
-    expect((marker.parentElement as HTMLElement).style.alignItems).toBe('center');
-    // U+25BE appears nowhere on the screen any more.
+    expect(screen.queryByTestId('lens-zoom-marker')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain('▾');
+    // The period title takes no tab stop and no press state — it is a `<span>`, in a `<div>`.
+    const title = screen.getByTestId('lens-period');
+    expect(title.tagName.toLowerCase()).toBe('span');
+    expect(title.closest('button')).toBeNull();
   });
 });
 
@@ -235,13 +246,13 @@ describe('the owner clock rolls over (R-lens-30, §4.4)', () => {
    * What the owner sees when the day rolls over with the tab open: **nothing moves under them.** The URL
    * still names a period and a period's *identity* does not change at midnight — its *status* does. The
    * week being viewed becomes the past week, so the create affordance goes and the badge arrives, which
-   * is the honest outcome. Without it the client would keep offering `+ Weekly goal` on a week that
+   * is the honest outcome. Without it the client would keep offering `+ Goal` on a week that
    * became past at midnight, and the write would come back `PERIOD_IN_PAST` with no visible cause.
    */
   it('a lens on the current week becomes a past week, and its create affordance goes', async () => {
     renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await screen.findByText('Three easy runs and one long run');
-    expect(screen.getAllByRole('button', { name: '+ Weekly goal' }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '+ Goal' })).toBeInTheDocument();
     expect(screen.queryByText(/still editable/)).not.toBeInTheDocument();
 
     // Into the following week, both clocks together.
@@ -251,7 +262,7 @@ describe('the owner clock rolls over (R-lens-30, §4.4)', () => {
     });
 
     expect(await screen.findByText('Past week — still editable')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '+ Weekly goal' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Goal' })).not.toBeInTheDocument();
   });
 });
 

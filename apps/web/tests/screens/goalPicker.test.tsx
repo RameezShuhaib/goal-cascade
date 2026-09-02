@@ -72,8 +72,10 @@ const bigYearly = (): LensResponse =>
   });
 
 const openCreateSheet = async (user: ReturnType<typeof renderApp>['user']) => {
-  await user.click((await screen.findAllByRole('button', { name: '+ Quarterly goal' }))[0]!);
-  return screen.findByRole('dialog', { name: 'New Quarterly goal' });
+  // ⚠ **R-nav-25 / R-nav-32** — `+ Goal`, and there is exactly one of it: the per-group create is gone
+  // with grouping, so this no longer has to pick the cluster's out of several by DOM order.
+  await user.click(await screen.findByRole('button', { name: '+ Goal' }));
+  return screen.findByRole('dialog', { name: 'New goal' });
 };
 
 /**
@@ -446,7 +448,7 @@ describe('R-nav-31 — the keyboard reaches everything the pointer does (§8.3)'
 
     await user.keyboard('{Enter}');
     // Back to the form, with the choice applied and focus on the control that opened the picker.
-    const back = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
+    const back = await screen.findByRole('dialog', { name: 'New goal' });
     expect(within(back).getByRole('button', { name: new RegExp(chosen.split(' — ')[0]!) })).toHaveFocus();
   });
 
@@ -498,10 +500,10 @@ describe('R-nav-31 — the keyboard reaches everything the pointer does (§8.3)'
     // ONE dialog, never two: a second `aria-modal` sheet would be a second focus trap.
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
-    await user.click(within(picker).getByRole('button', { name: '‹ New Quarterly goal' }));
+    await user.click(within(picker).getByRole('button', { name: '‹ New goal' }));
 
     // The sheet never unmounted, so the typed title is still there.
-    const back = await screen.findByRole('dialog', { name: 'New Quarterly goal' });
+    const back = await screen.findByRole('dialog', { name: 'New goal' });
     expect(within(back).getByLabelText('Goal title')).toHaveValue('Deadlift twice a week');
   });
 });

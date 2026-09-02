@@ -216,6 +216,12 @@ export class HttpApiClient {
     });
   }
   /** R-lens-22 — the Zoom sheet's five rows in ONE grouped read. Never five lens reads. */
+  /**
+   * ⚠ **R-lens-22, deleted — this method has NO CALLER.** The Zoom sheet is gone (R-lens-17, rewritten)
+   * and `useZoom` went with it. `GET /goals/zoom` and `GoalService.zoom` are flagged for removal and were
+   * deliberately not removed in A10's pass, so the route surface is unchanged; this stays beside the
+   * endpoint it names, and goes when it does.
+   */
   zoom(anchor?: string) {
     return this.request('GET', ENDPOINTS.goalsZoom, ZoomResponse, { query: { anchor } });
   }

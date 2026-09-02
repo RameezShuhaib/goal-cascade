@@ -4,7 +4,7 @@ import { useUI } from './context/UIContext';
 import { useSkin } from './skin';
 import { TabBar } from './components/TabBar';
 import { Sheets } from './components/Sheets';
-import { LensScreen } from './lens/LensScreen';
+import { LensChrome, LensScreen } from './lens/LensScreen';
 import { GoalDetailScreen } from './screens/GoalDetailScreen';
 import { TaskPage } from './screens/TaskPage';
 import { BacklogScreen } from './screens/BacklogScreen';
@@ -23,7 +23,7 @@ import { useOwnerTimezoneSync } from './utils/periods';
  *
  * What is addressable and what is not (R-lens-14):
  *  - **routes** — the five lenses with their periods, a goal page, a **task page**, Backlog, Learnings;
- *  - **overlays** — the `+` drawer, the Zoom sheet, every confirm sheet, every create form. Each is a
+ *  - **overlays** — the `+` drawer, every confirm sheet, every create form. Each is a
  *    two-second interaction whose URL nobody wants, and reloading must not reopen one.
  *
  * The period segment is optional on every lens (`/month` as well as `/month/2026-08`) because the client
@@ -52,12 +52,22 @@ export function AppShell() {
     >
       <Routes>
         <Route path="/" element={<RememberedLens />} />
-        {HORIZONS.map((horizon) => (
-          <Route key={horizon} path={`/${LENS_SEGMENT[horizon]}`}>
-            <Route index element={<LensScreen lens={horizon} />} />
-            {horizon !== 'Life' && <Route path=":period" element={<LensScreen lens={horizon} />} />}
-          </Route>
-        ))}
+        {/*
+         * ⚠ **R-lens-33 — the five lens routes sit inside ONE layout route**, and that is what keeps the
+         * tab strip mounted across a lens change. Without it, activating a tab unmounts the element
+         * holding focus (dropping a keyboard user to `<body>`) and resets the strip's `scrollLeft` — and
+         * it would happen twice per tap, because `/quarter` renders the index route and then canonicalises
+         * to `/quarter/2026-Q3`. `LensChrome` owns rows 1–3 and the live region; `LensScreen` is the body
+         * in its `<Outlet/>`.
+         */}
+        <Route element={<LensChrome />}>
+          {HORIZONS.map((horizon) => (
+            <Route key={horizon} path={`/${LENS_SEGMENT[horizon]}`}>
+              <Route index element={<LensScreen />} />
+              {horizon !== 'Life' && <Route path=":period" element={<LensScreen />} />}
+            </Route>
+          ))}
+        </Route>
         <Route path="/goal/:goalId" element={<GoalDetailScreen />} />
         <Route path="/task/:taskId" element={<TaskPage />} />
         <Route path="/backlog" element={<BacklogScreen />} />

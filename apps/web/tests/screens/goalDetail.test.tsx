@@ -224,7 +224,11 @@ describe('Goal detail', () => {
     await user.type(screen.getByLabelText('Sub-goal title'), 'Lift three times a week');
     await user.click(screen.getByRole('button', { name: 'More…' }));
 
-    const sheet = await screen.findByRole('dialog', { name: 'New Monthly goal' });
+    // ⚠ **R-nav-32** — `New goal` at every horizon; the heading stopped naming one when the sheet
+    // stopped committing to one. The goal page's `+ Sub-goal` renders **no horizon selector**, because it
+    // asks a different question — *what hangs off this one* — where the answer is already known.
+    const sheet = await screen.findByRole('dialog', { name: 'New goal' });
+    expect(within(sheet).queryByRole('radiogroup', { name: 'Horizon' })).not.toBeInTheDocument();
     expect(within(sheet).getByLabelText('Goal title')).toHaveValue('Lift three times a week');
     await user.click(within(sheet).getByRole('button', { name: 'Save goal' }));
     await waitFor(async () =>

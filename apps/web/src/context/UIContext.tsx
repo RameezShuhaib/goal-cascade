@@ -28,8 +28,8 @@ import { DEFAULT_LENS } from '../routes';
  * The open overlay, as a discriminated union carrying what it is about.
  *
  * R-lens-14 — **overlays are not routes.** Each is a two-second interaction whose URL nobody wants: the
- * `+` drawer, every confirm sheet, the create and edit forms, the Zoom sheet. Reloading the page must not
- * reopen one (S-nav-24-2).
+ * `+` drawer, every confirm sheet, the create and edit forms. Reloading the page must not reopen one
+ * (S-nav-24-2). ⚠ The **Zoom sheet is deleted in full** (R-lens-17, rewritten): the lens is a tab strip.
  */
 export type Sheet =
   /**
@@ -66,10 +66,24 @@ export type Sheet =
    * so that changing your mind about which form you wanted costs nothing. It is ignored when editing,
    * where the goal's own title wins.
    */
-  | { kind: 'goalForm'; editId: string | null; horizon: Horizon; periodKey: string; lifeGoalId?: string | null; parentId?: string | null; title?: string }
+  | {
+      kind: 'goalForm';
+      editId: string | null;
+      horizon: Horizon;
+      periodKey: string;
+      lifeGoalId?: string | null;
+      parentId?: string | null;
+      title?: string;
+      /**
+       * ⚠ **R-nav-32** — the lens the sheet was opened FROM, and it is what turns the sheet into the one
+       * create action. Present only for a lens's `+ Goal`: it renders the five-chip horizon selector
+       * (defaulting to `horizon`, which is this lens), names the period's reason, and decides whether the
+       * save has to move you (§3.8). Absent for the goal page's `+ Sub-goal`, which asks a different
+       * question — *what hangs off this one* — where the answer is already known.
+       */
+      lens?: Horizon;
+    }
   | { kind: 'moveGoal'; goalId: string; lifeGoalsOnly?: boolean }
-  /** R-lens-17 — the Zoom sheet. The lens title is its only trigger. */
-  | { kind: 'zoom' }
   /** R-backlog-28 — `Pull from the backlog`, from a Weekly or Monthly goal's card. */
   | { kind: 'pull'; goalId: string; horizon: Horizon; weekStart?: string };
 
@@ -103,8 +117,7 @@ export interface UIState {
   closeSheet: () => void;
 
   /**
-   * R-nav-28 — the lens the `Goals` tab returns to, so daily use never opens the Zoom sheet. Session
-   * state only: a cold start opens the **Weekly** lens, and the period always resets to the one
+   * R-nav-28 — the lens the `Goals` tab returns to. Session state only: a cold start opens the **Weekly** lens, and the period always resets to the one
    * containing today (R-lens-8) — an app that opened on a remembered future period would quietly lie
    * about now.
    */
@@ -113,15 +126,16 @@ export interface UIState {
 
   /**
    * R-lens-18 — the session **anchor date**, held only so the **Life** lens (which has no period) can
-   * hand one to the Zoom sheet. Every other lens derives its anchor from the period it is showing, which
-   * is what makes zoom lossless without anything to keep in step.
+   * hand one to the tab strip and to `New goal`'s horizon selector. Every other lens derives its anchor
+   * from the period it is showing, which is what makes zoom lossless without anything to keep in step.
    */
   anchor: string | null;
   setAnchor: (date: string) => void;
 
   /**
-   * R-lens-19 — collapsed Life-goal groups, keyed `<lens>|<groupId>`. **Session-scoped and per-lens,
-   * never persisted**: a collapsed group that survives a restart is a hidden goal.
+   * R-lens-12 — the carried band's collapse, keyed `Weekly|__carried|<week>`. **Session-scoped, never
+   * persisted**: a collapsed band that survives a restart is hidden open work. ⚠ The Life-goal group keys
+   * (`<lens>|<groupId>`) are gone with grouping itself (R-lens-19, deleted).
    */
   collapsed: Record<string, boolean>;
   toggleCollapsed: (key: string) => void;

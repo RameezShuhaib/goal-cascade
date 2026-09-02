@@ -18,7 +18,7 @@ import { requests } from '../msw/handlers';
  * ⚠ **A2** — the sheet these tests used to be written against is deleted. Task detail is a **page**
  * (R-task-45), so the "sheet with typed work in it" case now lives on the task page and is asserted in
  * `taskPage.test.tsx`; what remains here is the contract every surviving sheet inherits from `Sheet`, plus
- * the newest one (the Zoom sheet, R-lens-17), which must inherit it unchanged rather than reinvent it.
+ * every sheet in the app, which must inherit it unchanged rather than reinvent it.
  */
 
 /** Open the task-create sheet from the Weekly lens, and hand back its trigger. */
@@ -102,12 +102,11 @@ describe('Sheets — a modal you can leave', () => {
     expect(html).toContain(':where(a, button, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible');
   });
 
-  it('every sheet inherits it — the goal form, the drawer and the Zoom sheet close on Escape too', async () => {
+  it('every sheet inherits it — the goal form and the drawer close on Escape too', async () => {
     const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
 
-    // `[0]` — the cluster row's create, which DOM order puts ahead of the group feet that share its name.
-    await user.click((await screen.findAllByRole('button', { name: '+ Weekly goal' }))[0]!);
-    expect(await screen.findByRole('dialog', { name: 'New Weekly goal' })).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '+ Goal' }));
+    expect(await screen.findByRole('dialog', { name: 'New goal' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
@@ -117,16 +116,20 @@ describe('Sheets — a modal you can leave', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
     /**
-     * R-lens-17 — the Zoom sheet is the newest surface in the product and it is the EXISTING `Sheet`, so
-     * it inherits the whole contract rather than reinventing half of it. Focus also returns to the lens
-     * title, which is what makes the lens change announce itself (§8.2).
+     * ⚠ **REWRITTEN — the third clause was the Zoom sheet's.** **Verdict: superseded, recorded against
+     * `R-lens-17` (rewritten) and `R-lens-22` (deleted).** The sheet is gone, so "it inherits `Sheet`'s
+     * contract" and "focus returns to the lens title" have no subject: the lens is a tab strip, changing
+     * it is a route change rather than a modal, and there is no title button to return focus to.
+     *
+     * What survives is the property the clause was really protecting — **focus returns to the control
+     * that opened the sheet** — asserted on the create action, which is the one this screen still has.
      */
-    const title = screen.getByRole('button', { name: 'Weekly lens, Week of 31 Aug. Change lens or period.' });
-    await user.click(title);
-    expect(await screen.findByRole('dialog', { name: 'Change lens' })).toBeInTheDocument();
+    const create = screen.getByRole('button', { name: '+ Goal' });
+    await user.click(create);
+    await screen.findByRole('dialog', { name: 'New goal' });
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(document.activeElement).toBe(title);
+    expect(document.activeElement).toBe(create);
   });
 
   it('R-nav-14: a sheet whose only field is an optional reason never asks twice', async () => {

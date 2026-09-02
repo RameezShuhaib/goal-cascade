@@ -239,23 +239,41 @@ describe('Weekly lens — the three exits, and nothing else (R-task-13)', () => 
 
     expect(await screen.findByText('Past week — still editable')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '+ Task' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '+ Weekly goal' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Goal' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Repeat last week' })).not.toBeInTheDocument();
     // History is readable and truthful, and completing something you actually did is not rewriting it.
     expect(screen.getByRole('button', { name: 'Complete Tuesday easy 6k' })).toBeEnabled();
   });
 });
 
-describe('Weekly lens — the group foot (R-goal-46)', () => {
-  it('carries `Repeat last week` beside `+ Weekly goal`, per Life line, and only in this lens', async () => {
+/**
+ * ⚠ **REWRITTEN — was `Weekly lens — the group foot (R-goal-46)`.**
+ *
+ * **Verdict: superseded by the owner's own reversal, recorded against `R-goal-46` (amended) and
+ * `R-lens-3` (deleted).** `Repeat last week` lived *"at the group foot in the Weekly lens, and nowhere
+ * else"*, and there are no group feet. It becomes **one link at the foot of the Weekly list**, copying
+ * the previous week across every line — `repeatWeek`'s `lifeGoalId` is optional now, and absent means
+ * all of them.
+ *
+ * Everything else about it is R-goal-46 verbatim and still asserted: ordinary new goals, current week or
+ * later only, and the no-op toast.
+ */
+describe('Weekly lens — `Repeat last week` at the list foot (R-goal-46, amended)', () => {
+  it('renders once, sends NO lifeGoalId, and says so when last week held nothing', async () => {
     withLens(F.weeklyLens());
     const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await screen.findByText('Three easy runs and one long run');
 
-    const repeat = screen.getByRole('button', { name: 'Repeat last week' });
-    await user.click(repeat);
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/repeat-week'))).toMatchObject({ lifeGoalId: F.L, weekStart: F.THIS_MONDAY }));
-    // A no-op says so rather than pretending: it is offered per line, so an empty line is ordinary.
+    // Once. Not once per line — a per-line row is a group header by another name.
+    const all = screen.getAllByRole('button', { name: 'Repeat last week' });
+    expect(all).toHaveLength(1);
+    await user.click(all[0]!);
+    await waitFor(async () => {
+      const body = await bodyOf(lastRequest('POST', '/repeat-week'));
+      expect(body).toMatchObject({ weekStart: F.THIS_MONDAY });
+      // Absent means every Life line. The parameter is not sent as `null` or `''` — it is not sent.
+      expect(body).not.toHaveProperty('lifeGoalId');
+    });
     expect(await screen.findByRole('status')).toHaveTextContent('Last week held nothing');
   });
 

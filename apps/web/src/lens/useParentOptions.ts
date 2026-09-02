@@ -15,7 +15,10 @@ import { enclosingKey, rank } from '../utils/periodKeys';
  *
  * Four scoped lens reads at most, every one an index seek, all of them cached (the Life read is usually
  * already warm). **The client still holds no tree** (R-lens-16): these are ordinary lens pages, and each
- * item's `lifeRootId` is what narrows the picker to one line when the sheet was opened from a group foot.
+ * item's `lifeRootId` is what narrows the picker to one line when a caller supplies one. ⚠ **A10 — the
+ * group foot that used to supply it is gone (R-lens-3, deleted).** `lifeGoalId` survives as a parameter
+ * because `MoveGoalSheet` and R-goal-48's sub-goal capture still narrow by line; a lens's `+ Goal` passes
+ * none, and the picker's own Life-goal grouping is what orients you there instead (R-nav-32).
  *
  * Periods do not nest (R-goal-35), so this is an *offer*, not a constraint: a parent in another period is
  * legal and is simply not listed. The server enforces the horizon rule regardless (D-5 — a disabled button

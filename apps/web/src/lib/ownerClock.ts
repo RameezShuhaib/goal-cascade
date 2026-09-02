@@ -158,14 +158,13 @@ export function useOwnerToday(): string {
  * **What the owner sees: nothing moves under them.** The URL still names a period, and a period's
  * *identity* does not change at midnight — its *status* does. The week being viewed may become the past
  * week, and a Monthly lens sitting on the current month may pick up or drop `This week is in Aug 2026`.
- * Without this, the client would keep offering `+ Weekly goal` on a week that became past at midnight, and
+ * Without this, the client would keep offering `+ Goal` on a week that became past at midnight, and
  * the write would come back `PERIOD_IN_PAST` — a refusal with no visible cause.
  */
 export function invalidateForDayChange(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: keys.goalsAll }); // isPast / hasWork / hasForwardContent per period
   void qc.invalidateQueries({ queryKey: ['bootstrap'] }); // week.offset and carryWeeks are projections
   void qc.invalidateQueries({ queryKey: keys.tasksAll }); // carryWeeks
-  void qc.invalidateQueries({ queryKey: keys.zoomAll });
 }
 
 /**

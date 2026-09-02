@@ -341,19 +341,24 @@ export const MoveGoalRequest = z.object({ parentId: Ulid, version: OptionalVersi
 export const ReplanGoalRequest = z.object({ periodKey: PeriodKey, reason: Reason.optional(), version: OptionalVersion }).strict();
 
 /**
- * ⚠ **A2, new (R-goal-46)** — `Repeat last week`: copies the previous week's Weekly goals **for one Life
- * line** into `weekStart` as ORDINARY new goals — `title`, `why` and `parentId` carried over, `pulse`
- * reset to `On track`, `periodKey` set to the target week, new ids, **no tasks copied**, and nothing
- * linking a copy to its source.
+ * **R-goal-46** — `Repeat last week`: copies the previous week's Weekly goals into `weekStart` as ORDINARY
+ * new goals — `title`, `why` and `parentId` carried over, `pulse` reset to `On track`, `periodKey` set to
+ * the target week, new ids, **no tasks copied**, and nothing linking a copy to its source.
  *
  * This is deliberately not a recurrence feature: no template entity, no series id, no materialisation
  * job, and no edit-this-one-versus-all-future decision. A repeating intention costs one tap per week and
  * produces ordinary rows.
  *
- * Per Life line, not account-wide (Q-22): account-wide creates twenty goals in one tap with no review.
+ * ⚠ **`lifeGoalId` is OPTIONAL, and absent means every Life line** (R-goal-46, amended). Q-22 required it
+ * per line because the control lived at a group foot; there are no group feet (R-lens-3, deleted), so the
+ * honest flat version is one link at the foot of the Weekly list copying the whole week. A per-line
+ * variant would need a per-line row, which is a group header by another name. When it IS supplied the
+ * behaviour is unchanged, byte for byte — the MCP tool still names a line, and so does any caller that
+ * has one.
+ *
  * It is offered only on the current week or a later one — a past week is `PERIOD_IN_PAST` (R-goal-36).
  */
-export const RepeatWeekRequest = z.object({ lifeGoalId: Ulid, weekStart: WeekStart }).strict();
+export const RepeatWeekRequest = z.object({ lifeGoalId: Ulid.optional(), weekStart: WeekStart }).strict();
 
 export const GoalResponse = z.object({ goal: GoalView, ...ServerNow });
 

@@ -11,10 +11,11 @@ import VerifyEmailScreen from './auth/VerifyEmailScreen';
  * R-nav-25 — the consistent top-right cluster on every page: the theme toggle, the account button, and at
  * most one primary action.
  *
- * ⚠ **A2** — the mapping changed with the screens: a lens's action names its own horizon (`+ Life goal` …
- * `+ Weekly goal`) and is **absent** on a past period (R-goal-36); goal detail carries `+ Weekly goal` on a
- * Monthly goal and `+ Task` on a Weekly one; and the **task page** carries the cluster, which goal detail
- * used to omit. `Edit plan` is gone with the plan screen (R-rm-3).
+ * ⚠ **R-nav-25, amended** — a lens's action is `+ Goal`, the **same string at every lens**, and is
+ * **absent** on a past period (R-goal-36). The five horizon-named labels are retired: the button defaults
+ * to a horizon rather than committing to one, and a label that names a default as if it were a
+ * destination is a label that lies (R-nav-32). Goal detail and the task page mappings are untouched
+ * (R-nav-29). `Edit plan` is gone with the plan screen (R-rm-3).
  *
  * The toggle is real now (R-nav-12 / D-25): `useThemeChoice` writes the choice to `/me/preferences`, so it
  * follows the person across devices instead of vanishing on reload, and repaints token sets rather than
@@ -60,7 +61,7 @@ export function TopActions({ children }: { children?: ReactNode }) {
  * R-lens-25 — the keyboard accelerators, documented where the rule says they must be.
  *
  * They are a **convenience and never a route**: every one of them has a visible control one `Tab` away
- * (the chevrons for the period, the lens title for the altitude), so the accessibility floor never depends
+ * (the chevrons for the period, the tab strip for the altitude), so the accessibility floor never depends
  * on a shortcut. This list exists because an undocumented accelerator is one nobody uses, and because if
  * they are ever dropped nothing regresses.
  */
@@ -69,6 +70,10 @@ function Shortcuts() {
   const rows: [string, string][] = [
     ['← / →', 'Earlier / later period'],
     ['Shift + ↑ / ↓', 'Zoom out / in a lens'],
+    // R-lens-33 — the tab strip's own model, documented where the other accelerators are. It is not an
+    // accelerator: it is the primary control, and this row exists so the manual-activation rule (arrow to
+    // move, Enter to change) is discoverable rather than guessed at.
+    ['← / → on tabs', 'Move between lenses; Enter to change'],
     ['Escape', 'Close a sheet, or leave the task page'],
   ];
   return (

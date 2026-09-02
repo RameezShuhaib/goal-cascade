@@ -164,43 +164,11 @@ export function useLens(lens: Horizon, period?: string, enabled = true) {
 }
 
 /**
- * R-lens-22 — the Zoom sheet's five rows, in one grouped read. Only fetched while the sheet is open.
- *
- * ⚠ **R-lens-30** — the sheet no longer *waits* on this: it renders all five destinations from local
- * arithmetic and fills the counts in when this lands (`ZoomSheet`). What the read still answers is the
- * only field of `ZoomRowView` that needs a database.
+ * ⚠ **`useZoom` is deleted with the Zoom sheet** (R-lens-17, rewritten; R-lens-22, deleted). The lens is a
+ * tab strip in the shell and there are no per-lens counts to fetch — five ambient numbers in a permanent
+ * strip is a report, which R-nav-26 refuses. `GET /goals/zoom` and `GoalService.zoom` now have **no
+ * caller**: flagged for the server, and deliberately not deleted in this pass.
  */
-export function useZoom(anchor: string | null, enabled = true) {
-  const client = useApi();
-  const signedIn = useSignedIn();
-  const clock = useWeekClock();
-  const q = useQuery({
-    queryKey: keys.zoom(anchor),
-    queryFn: () => client.zoom(anchor ?? undefined),
-    enabled: signedIn && enabled,
-    ...READ_MODEL,
-  });
-  /**
-   * ⚠ **Anti-drift layer 3.** A `ZoomRowView` is not a `PeriodView` — it carries no `isPast` or
-   * `currentWeekPeriod` — so what is echoed here is the part it does carry: the destination key the
-   * server chose for each horizon, its label and its span. That is `zoomTo` + `labelOf` + `weekRangeOf`,
-   * which is exactly what the sheet now renders from, so a disagreement would put a wrong destination
-   * under a right count.
-   */
-  for (const row of q.data?.rows ?? []) {
-    if (row.periodKey === null) continue;
-    assertPeriodAgrees(
-      'ZoomResponse.rows',
-      row.lens,
-      { periodKey: row.periodKey, label: row.label, weekRange: row.weekRange, isCurrent: false, isPast: false, currentWeekPeriod: null, hasWork: false },
-      q.data!.serverNow,
-      // Clock-free by construction: the three fields above are all a `ZoomRowView` carries, and none of
-      // them needs a `today`. Passing `null` says so rather than inventing a comparison.
-      null,
-    );
-  }
-  return q;
-}
 
 /** R-goal-41 — one goal's detail page: the goal, its ancestors, children, tasks, backlog and learnings. */
 export function useGoal(id: string | null | undefined) {
@@ -308,7 +276,6 @@ function applyRefresh(qc: QueryClient, r: Refresh) {
     case 'all':
       inv(keys.goalsAll);
       inv(['goal']);
-      inv(keys.zoomAll);
       inv(keys.tasksAll);
       inv(['task']);
       inv(keys.backlogAll);
@@ -514,11 +481,11 @@ function patchLearning(qc: QueryClient, learning: LearningView) {
 
 /**
  * Everything a week's shape depends on. A lens read carries its own week's tasks (R-lens-12), so a task
- * write moves goals too — and the Zoom sheet's counts (R-lens-22) move with any goal write.
+ * write moves goals too.
  */
-const WEEK_KEYS: readonly (readonly unknown[])[] = [keys.tasksAll, keys.goalsAll, keys.zoomAll, ['bootstrap']];
-/** Everything a goal write can move: the lens page, the carried band, the group counts, the Zoom counts. */
-const GOAL_KEYS: readonly (readonly unknown[])[] = [keys.goalsAll, ['goal'], keys.zoomAll, ['bootstrap']];
+const WEEK_KEYS: readonly (readonly unknown[])[] = [keys.tasksAll, keys.goalsAll, ['bootstrap']];
+/** Everything a goal write can move: the lens page, the carried band and the Life lens's own counts. */
+const GOAL_KEYS: readonly (readonly unknown[])[] = [keys.goalsAll, ['goal'], ['bootstrap']];
 
 // ---- preferences -----------------------------------------------------------
 
@@ -635,13 +602,14 @@ export function useReplanGoal() {
 }
 
 /**
- * ⚠ **A2, new (R-goal-46)** — `Repeat last week`, per Life line, into one week. It creates ORDINARY goals:
- * there is no template, no series and no recurrence machinery to keep in step, so nothing is patched — the
- * refetch is what the new rows arrive on.
+ * R-goal-46, amended — `Repeat last week` into one week. `lifeGoalId` is **optional now**: absent means
+ * every Life line, which is the honest flat version of a control that used to live at a group foot. It
+ * creates ORDINARY goals — no template, no series and no recurrence machinery to keep in step — so nothing
+ * is patched and the refetch is what the new rows arrive on.
  */
 export function useRepeatWeek() {
-  return useCommand<{ lifeGoalId: string; weekStart: string }, Awaited<ReturnType<ApiClient['repeatWeek']>>>({
-    run: (c, v, k) => c.repeatWeek({ lifeGoalId: v.lifeGoalId, weekStart: v.weekStart }, k),
+  return useCommand<{ lifeGoalId?: string; weekStart: string }, Awaited<ReturnType<ApiClient['repeatWeek']>>>({
+    run: (c, v, k) => c.repeatWeek({ weekStart: v.weekStart, ...(v.lifeGoalId ? { lifeGoalId: v.lifeGoalId } : {}) }, k),
     invalidate: GOAL_KEYS,
     inline: true,
   });

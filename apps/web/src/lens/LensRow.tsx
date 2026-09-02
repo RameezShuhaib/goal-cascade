@@ -1,21 +1,25 @@
 import type { CalendarPeriodView, Horizon } from '@goal-cascade/shared';
 import { useSkin } from '../skin';
 import { PERIOD_UNIT } from '../utils/periodKeys';
-import { periodTitle } from './copy';
 
 /**
- * R-lens-17 — **the lens control is the title.** One row: `‹`, the period label, `›`.
+ * R-lens-17, rewritten — **the period row: `‹`, the period label as TEXT, `›`.**
  *
- * There is no persistent lens switcher, and this is the whole argument in one component. A permanent
- * five-way strip would be a third unconditional row on the screen whose complaint was *"its too clutered"*
- * (R-nav-27); it is 42 characters at 360px; four of its five labels are always wrong; and it treats an
- * ordered scale as five peers. The title already names the altitude — a bare year is a year, `Q` is a
- * quarter, a month name is a month — so tapping it opens the Zoom sheet instead, which carries strictly
- * more information than a strip has room for (each row's destination period and its count, R-lens-22).
+ * ⚠ **The title stopped being a control.** It used to open the Zoom sheet, which is deleted in full
+ * (`29-ux-navigation` §2.8): two navigation systems for one job is the clutter the owner complained
+ * about, and the sheet's own promise — *see the destination before you commit* — is only worth a surface
+ * when the commit is expensive. The tab strip one row above makes it free and one tap reversible, and this
+ * row, 44px below the tab you just pressed, answers "which period did I land on" in the SAME FRAME
+ * (R-lens-30) rather than beforehand in a modal.
  *
- * **Altitude is vertical and time is horizontal; the two dimensions never share a widget.** That is also
- * what makes D-24 unrepresentable rather than merely guarded against: with one control per dimension, no
- * two controls can disagree about a range.
+ * So: no `▾` marker, no `aria-label`, no tab stop, no hover, no press state. **This is what pays for part
+ * of the tab row** — row 3 loses its only non-chevron control and one tab stop, so the shell gains five
+ * tabs and one stop and loses one, and the focus order gets shorter on any account with more than one
+ * Life line.
+ *
+ * **Altitude is the strip and time is the chevrons; the two dimensions never share a widget.** That is
+ * also what makes D-24 unrepresentable rather than merely guarded against: with one control per
+ * dimension, no two controls can disagree about a range.
  *
  * On the **Life** lens both chevrons render **disabled, not hidden** (R-lens-17): a control that vanishes
  * moves everything after it in the tab order, and the thumb should land in the same place on every lens.
@@ -25,7 +29,6 @@ export function LensRow({
   period,
   hasForwardContent,
   onStep,
-  onZoom,
 }: {
   lens: Horizon;
   /**
@@ -35,7 +38,6 @@ export function LensRow({
   period: CalendarPeriodView;
   hasForwardContent: boolean;
   onStep: (n: -1 | 1) => void;
-  onZoom: () => void;
 }) {
   const S = useSkin();
   const unit = PERIOD_UNIT[lens];
@@ -102,102 +104,44 @@ export function LensRow({
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
       {chevron(-1)}
-      <button
-        type="button"
-        onClick={onZoom}
-        // R-lens-17 — the title's accessible name IS the lens change announcement: the sheet closes, focus
-        // lands here, and the platform reads it. The live region then carries only the payload (§8.2).
-        // R-lens-28 — one name for both lines: a screen reader gets `Sep 2026 · Mon 7 Sep – Sun 4 Oct`.
-        aria-label={`${lens} lens, ${periodTitle(label, range)}. Change lens or period.`}
-        style={{
-          flex: 1,
-          minWidth: 0,
-          border: 'none',
-          background: 'none',
-          padding: 0,
-          color: S.T.ink,
-          cursor: 'pointer',
-          minHeight: 44,
-          overflow: 'hidden',
-          fontFamily: 'inherit',
-          // The two lines are one control, left-aligned as a block — `text-align` is the only thing a
-          // `<button>` needs told, since its default is `center`.
-          textAlign: 'left',
-        }}
-      >
-        {/*
-         * ⚠ **UX-PLAN §5 (item F) — the misaligned chevron, and why it is a flex row now.**
-         *
-         * It was `{label} <span style={{ fontSize: 13 }}>▾</span>` inside one 21/800 ellipsising span,
-         * and it had four defects of which the first two are the misalignment the owner reported:
-         *
-         *  1. **A different font from every glyph beside it.** `▾` is U+25BE, and neither Manrope
-         *     `@font-face` block's `unicode-range` contains it — the nearest are `U+2000-206F` and the
-         *     singletons `U+2191`/`U+2193`. So it fell through to the platform sans (SF Pro on iOS,
-         *     Roboto on Android) while the label beside it was Manrope, and the two typefaces disagree
-         *     about a small triangle's baseline offset and side bearings by an amount that CHANGES WITH
-         *     THE DEVICE. The two step chevrons are unaffected: `‹` and `›` are U+2039/U+203A, inside
-         *     `U+2000-206F`, and render in Manrope.
-         *  2. **Baseline-aligned against text half again its size** — 13 px inside a 21 px block. Inline
-         *     boxes align on the baseline, so its optical centre sat 4–5 px above it while the label's
-         *     sat 7–8 px above it. It read as sunk.
-         *  3. **It inherited `letterSpacing: -0.01em`**, applied after the literal space, so the gap was
-         *     a space *minus* tracking.
-         *  4. **It was inside the truncating span**, so on a long label (`Week of Mon 4 Jan 2027`) the
-         *     ellipsis ate it — the one affordance saying "this title is a control" vanished precisely
-         *     when the title was long. Not alignment, but the worse defect.
-         *
-         * The fix is four properties and a shape: `alignItems: 'center'` puts it on the label's optical
-         * centre; `flex: 0 0 auto` makes it survive any title length; `gap: 6` replaces the literal space
-         * so tracking cannot reach it; and an inline `<svg>` removes the `unicode-range` lottery entirely
-         * — one shape, identical on every platform, no font dependency, no asset, no library. It stays
-         * `aria-hidden`, because the button's own name already ends `Change lens or period.`
-         */}
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span
-            style={{
-              flex: '1 1 auto',
-              minWidth: 0,
-              fontSize: 21,
-              fontWeight: 800,
-              letterSpacing: '-0.01em',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {label}
-          </span>
-          <svg
-            aria-hidden="true"
-            data-testid="lens-zoom-marker"
-            width="8"
-            height="5"
-            viewBox="0 0 8 5"
-            focusable="false"
-            // `display: block` so it carries no line-height box of its own and the flex centring is exact.
-            style={{ flex: '0 0 auto', display: 'block', color: S.T.mut }}
-          >
-            <path d="M0 0h8L4 5z" fill="currentColor" />
-          </svg>
+      {/*
+       * The title is a `<div>` now, not a `<button>`: 21px/800 `T.ink`, `nowrap`, ellipsising, exactly as
+       * before. `flex: 1` keeps the two chevrons pinned to the row's ends at every label length.
+       */}
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', minHeight: 44, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <span
+          // The one place the period's NAME is printed. `Life` is also a tab label, so a test that means
+          // "the period on screen" needs something narrower than the string.
+          data-testid="lens-period"
+          style={{
+            fontSize: 21,
+            fontWeight: 800,
+            letterSpacing: '-0.01em',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            color: S.T.ink,
+          }}
+        >
+          {label}
         </span>
         {/*
-         * R-lens-28 / R-nav-27 — the range is a **second line inside this button**, never a row of its
-         * own. R-nav-27 budgets *rows of chrome above the first item*, and a row of chrome is a row that
-         * carries a control: this adds no control, no tap target and no tab stop, so the shell still
-         * carries exactly two unconditional rows. It could not go on the first line — `Sep 2026 · Mon 7
-         * Sep – Sun 4 Oct` is 32 characters and would ellipsise the range away at 360px, which is worse
-         * than not printing it, because a half-shown range is a wrong one.
+         * R-lens-28 / R-nav-27 — the range is a **second line inside this row**, never a row of its own.
+         * R-nav-27 budgets *rows of chrome above the first item*, and a row of chrome is a row that
+         * carries a control: this adds no control, no tap target and no tab stop. It could not go on the
+         * first line — `Sep 2026 · Mon 7 Sep – Sun 4 Oct` is 32 characters and would ellipsise the range
+         * away at 360px, which is worse than not printing it, because a half-shown range is a wrong one.
          *
-         * `aria-hidden`, because the button's own name already carries it and hearing it twice is worse
-         * than not hearing it at all.
+         * `aria-hidden` no longer needs a companion accessible name on a button, because there is no
+         * button: the live region in `LensChrome` carries `label · range` on every period and lens change
+         * (§7.3), which is the one place a screen reader was ever going to hear it.
          */}
         {range && (
           <span aria-hidden="true" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: S.T.mut, letterSpacing: 0, marginTop: 1 }}>
             {range}
           </span>
         )}
-      </button>
+      </div>
       {chevron(1)}
       {isLife && (
         <span id="lens-life-no-periods" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>

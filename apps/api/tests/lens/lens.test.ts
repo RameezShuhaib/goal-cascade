@@ -502,6 +502,48 @@ describe('R-auth-2/3 — cross-account scoping holds on every lens endpoint', ()
   });
 });
 
+/**
+ * ⚠ **R-lens-5, rewritten — the flat total order is on the WIRE now.**
+ *
+ * The client used to partition a lens page by Life root and draw a header per group; it does not any more
+ * (R-lens-3, deleted by the owner's own reversal), so the order `items` arrives in is what the screen
+ * renders. It is the reading order of the previously grouped screen with its headers removed, which is
+ * what makes the change invisible to muscle memory: **the same goal is in the same place before and
+ * after.**
+ */
+describe('R-lens-5 — `items` arrives in the flat total order the lens renders', () => {
+  it('S-lens-5-1 — by the item’s Life root (createdAt, id), then by the item, with root-less LAST', async () => {
+    const { cookie, userId } = await signedInOwner(t);
+    const { a, b } = await twoLines(cookie);
+
+    /*
+     * Two more Monthly goals, created in an order that CROSSES the lines: `b` first, then `a`. Ordered by
+     * the item's own `createdAt` alone — which is what `listByLens` pages on — they would interleave the
+     * two lines. R-lens-5 says they must not.
+     */
+    const bSecond = await createGoal(t, cookie, { title: 'Craft month two', horizon: 'Monthly', parentId: b.quarterly.id, periodKey: '2026-08' });
+    const aSecond = await createGoal(t, cookie, { title: 'Health month two', horizon: 'Monthly', parentId: a.quarterly.id, periodKey: '2026-08' });
+    // R-lens-20 — an item whose chain reaches no Life goal. It sorts last, without a header to pin it.
+    const orphan = await seedGoal(t, userId, { parentId: null, horizon: 'Monthly', title: 'An orphan', periodKey: '2026-08' });
+
+    const monthly = await lens(t, cookie, { lens: 'Monthly', period: '2026-08' });
+
+    expect(monthly.items.map((g) => g.id)).toEqual([a.monthly.id, aSecond.id, b.monthly.id, bSecond.id, orphan.id]);
+    // Stated as the property rather than the sequence, so a future fixture cannot pass by coincidence:
+    // every run of one line is contiguous, and the root-less item is at the end.
+    const roots = monthly.items.map((g) => g.lifeRootId);
+    expect(roots).toEqual([a.life.id, a.life.id, b.life.id, b.life.id, null]);
+    expect(new Set(roots).size).toBe(3);
+  });
+
+  it('the Life lens is unaffected — each Life goal IS its own line, in its own createdAt order', async () => {
+    const { cookie } = await signedInOwner(t);
+    const { a, b } = await twoLines(cookie);
+    const life = await lens(t, cookie, { lens: 'Life' });
+    expect(life.items.map((g) => g.id)).toEqual([a.life.id, b.life.id]);
+  });
+});
+
 describe('R-goal-46 — Repeat last week', () => {
   it('S-goal-46-1 — copies ONE life line’s previous week as ordinary goals, with no link to the source', async () => {
     const { cookie, userId } = await signedInOwner(t);
@@ -530,6 +572,53 @@ describe('R-goal-46 — Repeat last week', () => {
     const week = await lens(t, cookie, { lens: 'Weekly', period: '2026-09-07' });
     expect(week.tasks).toEqual([]);
     t.clock.set('2026-08-31T10:00:00.000Z');
+  });
+
+  /**
+   * ⚠ **R-goal-46, amended — `lifeGoalId` is OPTIONAL, and absent means every Life line.**
+   *
+   * Q-22 required it per line because the control lived at a group foot in the Weekly lens; there are no
+   * group feet (R-lens-3, deleted), so `Repeat last week` is one link at the foot of the list and copies
+   * the whole week. The old objection — *twenty goals in one tap with no review* — is answered by the cap
+   * rather than by the parameter, and that is asserted below.
+   */
+  it('R-goal-46: with NO lifeGoalId it copies every line’s previous week, and the cap still bounds it', async () => {
+    const { cookie, userId } = await signedInOwner(t);
+    const { a, b } = await twoLines(cookie);
+    await seedGoal(t, userId, { parentId: a.monthly.id, horizon: 'Weekly', title: 'A last week', periodKey: '2026-08-31' });
+    await seedGoal(t, userId, { parentId: b.monthly.id, horizon: 'Weekly', title: 'B last week', periodKey: '2026-08-31' });
+
+    const res = await t.fetch('/api/goals/repeat-week', {
+      method: 'POST',
+      cookie,
+      idempotencyKey: crypto.randomUUID(),
+      json: { weekStart: NEXT_WEEK },
+    });
+    expect(res.status).toBe(201);
+    const created = ((await res.json()) as { created: { title: string; periodKey: string; pulse: string }[] }).created;
+
+    // BOTH lines, and only last week's — including the two `twoLines` seeded for this week.
+    expect(created.map((g) => g.title).sort()).toEqual(['A last week', 'B last week', 'Craft week', 'Health week']);
+    expect(created.every((g) => g.periodKey === NEXT_WEEK)).toBe(true);
+    // Everything else is R-goal-46 verbatim: ordinary new goals with `pulse` reset and no tasks copied.
+    expect(created.every((g) => g.pulse === 'On track')).toBe(true);
+    expect((await lens(t, cookie, { lens: 'Weekly', period: NEXT_WEEK })).tasks).toEqual([]);
+  });
+
+  it('R-goal-46: naming a line still narrows to it, byte for byte — the parameter did not change meaning', async () => {
+    const { cookie, userId } = await signedInOwner(t);
+    const { a, b } = await twoLines(cookie);
+    await seedGoal(t, userId, { parentId: b.monthly.id, horizon: 'Weekly', title: 'B last week', periodKey: '2026-08-31' });
+
+    const res = await t.fetch('/api/goals/repeat-week', {
+      method: 'POST',
+      cookie,
+      idempotencyKey: crypto.randomUUID(),
+      json: { lifeGoalId: a.life.id, weekStart: NEXT_WEEK },
+    });
+    expect(res.status).toBe(201);
+    const created = ((await res.json()) as { created: { title: string }[] }).created;
+    expect(created.map((g) => g.title)).toEqual(['Health week']);
   });
 
   it('S-goal-46-2 — a PAST week is refused, and an empty previous week creates nothing', async () => {

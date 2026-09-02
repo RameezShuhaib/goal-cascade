@@ -12,8 +12,50 @@ import { PERIOD_UNIT } from '../utils/periodKeys';
  * goal with no children is structurally a leaf and holds no tasks anyway, so the word would mislead.
  */
 
-/** R-nav-25 — the cluster row's one primary action, naming the horizon it would create. */
-export const createLabel = (lens: Horizon): string => `+ ${lens} goal`;
+/**
+ * R-nav-25, amended — **the cluster row's one primary action, and it is the same string at every lens.**
+ *
+ * It was `+ ${lens} goal`, five labels for one act. The button no longer commits to a horizon — it
+ * *defaults* to one, and a label that names a default as if it were a destination is a label that lies
+ * (R-nav-32). It is also 46px instead of 96px, which is width the cluster row did not have.
+ */
+export const CREATE_LABEL = '+ Goal';
+
+/** R-nav-32 — the create sheet's heading. One sheet, one name, at every horizon. */
+export const NEW_GOAL_HEADING = 'New goal';
+
+/**
+ * R-nav-32 — the read-only period chip's reason, in its two forms.
+ *
+ * The first is kept verbatim from before: the horizon you are creating at IS the lens on screen, so the
+ * period is simply the one you are looking at. The second fires when the horizon selector has been moved
+ * away from the lens — the period was then re-clamped by R-lens-9, and the sentence says what it was
+ * clamped *from* rather than leaving a period on screen that nobody chose.
+ */
+export const periodBecauseLens = (label: string): string => `Because you're looking at ${label}.`;
+export const periodClosestTo = (label: string, lens: Horizon): string => `Closest to ${label}, the ${PERIOD_UNIT[lens]} on screen.`;
+
+/**
+ * R-nav-32 — a parent that stopped being legal when the horizon changed. **Cleared, visibly and with a
+ * sentence, never silently**, and `aria-live="polite"` so a change the user did not make is announced
+ * rather than merely repainted.
+ */
+export const parentClearedNote = (horizon: Horizon, was: Horizon): string =>
+  `Cleared — a ${horizon} goal can't sit under a ${was} one.`;
+
+/**
+ * R-nav-32 §3.6 — no legal parent at the chosen horizon. **Expected unreachable** (a Life goal is a legal
+ * parent at every other horizon, R-goal-32), and built anyway, inline inside `UNDER` rather than as a
+ * whole-sheet takeover: with a horizon selector on screen the escape is to pick a different horizon, not
+ * to leave.
+ */
+export const noLegalParentNote = (horizon: Exclude<Horizon, 'Life'>): string => {
+  const above =
+    horizon === 'Yearly'
+      ? 'a Life goal'
+      : `a Life or ${horizon === 'Quarterly' ? 'Yearly' : horizon === 'Monthly' ? 'Quarterly' : 'Monthly'} goal`;
+  return `Nothing to hang a ${horizon} goal on yet — it needs ${above} above it.`;
+};
 
 /** R-lens-11 / R-lens-21 — the off-now badge, naming its horizon. Neither on the current period. */
 export const offNowBadge = (lens: Horizon, isPast: boolean): string =>
@@ -155,8 +197,33 @@ export function plannedNess(b: { weeklyGoals: number; thisWeek: number | null })
 /** R-goal-43 — `planned N weeks ago`, on a Weekly goal whose week has arrived and is `>= 2` weeks old. */
 export const stalePlanLine = (weeks: number): string => `planned ${weeks} week${weeks === 1 ? '' : 's'} ago`;
 
-/** R-lens-20 — the root-less group. A data-integrity surface, never an ordinary state. */
+/**
+ * R-lens-20, rewritten — **the root-less item, on its own card.** There is no `UNSORTED` group and no
+ * group note, because there are no groups; the line is a button opening the Move sheet in `only: 'life'`
+ * mode, which finally gives that mode the caller `25-goal-picker` records it has never had.
+ */
+export const NOT_UNDER_LIFE = 'Not under a Life goal yet';
+
+/**
+ * ⚠ The group note the lens used to print above an `UNSORTED` run. **It has no lens caller any more** —
+ * there is no group to note — but it is NOT deleted: the goal page's trail sheet still says it, and that
+ * is a different surface asking a different question (*this goal's chain*, not *this run of cards*). A
+ * sentence with one honest caller left is kept where it was written rather than copied into that file.
+ */
 export const UNSORTED_NOTE = "These aren't under a Life goal yet.";
+export const NOT_UNDER_LIFE_NAME = 'Not under a Life goal yet. Put it under one.';
+
+/**
+ * R-lens-23, rewritten — **the one line on an item, and it names the LIFE goal its chain reaches.**
+ *
+ * It used to name the *immediate* parent, suppressed when that parent was the group's own Life goal. Both
+ * halves break without groups: the suppression has no referent, and a flat Yearly list would carry no
+ * ancestry at all, because a Yearly goal's parent is always a Life goal and was therefore always
+ * suppressed. One rule at four horizons beats four different kinds of fact wearing one word — and it is
+ * exactly the string the deleted group header carried, so nothing left the screen, it moved onto the card.
+ */
+export const lifeLine = (title: string): string => `under ${title}`;
+export const lifeLineName = (title: string): string => `under ${title}. Open goal.`;
 
 /** R-task-49 — stated before it happens, so nothing is created invisibly. */
 export const implicitWeeklyGoalNote = (title: string, week: string): string =>
