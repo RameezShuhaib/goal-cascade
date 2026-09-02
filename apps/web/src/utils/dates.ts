@@ -1,4 +1,4 @@
-import { DAY_NAMES, MONTH_NAMES, dateLabel, dayLabel } from '@goal-cascade/shared';
+import { DAY_NAMES, MONTH_NAMES, dateLabel, dayLabel, isPeriodKeyFor, labelOf } from '@goal-cascade/shared';
 import { nowMs } from '../lib/serverClock';
 
 /**
@@ -67,6 +67,54 @@ export function shortDate(weekStart: string): string {
  */
 export function weekOfLabel(weekStart: string): string {
   return `Week of ${shortDate(weekStart)}`;
+}
+
+/**
+ * ⚠ **A8, new (R-task-52) — `Week of 31 Aug` or `Aug 2026`, from a key at EITHER scope.**
+ *
+ * A8 gave three wire fields a domain wider than a Monday — `TaskView.originPeriodKey`,
+ * `TaskView.donePeriodKey` and `BacklogItemView.fromPeriodKey` — and **the key's format is the
+ * discriminator**, exactly as it is on the server (R-task-52). Every renderer above splits a
+ * `YYYY-MM-DD` and reads the day segment, so handed `'2026-08'` it produced `NaN`: the owner read
+ * `from week of NaN Aug` on the Backlog page and `Week of NaN Aug` on a task page's back button, for
+ * data the product creates the moment a month task is moved to the backlog (S-task-59-1).
+ *
+ * `labelOf` is IMPORTED and not re-implemented (R-lens-30): it is the same function that renders
+ * `PeriodView.label` on the wire, so a month named here and a month named by the server are byte
+ * identical rather than merely similar.
+ *
+ * An unrecognised key renders as itself. A malformed period is a data problem to surface, not one to
+ * dress up — and never one to print `NaN` over, which reads as a bug in the app rather than in the row.
+ */
+export function periodOfLabel(periodKey: string): string {
+  if (isPeriodKeyFor('Weekly', periodKey)) return weekOfLabel(periodKey);
+  if (isPeriodKeyFor('Monthly', periodKey)) return labelOf('Monthly', periodKey);
+  return periodKey;
+}
+
+/**
+ * ⚠ **A8 (R-task-59)** — the `from …` provenance on a backlog item: `week of 24 Aug` or `Aug 2026`.
+ *
+ * `docs/BUSINESS-RULES.md` pins both spellings in one sentence — *"with a `from week of …` or
+ * `from Sep 2026` note"* — so the caller renders the word `from` and this renders what follows it. The
+ * week half keeps `week of` and the month half does not, because a month is not a week and saying
+ * `from week of Aug 2026` would be the same category error the NaN was.
+ */
+export function periodFromLabel(periodKey: string): string {
+  if (isPeriodKeyFor('Weekly', periodKey)) return `week of ${shortDate(periodKey)}`;
+  if (isPeriodKeyFor('Monthly', periodKey)) return labelOf('Monthly', periodKey);
+  return periodKey;
+}
+
+/**
+ * ⚠ **A8 (R-task-54)** — the `since …` half of a MONTH task's carry label: `Aug`, not `Aug 2026`.
+ *
+ * `docs/BUSINESS-RULES.md` pins the chip as `N months · since Aug`. The year is dropped for the same
+ * reason the week form drops it: the chip is read beside a period label that already carries one, and
+ * `3 months · since Aug 2026` is a chip that wraps.
+ */
+export function monthSinceLabel(monthKey: string): string {
+  return isPeriodKeyFor('Monthly', monthKey) ? labelOf('Monthly', monthKey).split(' ')[0]! : monthKey;
 }
 
 /** `Fri 28 Aug` — an instant (`doneAt`, `capturedAt`), in the viewer's own zone. */

@@ -2,7 +2,6 @@ import {
   MAX_LINKS,
   MAX_PAGE,
   MAX_READINGS,
-  MAX_WEEKLY_GOALS_PER_WEEK,
   MEASURE_MAX_ABS,
   type AddTaskLinkRequest,
   type BacklogItemView,
@@ -235,6 +234,7 @@ export class TaskService {
     const now = ctx.now;
     const writes: GuardedWrite[] = [];
 
+    if (input.measure !== undefined) this.assertMeasure(input.measure);
     const { goal, createdGoal } = await this.resolveTarget(ctx, input, today);
     if (createdGoal) writes.push({ label: 'goal.insertForTask', stmt: this.goals.insertStmt(createdGoal) });
     const scope = goal.horizon === 'Monthly' ? 'Monthly' : 'Weekly';
@@ -612,7 +612,7 @@ export class TaskService {
     }
     this.assertNotPast(ctx, toWeek ? 'Weekly' : 'Monthly', input.period, today);
 
-    if (toWeek) return this.park(ctx, task, input, today);
+    if (toWeek) return this.park(ctx, task, input);
     return this.unpark(ctx, task, input);
   }
 
@@ -633,13 +633,21 @@ export class TaskService {
   async setMeasure(ctx: RequestContext, id: string, input: SetMeasureRequest): Promise<TaskResponse> {
     const task = await this.load(ctx, id);
     this.assertNotExited(task, 'carry a measure');
-    const m = input.measure;
+    const m = this.assertMeasure(input.measure);
 
-    const latest = (await this.readings.listByTask(ctx.userId, task.id)).at(-1);
+    /**
+     * ⚠ **R-measure-3 — `currentFrom`, not `readings.at(-1)`.**
+     *
+     * "The latest surviving reading" is `(at desc, id desc)`, and there is one spelling of that rule.
+     * `.at(-1)` was a second one that agrees with it only by coincidence of `listByTask`'s `ORDER BY`;
+     * a **back-dated** reading is where they come apart, and an edit that touched nothing but the unit
+     * would then silently adopt it as the current value.
+     */
+    const readings = await this.readings.listByTask(ctx.userId, task.id);
     const patch: Partial<Task> = {
       measureKind: m.kind,
       measureStart: m.start,
-      measureCurrent: latest?.value ?? m.start,
+      measureCurrent: currentFrom(readings, m.start),
       measureTarget: m.target,
       measureUnit: m.unit,
     };
@@ -774,6 +782,10 @@ export class TaskService {
    */
   async deleteReading(ctx: RequestContext, id: string, readingId: string, version?: number): Promise<TaskResponse> {
     const task = await this.load(ctx, id);
+    // D-15 — an EXITED task is a historical record, not work. Every other write on a task refuses one;
+    // without this, a cancelled task's readings were the one thing in the product still mutable after
+    // the exit, and a deletion leaves no trace to notice it by (R-measure-7).
+    this.assertNotExited(task, 'delete a recorded value');
     const measure = this.requireMeasure(task);
     const existing = await this.readings.listByTask(ctx.userId, task.id);
     if (!existing.some((r) => r.id === readingId)) throw notFound('reading');
@@ -793,13 +805,7 @@ export class TaskService {
    * R-task-56 — month → week. The Weekly goal is resolved by the ONE resolver, under the Monthly goal the
    * task is on, so this refusal and a backlog conversion's are the same refusal (`weekly-target.ts`).
    */
-  private async park(
-    ctx: RequestContext,
-    task: Task,
-    input: RetargetTaskRequest,
-    today: string,
-  ): Promise<RetargetTaskResponse> {
-    void today;
+  private async park(ctx: RequestContext, task: Task, input: RetargetTaskRequest): Promise<RetargetTaskResponse> {
     const target = await resolveWeeklyTarget(ctx, this.weeklyDeps(), {
       underGoalId: task.goalId,
       weekStart: input.period,
@@ -881,6 +887,32 @@ export class TaskService {
       [event.write],
     );
     return { task: await this.detail(ctx, next, cursor.periodKey), goal: null, serverNow: ctx.now };
+  }
+
+  /**
+   * ⚠ **R-measure-4 — THE `target === start` rule, and it reads two numbers.**
+   *
+   * It names no movement, and "maintain" — the only thing it could mean — is out of scope for this
+   * amendment. **This is the whole enforcement point**, deliberately here rather than in a Zod refinement
+   * on `MeasureInput`: a refinement guards `/api/*` alone, and the MCP tools declare their own schemas,
+   * so `set_task_measure` used to write a `5 / 5` measure with no progress and a
+   * `Measure added: counter, 5 → 5` line beside it. It also could never carry its own code, because
+   * `api/validate.ts` flattens every schema failure to `VALIDATION_FAILED` — which is how the web came to
+   * render the constant's NAME to the owner as a toast.
+   *
+   * Refusing it here is only half the rule. The other half is that where such a row exists **anyway** — a
+   * migration, a hand-edit, a bug — **no division is performed**: `progressOf` returns `null` and the
+   * field is omitted from the wire (`domain/measures.ts`). `NaN`, `Infinity`, `0%` and `100%` are each
+   * specifically forbidden as the answer, because this is the one place a divide-by-zero reaches a screen.
+   */
+  private assertMeasure(m: MeasureInput): MeasureInput {
+    if (m.target !== null && m.target === m.start) {
+      throw new DomainError('MEASURE_TARGET_EQUALS_START', 'a target equal to the start names no movement', {
+        start: m.start,
+        target: m.target,
+      });
+    }
+    return m;
   }
 
   /** R-measure-3 — a reading needs somewhere to go. A checkbox has nowhere (`NO_MEASURE`, 409). */
@@ -1055,21 +1087,13 @@ export class TaskService {
    * *this* week would put the work somewhere the sheet did not say (`32-week-selection` §4.5). The `+`
    * drawer's `Add to this week instead` sends no period and still means the current week.
    *
-   * The parent, the horizon and the past-period rule are `weekly-target.ts`'s, so this create and a
-   * backlog conversion validate identically. The per-week cap is checked HERE, because it is a rule about
-   * how many Weekly goals a week may hold and only this path and `POST /goals` can add one (Q-12).
+   * The parent, the horizon, the past-period rule **and Q-12's per-week cap** are all
+   * `weekly-target.ts`'s, so this create, a backlog conversion and Park validate identically. The cap
+   * used to be re-checked here and nowhere else, which is exactly how the other two paths came to bypass
+   * it (see that module's doc block).
    */
-  private async mintWeeklyGoal(ctx: RequestContext, input: NewWeeklyGoalInput, weekStart: string): Promise<Goal> {
-    const goal = await mintWeeklyGoal(ctx, this.weeklyDeps(), input, weekStart);
-    const existing = await this.goals.countWeeklyInWeek(ctx.userId, weekStart);
-    if (existing >= MAX_WEEKLY_GOALS_PER_WEEK) {
-      throw new DomainError('VALIDATION_FAILED', `a week holds at most ${MAX_WEEKLY_GOALS_PER_WEEK} weekly goals`, {
-        weekStart,
-        existing,
-        max: MAX_WEEKLY_GOALS_PER_WEEK,
-      });
-    }
-    return goal;
+  private mintWeeklyGoal(ctx: RequestContext, input: NewWeeklyGoalInput, weekStart: string): Promise<Goal> {
+    return mintWeeklyGoal(ctx, this.weeklyDeps(), input, weekStart);
   }
 
   /**

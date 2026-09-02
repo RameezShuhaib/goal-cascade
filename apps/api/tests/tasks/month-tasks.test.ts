@@ -474,3 +474,88 @@ describe('R-task-58 — the timeline at month scale', () => {
     expect(carried).toHaveLength(1);
   });
 });
+
+/**
+ * ⚠ **THE SEAM, ON THE READ SIDE — R-goal-34, R-task-54, R-task-55.**
+ *
+ * `views.ts` splits two questions that look like one: **which month does this WEEK belong to**
+ * (`periodForScope` — the band's question, R-lens-31) and **what is the current month**
+ * (`currentPeriodOf` — from TODAY, R-goal-34). A read model that answers the second with the first is
+ * wrong for the **1-6 days of every month before its first Monday**, which is exactly where the owner is
+ * on 2 Sep 2026: the current week is Mon 31 Aug, whose month is August, while the current month is
+ * September.
+ *
+ * The damage is not cosmetic. `completable` and `carryAge` are both clamped against "the current period",
+ * so getting it wrong makes a **September month task un-completable in September** — the wire telling the
+ * client to hide a checkbox for an action the server allows — and negatively aged in its own month, while
+ * the timeline beside it has already logged `Carried to Sep 2026` from the correct clamp. Two halves of
+ * one response disagreeing is worse than either being wrong alone.
+ */
+describe('R-goal-34 — every read clamps against the CURRENT month, never the current week’s month', () => {
+  it('a month task in its OWN month is completable and age 0, in the lens as well as in the create response', async () => {
+    const { cookie, september } = await line();
+    const created = await seedTask(t, cookie, { goalId: september.id, title: 'this month’s work' });
+    // The command response is built from `currentPeriodOf` and has always been right.
+    expect(created.completable).toBe(true);
+    expect(created.carryAge).toBe(0);
+
+    // ...and the lens must agree with it. Clamping against the current WEEK's month (August) reads this
+    // task as planned for a future month: `completable: false`, `carryAge: -1`.
+    const row = (await lens(cookie, { lens: 'Monthly', period: SEP })).tasks.find((x) => x.id === created.id)!;
+    expect(row.completable, 'the lens hid a checkbox for a completion the server allows').toBe(true);
+    expect(row.carryAge, 'a task in its own month is not planned ahead').toBe(0);
+
+    // The proof that the disagreement is real and not a matter of taste: the write the lens said was
+    // illegal succeeds.
+    expect((await command(t, cookie, `/api/tasks/${created.id}/complete`, { period: SEP })).status).toBe(200);
+  });
+
+  it('an Aug-origin month task reads age 1 in the Sep lens, agreeing with the `Carried to Sep 2026` beside it', async () => {
+    const { cookie, august } = await line();
+    const task = await seedMonthTask(cookie, august.id, '2026-08-10T10:00:00.000Z', { title: 'since August' });
+
+    const row = (await lens(cookie, { lens: 'Monthly', period: SEP })).tasks.find((x) => x.id === task.id)!;
+    expect(row.carryAge, 'the lens and the timeline disagreed about how far this has carried').toBe(1);
+    expect(row.carryUnit).toBe('months');
+    // `ensureCarried` uses the correct clamp, so the two must land on the same month.
+    expect(texts(await detail(t, cookie, task.id))).toContain('Carried to Sep 2026');
+  });
+
+  it('the month band clamps the same way: a Sep task viewed from its own month’s week is not aged backwards', async () => {
+    const { cookie, september } = await line();
+    const task = await seedTask(t, cookie, { goalId: september.id, title: 'september work' });
+
+    // The band of the week of Mon 7 Sep is September's; the task is in its own month, so age 0.
+    const band = await lens(cookie, { lens: 'Weekly', period: '2026-09-07' });
+    const row = band.monthTasks.find((x) => x.id === task.id)!;
+    expect(row.carryAge).toBe(0);
+    expect(row.completable).toBe(true);
+  });
+
+  it('a goal’s own detail page clamps the same way as its lens', async () => {
+    const { cookie, september } = await line();
+    const task = await seedTask(t, cookie, { goalId: september.id, title: 'on the goal page' });
+
+    const res = await t.fetch(`/api/goals/${september.id}`, { cookie });
+    const body = (await res.json()) as { tasks: { id: string; completable: boolean; carryAge: number }[] };
+    const row = body.tasks.find((x) => x.id === task.id)!;
+    expect(row.completable).toBe(true);
+    expect(row.carryAge).toBe(0);
+  });
+
+  it('a backlog item promoted to THIS month comes back completable, not planned-ahead', async () => {
+    const { cookie, september } = await line();
+    const created = await t.fetch('/api/backlog', {
+      method: 'POST',
+      cookie,
+      idempotencyKey: crypto.randomUUID(),
+      json: { goalId: september.id, title: 'decided on it' },
+    });
+    const item = ((await created.json()) as { item: { id: string } }).item;
+
+    const res = await command(t, cookie, `/api/backlog/${item.id}/convert-to-task`, { period: SEP });
+    expect(res.status).toBe(201);
+    const task = ((await res.json()) as { task: { completable: boolean } }).task;
+    expect(task.completable, 'a conversion into the current month answered `completable: false`').toBe(true);
+  });
+});

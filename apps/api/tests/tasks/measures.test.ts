@@ -1,5 +1,5 @@
 import type { TaskDetailResponse, TaskResponse } from '@goal-cascade/shared';
-import { MAX_READINGS } from '@goal-cascade/shared';
+import { MAX_READINGS, MAX_WEEKLY_GOALS_PER_WEEK } from '@goal-cascade/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, signedInOwner } from '../helpers/app';
 import { codeOf, command, createTask, detail, kinds, makeGoal, makeLine, seedTask, texts, thisWeek } from './helpers';
@@ -179,12 +179,20 @@ describe('R-measure-2 / R-measure-4 — one triple, an implied direction, and an
       measure: { kind: 'counter', start: 5, target: 5 },
     });
     expect(bad.status).toBe(422);
+    expect(bad.json.error?.code).toBe('MEASURE_TARGET_EQUALS_START');
 
     const task = await seedTask(t, cookie, { goalId: weekly.id, title: 'fine for now', measure: { kind: 'counter', start: 0, target: 15 } });
     const res = await setMeasure(cookie, task.id, { kind: 'counter', start: 15, target: 15 });
     expect(res.status).toBe(422);
-    // The refusal is named, so the client can say which field is wrong rather than "invalid body".
-    expect(JSON.stringify(await res.json())).toContain('MEASURE_TARGET_EQUALS_START');
+    /**
+     * ⚠ **The CODE, not a substring of the body.** The first version of this asserted
+     * `JSON.stringify(body).toContain('MEASURE_TARGET_EQUALS_START')`, which passes when the name appears
+     * anywhere — including as a Zod issue *message* inside a generic `VALIDATION_FAILED` envelope. That
+     * is exactly how the defect shipped green: the code existed in `ERROR_STATUS`, had an MCP recovery
+     * entry, and was never emitted, while the web rendered the constant's NAME to the owner as a toast.
+     * `codeOf` is what the rest of this file uses and what a client actually branches on.
+     */
+    expect(await codeOf(res)).toBe('MEASURE_TARGET_EQUALS_START');
   });
 
   it('S-measure-4-3 — a row that has it ANYWAY divides by nothing: progress is absent, not NaN or 0 or 1', async () => {
@@ -344,6 +352,85 @@ describe('R-measure-3 — `current` is DERIVED, and every reading is an absolute
     // The cap is asserted as a CONTRACT here rather than by writing 2,000 rows over HTTP: the number is
     // shared, the guard reads it, and a 2,000-request test would cost a minute to prove one comparison.
     expect(MAX_READINGS).toBe(2000);
+  });
+});
+
+/**
+ * ⚠ **The guards the reading commands must share with their siblings.**
+ */
+describe('R-measure-3 / D-15 — the reading commands guard what every other task write guards', () => {
+  /**
+   * An EXITED task is a historical record, not work (D-15): `patch`, `addLink`, `removeLink`,
+   * `setMeasure`, `clearMeasure` and `recordReading` all refuse one, because editing it would rewrite
+   * something that already left the board. `deleteReading` did not, so a cancelled task's history was
+   * the one thing in the product still mutable after the exit.
+   */
+  it('D-15 — deleting a reading on an EXITED task is refused, exactly as recording one is', async () => {
+    const { cookie, weekly } = await line();
+    const task = await seedTask(t, cookie, { goalId: weekly.id, title: 'calls', measure: { kind: 'counter', start: 0, target: 20 } });
+    await record(cookie, task.id, { value: 5 });
+    const reading = (await taskOf(cookie, task.id)).readings[0]!;
+    expect((await command(t, cookie, `/api/tasks/${task.id}/cancel`, {})).status).toBe(200);
+
+    // Its sibling already refuses…
+    const recorded = await record(cookie, task.id, { value: 6 });
+    expect(recorded.status).toBe(409);
+    expect(await codeOf(recorded)).toBe('TASK_ALREADY_EXITED');
+
+    // …and so must this one.
+    const deleted = await deleteReading(cookie, task.id, reading.id);
+    expect(deleted.status, 'an exited task’s history was still mutable').toBe(409);
+    expect(await codeOf(deleted)).toBe('TASK_ALREADY_EXITED');
+    expect((await taskOf(cookie, task.id)).readings).toHaveLength(1);
+  });
+
+  /**
+   * ⚠ **R-measure-3 — "the latest surviving reading" is `(at desc, id desc)`, and there is ONE spelling
+   * of that rule.**
+   *
+   * `setMeasure` recomputed `current` as `readings.at(-1)?.value` — a second spelling that agrees with
+   * `currentFrom` only by coincidence of the repository's `ORDER BY`. A **back-dated** reading is where
+   * the two come apart: it is not the latest by `at`, but it is last in insertion order, so an edit that
+   * touched nothing but the unit would silently adopt it as the current value.
+   */
+  it('R-measure-3 — editing a measure re-derives `current` by (at desc, id desc), not by insertion order', async () => {
+    const { cookie, weekly } = await line();
+    const task = await seedTask(t, cookie, { goalId: weekly.id, title: 'weight', measure: { kind: 'gauge', start: 80, target: 75 } });
+    await record(cookie, task.id, { value: 78, at: '2026-09-01T10:00:00.000Z' });
+    // Recorded LAST, dated EARLIER — a correction the owner back-dates, which R-measure-3 allows.
+    await record(cookie, task.id, { value: 79, at: '2026-08-20T10:00:00.000Z' });
+    expect((await taskOf(cookie, task.id)).measure!.current).toBe(78);
+
+    // An edit that changes only the unit must not move the number.
+    const res = await setMeasure(cookie, task.id, { kind: 'gauge', start: 80, target: 75, unit: 'kg' });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as TaskResponse).task.measure!.current, 'a back-dated reading became `current`').toBe(78);
+    expect((await taskOf(cookie, task.id)).measure!.current).toBe(78);
+  });
+
+  /**
+   * Q-12 — the per-week cap is a rule about how many Weekly goals a week may hold, and every path that
+   * can add one must meet it. Park inherited a bypass from the conversion path when the resolver was
+   * extracted; before that, `TaskService.mintWeeklyGoal` was the only checked caller.
+   */
+  it('Q-12 — Park’s inline weekly goal is subject to MAX_WEEKLY_GOALS_PER_WEEK, like every other create', async () => {
+    const { cookie, userId, life, september } = await line();
+    const target = '2026-09-21';
+    /**
+     * The cap is per (owner, WEEK) and the resolver's ambiguity check is per (owner, week, under-goal),
+     * so the fixture fills the week from a DIFFERENT line: `september` has no candidate for `target`
+     * (so the inline create is reached at all) while the week itself is already full.
+     */
+    const elsewhere = await makeGoal(t, userId, 'Monthly', life.id, '2026-09');
+    for (let i = 0; i < MAX_WEEKLY_GOALS_PER_WEEK; i++) await makeGoal(t, userId, 'Weekly', elsewhere.id, target);
+
+    const task = await seedTask(t, cookie, { goalId: september.id, title: 'no room' });
+    const res = await command(t, cookie, `/api/tasks/${task.id}/retarget`, {
+      period: target,
+      newWeeklyGoal: { parentId: september.id, title: 'one too many' },
+    });
+    expect(res.status, 'Park minted a weekly goal past the cap').toBe(422);
+    expect(JSON.stringify(await res.json())).toContain(String(MAX_WEEKLY_GOALS_PER_WEEK));
   });
 });
 

@@ -490,11 +490,21 @@ describe('A8 — measurable tasks and month tasks, on the wire', () => {
     }
   });
 
-  it('S-measure-4-3 — target === start is refused by the SCHEMA, and target: null is not', () => {
-    expect(MeasureInput.safeParse({ kind: 'counter', start: 5, target: 5 }).success).toBe(false);
+  /**
+   * ⚠ **A8 (R-measure-4) — REWRITTEN, not weakened.** The first version asserted the refusal from a
+   * `.refine()` on this schema. That guard protected `/api/*` and nothing else — the MCP tools declare
+   * their own input schemas, so `set_task_measure` wrote a `5 / 5` measure straight past it — and it
+   * could never carry its own code, because `api/validate.ts` flattens every schema failure to
+   * `VALIDATION_FAILED`. The rule moved to `TaskService.assertMeasure`, its one enforcement point, and
+   * the property is asserted there, by CODE, in `apps/api/tests/tasks/measures.test.ts` and
+   * `tests/mcp/tools.test.ts`. What is left here is the half the schema really does own.
+   */
+  it('R-measure-4 — the schema owns the SHAPE of a target; the service owns whether it names movement', () => {
+    // `target: null` and an omitted `target` are the same thing: a tracked number with no finish line.
     expect(MeasureInput.safeParse({ kind: 'gauge', start: 0, target: null }).success).toBe(true);
-    // `target` omitted means the same thing as `null`: a tracked number with no finish line.
     expect(MeasureInput.parse({ kind: 'gauge', start: 0 }).target).toBeNull();
+    // …and the pair the service refuses parses here, which is exactly why the service must refuse it.
+    expect(MeasureInput.safeParse({ kind: 'counter', start: 5, target: 5 }).success).toBe(true);
   });
 
   it('S-measure-2-2 — the numeric floor is on the schema, so both sides enforce the same bound', () => {

@@ -129,7 +129,11 @@ export function readingOut(r: ReadingView) {
  * A task as the MCP surface shapes it. `TaskDetailView` extends `TaskView` with `events`, so one
  * function covers both list and detail results and the timeline rides along only when it exists.
  */
-export function taskOut(v: TaskView | TaskDetailView, goalPath: string | undefined) {
+export function taskOut(
+  v: TaskView | TaskDetailView,
+  goalPath: string | undefined,
+  opts: { suppressCarryLabel?: boolean } = {},
+) {
   const events = 'events' in v ? v.events : undefined;
   const readings = 'readings' in v ? v.readings : undefined;
   return {
@@ -156,7 +160,12 @@ export function taskOut(v: TaskView | TaskDetailView, goalPath: string | undefin
     carry_age: v.carryAge,
     /** ⚠ **A8 (R-task-54)** — `weeks` or `months`. Never report an age without reading this. */
     carry_unit: v.carryUnit,
-    carry_label: carryLabel(v.carryAge, v.carryUnit, v.originPeriodKey),
+    /**
+     * ⚠ **A8 (R-task-54)** — `''` when the SURFACE is a week and the task is a month task
+     * (S-lens-31-2). The caller passes the flag; the age beside it stays honest, because the same task
+     * in the Monthly lens must still earn its chip.
+     */
+    carry_label: opts.suppressCarryLabel ? '' : carryLabel(v.carryAge, v.carryUnit, v.originPeriodKey),
     /**
      * R-task-44 / R-task-55 — false in a future period; there is no legal completion period for it yet.
      * ⚠ **A8** — the bound is at the TASK'S OWN SCOPE, so for a month task this answers about its MONTH.

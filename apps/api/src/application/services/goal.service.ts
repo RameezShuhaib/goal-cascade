@@ -70,7 +70,7 @@ import type { GuardedWrite } from '../ports/statement';
 import { GuardedBatch } from './guarded-batch';
 import { ActivityLog } from './activity-log';
 import { newestFirst } from './backlog.service';
-import { backlogLabelsOf, periodForScope, toBacklogItemView, toTaskView, weekView } from './views';
+import { backlogLabelsOf, currentPeriodOf, toBacklogItemView, toTaskView, weekView } from './views';
 
 /**
  * Goals, and the five lenses (R-lens-1 … R-lens-27).
@@ -252,7 +252,7 @@ export class GoalService {
        */
       tasks:
         horizon === 'Monthly'
-          ? monthTaskRows.map((t) => toTaskView(t, [], periodKey, periodKeyOf('Monthly', ctx.currentWeekStart)))
+          ? monthTaskRows.map((t) => toTaskView(t, [], periodKey, currentPeriodOf(ctx, 'Monthly')))
           : weekTasks.map((t) => toTaskView(t, [], periodKey, ctx.currentWeekStart)),
       /**
        * ⚠ **A8, new (R-lens-31) — the month band, Weekly lens only.**
@@ -267,7 +267,7 @@ export class GoalService {
        */
       monthTasks:
         horizon === 'Weekly'
-          ? monthTaskRows.map((t) => toTaskView(t, [], monthKey!, periodKeyOf('Monthly', ctx.currentWeekStart)))
+          ? monthTaskRows.map((t) => toTaskView(t, [], monthKey!, currentPeriodOf(ctx, 'Monthly')))
           : [],
       /** R-lens-31 — the band's month, so the client never re-derives which month a week belongs to. */
       monthPeriodKey: horizon === 'Weekly' ? monthKey : null,
@@ -444,7 +444,7 @@ export class GoalService {
       // Weekly goal's compares Mondays, so `carryAge` and `completable` never cross a scope.
       tasks: weeklyTasks
         .filter((t) => t.status === 'open' || t.status === 'done')
-        .map((t) => toTaskView(t, taskLinks, goal.periodKey, periodForScope(t.scope, ctx.currentWeekStart))),
+        .map((t) => toTaskView(t, taskLinks, goal.periodKey, currentPeriodOf(ctx, t.scope))),
       learnings: lineLearnings.map(learningView),
       // R-goal-40 / D-3 — derived here, once, from the OWNER's calendar day (R-auth-5). Neither a Life
       // goal nor a Weekly goal is re-plannable, for opposite reasons. The client renders this list rather

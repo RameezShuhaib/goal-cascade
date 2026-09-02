@@ -31,6 +31,27 @@ describe('The Backlog page (R-backlog-13)', () => {
     expect(screen.getByText('from week of 24 Aug')).toBeInTheDocument();
   });
 
+  /**
+   * ⚠ **A8 (R-task-59) — the note a MONTH task's exit leaves behind.**
+   *
+   * `BacklogItemView.fromPeriodKey` is a key at the task's own scope from A8, and every renderer on this
+   * card split a `YYYY-MM-DD` to get its day. Handed `'2026-08'` the day segment is `undefined`, so the
+   * owner read **`from week of NaN Aug`** — for data the product creates the moment a month task is moved
+   * to the backlog, which is the flow S-task-59-1 is entirely about. `common.ts` promised
+   * `from Sep 2026` for this case and nothing rendered it.
+   */
+  it('S-task-59-1: a month task’s exit reads `from Aug 2026`, never `from week of NaN Aug`', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M, fromPeriodKey: '2026-08' })]);
+    renderApp(<AppShell />, { route: '/backlog' });
+
+    expect(await screen.findByText('Find a squat rack that is free at 7am')).toBeInTheDocument();
+    expect(screen.getByText('from Aug 2026')).toBeInTheDocument();
+    // The word `week` has no business here: a month is not a week, and saying so was the same category
+    // error the NaN was.
+    expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(screen.queryByText(/from week of/)).toBeNull();
+  });
+
   it('S-backlog-13-1 (retired D-27 `Elsewhere`): an item on a goal in ANY period gets its own exact header', async () => {
     /**
      * ⚠ **RETIRED — "an item whose goal is not in any page the client holds falls under `Elsewhere`".**

@@ -71,6 +71,32 @@ describe('Weekly lens — this week, and what carried into it (R-lens-12)', () =
       .map((el) => el.textContent);
     expect(titles).toEqual(['Four weeks back', 'Three weeks back', 'One week back']);
   });
+  /**
+   * ⚠ **A8 (R-task-54) — the chip is counted in the TASK'S unit, and `carryUnit` is on the wire so this
+   * is read rather than assumed.**
+   *
+   * `CarryLabel` hardcoded the word `weeks` and rendered `since` from a Monday, so a month task read
+   * `3 weeks · since NaN Jun` — the wrong unit and a NaN, on the product's only escalation. The month
+   * band suppresses the label entirely (S-lens-31-2), but the Monthly lens must still show it, which is
+   * why the component keeps rendering one when asked.
+   */
+  it('R-task-54: a MONTH task’s chip reads `3 months · since Jun`, not weeks and not NaN', async () => {
+    withLens(
+      F.lens({
+        lens: 'Weekly',
+        period: F.period({ periodKey: F.THIS_MONDAY }),
+        items: [F.weeklyGoal()],
+        groups: [F.group({ id: F.L, openTasks: 1 })],
+        tasks: [F.task({ goalId: F.W, scope: 'Monthly', carryAge: 3, carryUnit: 'months', originPeriodKey: '2026-06' })],
+      }),
+    );
+    renderApp(<AppShell />, { route: '/lens/weekly' });
+
+    expect(await screen.findByText('3 months · since Jun')).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(screen.queryByText(/3 weeks/)).toBeNull();
+  });
+
 
   it('§7.2: a week with nothing planned but work still carrying says so, rather than looking broken', async () => {
     withLens(F.lens({ lens: 'Weekly', period: F.period({ periodKey: F.THIS_MONDAY }), items: [], carried: [F.carriedGoal()], groups: [F.group({ id: F.L, openTasks: 1 })], tasks: [F.task({ goalId: F.WC, carryAge: 3, originPeriodKey: F.THREE_WEEKS_AGO })] }));

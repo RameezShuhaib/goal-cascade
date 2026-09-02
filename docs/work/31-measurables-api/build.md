@@ -13,8 +13,11 @@ Two commits, deliberately:
 | 1 | `refactor: originPeriodKey, donePeriodKey, carryAge, and an explicit completion period` | the wide mechanical renames, no migration, no behaviour |
 | 2 | `feat(api): month-level tasks and measurable tasks` | the schema, the migration, every rule, the MCP surface |
 
-Green at the end: **641 api / 431 web / 132 shared**, typecheck clean across all three workspaces.
+Green at the end: **655 api / 437 web / 132 shared**, typecheck clean across all three workspaces.
 Floors were 562 / 431 / 113. Nothing deployed, nothing merged.
+
+A third commit, `fix(api): …`, answers a code-quality review; §9 is its ledger and every entry there
+has a test that fails without it.
 
 ---
 
@@ -307,6 +310,9 @@ sha256 A: ac454954ddbbf4c055d933e9eab1db2f
 sha256 B: ac454954ddbbf4c055d933e9eab1db2f
 ```
 
+Re-run from a clean `.wrangler` state after the review fixes of §9 (which touch no SQL), the same
+double-apply is identical again at `f3577b425c026a84fe391255`.
+
 The dump covers `sqlite_master` for the four affected tables and their indexes, plus every row of
 `goals`, `tasks`, `task_events` and `backlog_items`. After the first apply:
 
@@ -364,6 +370,9 @@ target the current month, not `monthPeriodKey`.
 | `src/lib/queryClient.ts` | one comment naming the retired code |
 | `tests/msw/fixtures.ts` | `TaskView` gained four required fields and `LensResponse` two |
 | `tests/api/http.test.ts`, `tests/screens/backlog.test.tsx` | the retired code, and the `week` → `period` payload |
+| `src/utils/dates.ts` | ⚠ **review fix** — `periodOfLabel` / `periodFromLabel` / `monthSinceLabel`, so a month key does not render `NaN` (§9.4) |
+| `src/components/BacklogItemCard.tsx`, `src/screens/TaskPage.tsx`, `src/components/TaskRow.tsx` | ⚠ **review fix** — the three call sites that met a month key, one line each |
+| `tests/utils/periodLabels.test.ts`, `tests/screens/weeklyLens.test.tsx` | ⚠ **review fix** — the render-level guards for the above |
 
 No component, screen, sheet or lens file was touched. `R-rm-6`'s removals (`MonthlyCard`'s target week,
 `LinkRow`'s `newWeekly` fork, `TaskCreateSheet`'s implicit-goal path, `implicitWeeklyGoalNote`) are all
@@ -373,3 +382,92 @@ and `CarryLabel`'s suppression flag.
 `taskWeekForMonth` **survives** with its census entry and its tests: A8's R-rm-6 text predates A9's split
 and names `weekForMonth`, and `S-lens-9-7` still requires both functions to be declared under
 `packages/shared/src/calendar/`. Its last caller may go with `MonthlyCard`; the function does not.
+
+---
+
+## 9. The review pass — six defects, four hardening items
+
+A code-quality review of the two commits above found six defects with concrete failure scenarios. Every
+one is fixed with a test that was **proven to fail first**; none of the existing tests was weakened.
+
+### 9.1 (severe) Four read models computed "the current month" from the current WEEK
+
+`goal.service.ts` (the Monthly lens's `tasks`, the Weekly lens's `monthTasks`, a goal's detail page) and
+`backlog.service.ts` (a conversion's response) passed `periodKeyOf('Monthly', ctx.currentWeekStart)` as
+`toTaskView`'s `currentPeriodKey`. `views.ts:159` names this exact failure in prose — and the code did it
+anyway, at four sites, in the same commit that wrote the warning.
+
+**On 2 Sep 2026** the current week is Mon 31 Aug, so the month-of-the-current-week is `2026-08` while the
+current month is `2026-09`. A month task created on a September goal therefore came back
+`completable: true` from the create and `completable: false, carryAge: -1` from the lens one read later —
+**the wire telling the client to hide a checkbox for a write the server then accepts.** Worse, an
+Aug-origin task read `carryAge: 0` in the September lens while `ensureCarried` (which clamps correctly)
+had already written `Carried to Sep 2026` onto its timeline: two halves of one response disagreeing.
+
+The window is the **1–6 days of every month before its first Monday** — where the owner is today. Fixed
+by using `currentPeriodOf(ctx, scope)` at all four sites; `periodForScope` is now down to its **one**
+legitimate caller (`TaskService.get`, which really is answering the band's question) and its doc block
+says so by name. Five tests in `month-tasks.test.ts`, all five failing before the fix.
+
+### 9.2 `MEASURE_TARGET_EQUALS_START` was never emitted — and MCP bypassed the rule entirely
+
+The refusal lived in a Zod `.refine()` whose *message* was the code, and `api/validate.ts` flattens every
+schema failure to `VALIDATION_FAILED`. So the code sat in `ERROR_STATUS` with an MCP recovery entry and
+was never emitted, while the web — which renders `issues[0].message` verbatim — showed the owner a toast
+reading literally `MEASURE_TARGET_EQUALS_START`.
+
+Chasing it turned up worse: **a Zod refinement guards `/api/*` and nothing else.** The MCP tools declare
+their own input schemas, so `set_task_measure` handed `start === target` straight through to a service
+that never checked — writing a `5 / 5` measure with no progress and logging
+`Measure added: counter, 5 → 5`. The rule now has **one enforcement point**, `TaskService.assertMeasure`,
+reachable from every front door, in the shape `assertTaskGoal` already has for R-task-51. The shared
+contract test was rewritten with a verdict: the schema owns a target's *shape*, the service owns whether
+it names movement.
+
+### 9.3 Month tasks could not be completed or backlogged over MCP at all
+
+`complete_task` and `move_task_to_backlog` typed `period` as `WeekStart`, so `'2026-09'` failed the input
+schema and the default (a Monday) was refused by the scope check — **no reachable value worked**, on a
+surface whose `create_task` actively steers agents into creating month tasks. A surface that can only
+create is worse than one that cannot: it accumulates work the agent can never close. Widened to
+`PeriodKeyParam`, with the default resolved at the task's own scope through the existing
+`currentPeriodOf` (not a second timezone ladder). `move_task_to_backlog`'s description no longer claims
+the item goes "above its week". Four MCP tests, including Park round-tripping over the tool surface.
+
+### 9.4 `from week of NaN Aug` in the web backlog
+
+`shortDate`, `weekLabel` and `weekOfLabel` all split a `YYYY-MM-DD` for its day segment; handed a month
+key the segment is `undefined` and the owner reads `NaN`. Reachable **today**, through the flow
+S-task-59-1 is itself about. `common.ts` promised `from Sep 2026` for this case and nothing implemented
+it. Added `periodOfLabel` / `periodFromLabel` / `monthSinceLabel` to `utils/dates.ts` — each importing
+the server's own `labelOf` rather than re-implementing it (R-lens-30) — and wired the three call sites.
+`CarryLabel` now reads `carryUnit` instead of hardcoding "weeks". Render-level tests on the backlog card
+and the carry chip, both proven to fail against the old call sites.
+
+### 9.5 MCP `list_tasks` handed agents "2 months · since Jun" for a month task in a week listing
+
+`shapes.ts` states that a month task says nothing at all inside a week and that the suppression belongs to
+the surface; `list_tasks` **is** that surface and applied none, one field below an instructions block
+promising A MONTH TASK IS NEVER LATE IN A WEEK. `taskOut` takes a `suppressCarryLabel` flag and the week
+listing passes it for month rows. `carry_age` and `carry_unit` stay honest — an agent asked *"how long has
+this been open"* can still answer; what it cannot do is find a ready-made late-sounding sentence.
+
+### 9.6 The test that let 9.2 ship green
+
+`expect(JSON.stringify(body)).toContain('MEASURE_TARGET_EQUALS_START')` passes when the name appears
+anywhere — including as a Zod issue message inside a `VALIDATION_FAILED` envelope. Now `codeOf(res)`, like
+the rest of that file, on both the create and the edit path.
+
+### 9.7 Four hardening items
+
+- **`weekly-target.ts` bypassed `MAX_WEEKLY_GOALS_PER_WEEK`.** The cap lived on `TaskService`'s own copy
+  of `mintWeeklyGoal`, so the backlog conversion had always skipped it and **Park inherited the bypass**
+  when the rule was extracted. Moved into the shared resolver, where all three inline-create paths meet
+  it. A rule enforced by whichever caller remembered is a rule with a hole in it.
+- **`deleteReading` was missing `assertNotExited`.** Its five siblings all refuse an exited task (D-15), so
+  a cancelled task's readings were the one thing in the product still mutable after the exit — and a
+  deletion leaves no trace to notice it by (R-measure-7).
+- **`setMeasure` recomputed `current` as `readings.at(-1)?.value`**, a second spelling of "the latest
+  surviving reading" that agrees with `currentFrom` only by coincidence of the repository's `ORDER BY`. A
+  **back-dated** reading is where they come apart. Now `currentFrom`, with the back-dating case pinned.
+- **`park()`'s dead `void today;`** and its unused parameter, plus two imports left dangling by the fixes.

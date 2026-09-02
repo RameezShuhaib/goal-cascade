@@ -4,7 +4,7 @@ import type { TaskView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useCompleteTask, usePatchTask, useUncheckTask } from '../api/queries';
 import { useSkin } from '../skin';
-import { instantLabel, shortDate, weekLabel } from '../utils/dates';
+import { instantLabel, monthSinceLabel, shortDate, weekLabel } from '../utils/dates';
 import { taskPath } from '../routes';
 import { FieldError, commandError } from './states';
 
@@ -155,10 +155,24 @@ export function CarryLabel({ task }: { task: TaskView }) {
   const age = task.carryAge;
   if (task.done || age < 1) return null;
   const sev = age >= 2 ? 'chip' : 'gray';
+  /**
+   * ⚠ **A8 (R-task-54) — the unit is the TASK'S, and the "since" is its period.**
+   *
+   * `weeks` was hardcoded and `shortDate` / `weekLabel` both split a Monday, so a month task rendered
+   * `3 weeks · since NaN Jun` — the wrong unit AND a NaN, on the product's only escalation.
+   * `carryUnit` is on the wire precisely so this is read rather than assumed.
+   *
+   * ⚠ **The month band must not render this at all** (S-lens-31-2): a month task is never late in a
+   * week. That suppression belongs to the BAND, at its call site, not here — the same task in the
+   * Monthly lens must still show its chip, which is why this component keeps rendering one when asked.
+   */
+  const isMonth = task.carryUnit === 'months';
+  const since = isMonth ? monthSinceLabel(task.originPeriodKey) : weekLabel(task.originPeriodKey);
+  const chipSince = isMonth ? monthSinceLabel(task.originPeriodKey) : shortDate(task.originPeriodKey);
   return (
     <div style={{ marginTop: 4 }}>
       <span style={S.carryLabel(sev)}>
-        {sev === 'chip' ? `${age} weeks · since ${shortDate(task.originPeriodKey)}` : `since ${weekLabel(task.originPeriodKey)}`}
+        {sev === 'chip' ? `${age} ${task.carryUnit} · since ${chipSince}` : `since ${since}`}
       </span>
     </div>
   );

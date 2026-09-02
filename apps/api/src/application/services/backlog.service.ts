@@ -36,7 +36,7 @@ import {
   ITaskRepo,
 } from '../ports';
 import { GuardedBatch } from './guarded-batch';
-import { backlogLabelsOf, periodForScope, toBacklogItemView, type BacklogLabels } from './views';
+import { backlogLabelsOf, currentPeriodOf, toBacklogItemView, type BacklogLabels } from './views';
 import { resolveWeeklyTarget } from './weekly-target';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -738,7 +738,7 @@ export class BacklogService {
     ]);
 
     return {
-      task: toNewTaskDetailView(built, periodForScope(built.task.scope, ctx.currentWeekStart)),
+      task: toNewTaskDetailView(built, currentPeriodOf(ctx, built.task.scope)),
       item: await this.viewOf(ctx, converted, itemLinks),
       goal: resolved.created ? toGoalView(resolved.created) : null,
       serverNow: ctx.now,

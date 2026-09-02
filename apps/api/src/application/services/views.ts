@@ -157,10 +157,17 @@ export function toTaskView(
  * the one S-task-55-2 requires a completion to write.
  *
  * ⚠ **This is the BAND's question, and it is NOT "what is the current month".** `currentPeriodOf` below
- * answers that one, from TODAY, and the two genuinely differ for the first days of a month. Using this
- * for both — which this build did, briefly — makes a September month task un-completable on 2 September
- * and negatively aged in its own month. It is `zoomWeekForMonth` versus `taskWeekForMonth` again: two
- * questions that look like one, one function apart.
+ * answers that one, from TODAY, and the two genuinely differ for the **1-6 days of every month before its
+ * first Monday**. Using this one for both makes a September month task un-completable on 2 September and
+ * negatively aged in its own month, while `ensureCarried` — which clamps correctly — has already logged
+ * `Carried to Sep 2026` beside it. It is `zoomWeekForMonth` versus `taskWeekForMonth` again: two
+ * questions that look like one, one function apart, and the first build of A8 got it wrong at four call
+ * sites.
+ *
+ * ⚠ **It has exactly ONE legitimate caller: `TaskService.get`**, because the task page is addressed by a
+ * `?week=` and a month task's viewed period is the month that week belongs to. **Every other caller wants
+ * `currentPeriodOf`.** If you are reaching for this to fill `toTaskView`'s `currentPeriodKey`, you want
+ * the other one; `views.test.ts` pins the distinction with the exact date that separates them.
  */
 export const periodForScope = (scope: TaskScope, weekStart: string): string =>
   scope === 'Monthly' ? periodKeyOf('Monthly', weekStart) : weekStart;

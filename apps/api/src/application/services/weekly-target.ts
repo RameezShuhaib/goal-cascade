@@ -1,4 +1,4 @@
-import { dateInTimezone, isPastPeriod, labelOf } from '@goal-cascade/shared';
+import { MAX_WEEKLY_GOALS_PER_WEEK, dateInTimezone, isPastPeriod, labelOf } from '@goal-cascade/shared';
 import type { Goal } from '../../domain/entities';
 import { DomainError, notFound } from '../../domain/errors';
 import type { RequestContext } from '../context';
@@ -108,6 +108,12 @@ export async function resolveWeeklyTarget(
  * deliberately chose a week that has no Weekly goal under that parent and the client then re-sent with
  * `newWeeklyGoal`. The row it returns is unwritten; the caller commits it in the same batch as the work,
  * so a failure creates neither (S-task-48-2).
+ *
+ * ⚠ **Q-12's per-week cap is checked HERE, not by the caller.** It used to live on `TaskService`'s own
+ * copy of this function, so the backlog conversion had always bypassed it and Park inherited that bypass
+ * the moment the rule was extracted — an inline create is the one path that can add a Weekly goal without
+ * going through `POST /goals`, and there are now three of them. A rule enforced by whichever caller
+ * remembered is a rule with a hole in it.
  */
 export async function mintWeeklyGoal(
   ctx: RequestContext,
@@ -125,6 +131,14 @@ export async function mintWeeklyGoal(
   }
   if (isPastPeriod('Weekly', weekStart, dateInTimezone(ctx.now, ctx.tz))) {
     throw new DomainError('PERIOD_IN_PAST', 'a weekly goal cannot be created into a week that has passed', { weekStart });
+  }
+  const existing = await deps.goals.countWeeklyInWeek(ctx.userId, weekStart);
+  if (existing >= MAX_WEEKLY_GOALS_PER_WEEK) {
+    throw new DomainError('VALIDATION_FAILED', `a week holds at most ${MAX_WEEKLY_GOALS_PER_WEEK} weekly goals`, {
+      weekStart,
+      existing,
+      max: MAX_WEEKLY_GOALS_PER_WEEK,
+    });
   }
   const now = deps.now();
   return {

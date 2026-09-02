@@ -8,7 +8,7 @@ import { TopActions } from '../components/TopActions';
 import { FieldError, LoadError, commandError } from '../components/states';
 import { TaskPageSkeleton, useSkeleton } from '../components/Skeleton';
 import { CarryLabel } from '../components/TaskRow';
-import { instantLabel, weekOfLabel } from '../utils/dates';
+import { instantLabel, periodOfLabel, weekOfLabel } from '../utils/dates';
 import { goalPath, LENS_SEGMENT, lensPath } from '../routes';
 import { hostOf } from '../utils/tree';
 
@@ -68,7 +68,12 @@ export function TaskPage() {
    * comes out of `location.state.from`, so the control names where you came from before any read starts.
    * Only the cold-by-URL case has to wait, and it waits as the word `Back`, which is true rather than grey.
    */
-  const backLabel = fromWeek ? weekOfLabel(fromWeek) : task ? weekOfLabel(task.originPeriodKey) : 'Back';
+  /**
+    * ⚠ **A8 (R-task-52)** — `periodOfLabel`, because `task.originPeriodKey` is a month key on a month
+    * task and `weekOfLabel` rendered `Week of NaN Aug` for one. `fromWeek` stays a week: it comes from
+    * `location.state.from`, which a lens sets, and a lens is always a week here.
+    */
+  const backLabel = fromWeek ? weekOfLabel(fromWeek) : task ? periodOfLabel(task.originPeriodKey) : 'Back';
   const backBtn = {
     minHeight: 44,
     border: 'none',

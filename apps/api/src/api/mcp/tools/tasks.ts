@@ -12,12 +12,12 @@ import {
   Ulid,
   Url,
   WeekOffset,
-  WeekStart,
   periodKeyOf,
 } from '@goal-cascade/shared';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { GoalService, TaskService } from '../../../application/services';
+import { currentPeriodOf } from '../../../application/services/views';
 import { guard } from '../errors';
 import { goalOut, ok, readingOut, stampIdempotencyKey, taskOut, week, weekOut, type McpDeps } from '../shapes';
 
@@ -59,6 +59,27 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
     } catch {
       return undefined;
     }
+  };
+
+  /**
+   * ⚠ **A8 (R-task-55) — the default period, resolved AT THE TASK'S OWN SCOPE.**
+   *
+   * An agent that names no period means "the one I am standing in", and for a month task that is a MONTH
+   * key. Defaulting to `ctx.currentWeekStart` made every month task **impossible to complete or backlog
+   * over MCP**: the explicit month failed the input schema, and the default Monday was refused by the
+   * scope check — no reachable value worked, on a surface whose `create_task` actively steers agents into
+   * making month tasks.
+   *
+   * A caller-supplied period is passed through untouched, so the seam case (S-task-55-2 — completing a
+   * month task from the August band on 2 September) stays the agent's own statement rather than something
+   * derived here.
+   */
+  const currentPeriodFor = async (taskId: string, period: string | undefined): Promise<string> => {
+    if (period !== undefined) return period;
+    const res = await dc.resolve(TaskService).get(ctx, taskId, week(ctx, 0));
+    // `currentPeriodOf` and not a local `periodKeyOf(..., today)`: the owner's timezone ladder (R-auth-5)
+    // has one implementation, and a second one here would be a second answer to what day it is.
+    return currentPeriodOf(ctx, res.task.scope);
   };
 
   // ── list_tasks ─────────────────────────────────────────────────────────────────────────────────
@@ -107,7 +128,19 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
           week: weekOut(w),
           /** R-lens-31 — the month this week belongs to, by the Monday rule. Quote it, never re-derive it. */
           month_period_key: periodKeyOf('Monthly', w.weekStart),
-          tasks: tasks.map((t) => taskOut(t, paths.get(t.goalId))),
+          /**
+           * ⚠ **A8 (R-task-54, S-lens-31-2) — THIS listing is a WEEK's, so it suppresses the label.**
+           *
+           * `taskOut` renders `carry_label` from the honest month-scale age, and `shapes.ts` says in
+           * terms that the suppression belongs to the surface — because the SAME task in the Monthly lens
+           * must show its chip. This is that surface. Without the flag the payload handed the agent
+           * `"2 months · since Jun"` to read out loud, one field below an instructions block promising
+           * A MONTH TASK IS NEVER LATE IN A WEEK.
+           *
+           * `carry_age` and `carry_unit` are left honest, so an agent asked *"how long has this been
+           * open"* can still answer; what it cannot do is find a ready-made late-sounding sentence.
+           */
+          tasks: tasks.map((t) => taskOut(t, paths.get(t.goalId), { suppressCarryLabel: t.scope === 'Monthly' })),
           next_cursor: res.nextCursor,
           server_now: res.serverNow,
         });
@@ -216,12 +249,12 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'Tick a task off (exit 1 of 3)',
       description:
-        "Tick a task off. You may complete into any week from the task's origin week up to and including THIS one, past weeks included — past weeks stay fully editable for work. The task then appears only in the week it was completed in. A week earlier than the task's origin_week_start is refused, and so is ANY future week: you cannot finish work in a week that has not happened. A task whose weekly goal is in a future week therefore cannot be completed at all until that week arrives — `completable` on the task says so.",
+        "Tick a task off. You may complete into any period from the task's origin up to and including the current one, past periods included — past periods stay fully editable for work. The task then appears only in the period it was completed in.\n\nTHE PERIOD IS AT THE TASK'S OWN SCOPE. A week task is completed into a Monday; a MONTH TASK IS COMPLETED INTO A MONTH KEY (2026-09), and sending a Monday for one is refused. Omit `period` and the current period at that scope is used, which is almost always what you want. A period earlier than the task's origin_period_key is refused, and so is ANY future one: you cannot finish work in a period that has not happened. A task whose goal is in a future period therefore cannot be completed at all until it arrives — `completable` on the task says so.",
       inputSchema: z
         .object({
           task_id: Ulid,
-          period: WeekStart.optional().describe(
-            'The week you are standing in, as its Monday (2026-09-07). Omit for the current week. A future one is refused.',
+          period: PeriodKeyParam.optional().describe(
+            'The period you are standing in, AT THE TASK\'S OWN SCOPE: a Monday (2026-09-07) for a week task, a month key (2026-09) for a month task. Omit for the current one. A future period is refused.',
           ),
         })
         .strict(),
@@ -229,7 +262,7 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
     async ({ task_id, period }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
-        const res = await dc.resolve(TaskService).complete(ctx, task_id, { period: period ?? ctx.currentWeekStart });
+        const res = await dc.resolve(TaskService).complete(ctx, task_id, { period: await currentPeriodFor(task_id, period) });
         return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
       }),
   );
@@ -257,11 +290,13 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'Park a task above its week (exit 2 of 3)',
       description:
-        "Take a task out of the week and park it in the backlog of the nearest goal ABOVE its week — normally the monthly parent — keeping the description and links and noting which week it came from. It does NOT go on its own weekly goal: a weekly goal is a week, and the point of this exit is to leave the week. A weekly goal hanging directly off a life goal has nowhere to put it and the exit is refused (LIFE_GOAL_NO_BACKLOG); complete or cancel remain available. Only OPEN tasks can be moved, future-dated ones included. The reason is OPTIONAL — this product is deliberately guilt-free; pass only what the user actually said.",
+        "Take a task out of its period and park it in the backlog of the nearest goal that can hold one, keeping the description and links and noting which period it came from.\n\nWHERE IT LANDS DEPENDS ON THE TASK'S SCOPE. For a WEEK task it is the nearest goal ABOVE the week — normally the monthly parent — and never its own weekly goal, because a weekly goal IS a week and the point of this exit is to leave it; a weekly goal hanging directly off a life goal has nowhere to put it and the exit is refused (LIFE_GOAL_NO_BACKLOG). For a MONTH task it is the monthly goal the task is already on: a monthly goal holds both a backlog and tasks, deliberately, and that is the one-tap demotion for a month task that has carried too long. The item then reads `from Sep 2026` rather than `from week of ...`.\n\nOnly OPEN tasks can be moved, future-dated ones included. The reason is OPTIONAL — this product is deliberately guilt-free; pass only what the user actually said.",
       inputSchema: z
         .object({
           task_id: Ulid,
-          period: WeekStart.optional().describe('The week you are standing in, as its Monday. Omit for the current week.'),
+          period: PeriodKeyParam.optional().describe(
+            "The period you are standing in, AT THE TASK'S OWN SCOPE: a Monday for a week task, a month key for a month task. Omit for the current one.",
+          ),
           reason: Reason.optional(),
         })
         .strict(),
@@ -271,7 +306,10 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
         stampIdempotencyKey(deps);
         const res = await dc
           .resolve(TaskService)
-          .moveToBacklog(ctx, task_id, { period: period ?? ctx.currentWeekStart, ...(reason !== undefined ? { reason } : {}) });
+          .moveToBacklog(ctx, task_id, {
+            period: await currentPeriodFor(task_id, period),
+            ...(reason !== undefined ? { reason } : {}),
+          });
         return ok({
           task: taskOut(res.task, await titleOf(res.task.goalId)),
           item: res.item,

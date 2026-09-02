@@ -404,6 +404,113 @@ describe('tasks', () => {
     expect((await ok(t, token, 'list_tasks', { scope: 'week' })).tasks.map((x: { id: string }) => x.id)).not.toContain(res.task.id);
   });
 
+  /**
+   * ⚠ **A8 (R-task-55, R-task-59) — a month task must be FINISHABLE over MCP, not merely creatable.**
+   *
+   * `create_task` steers an agent into making month tasks and every exit typed its `period` as a Monday,
+   * so `'2026-09'` failed the input schema and the default (a Monday) was refused with
+   * `WEEK_OUT_OF_RANGE` by the scope check — **no reachable value worked**. A surface that can only ever
+   * create is worse than one that cannot: it accumulates work the agent can then never close.
+   */
+  it('S-task-55-2 — a MONTH task can be completed over MCP, at its own scope', async () => {
+    const { month } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: month.id, title: 'sign two clients' })).task;
+    expect(task.scope).toBe('Monthly');
+
+    // The default: the agent names no period and gets the current one AT THE TASK'S SCOPE.
+    const done = (await ok(t, token, 'complete_task', { task_id: task.id })).task;
+    expect(done.status).toBe('done');
+    expect(done.done_period_key).toBe(month.period_key);
+
+    // …and naming the month explicitly is the same write (S-task-55-2's seam, said by an agent).
+    await ok(t, token, 'uncheck_task', { task_id: task.id });
+    const again = (await ok(t, token, 'complete_task', { task_id: task.id, period: month.period_key })).task;
+    expect(again.done_period_key).toBe(month.period_key);
+  });
+
+  it('S-task-59-1 — a MONTH task can be moved to the backlog over MCP, landing on the goal it is on', async () => {
+    const { month } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: month.id, title: 'maybe after all' })).task;
+    const res = await ok(t, token, 'move_task_to_backlog', { task_id: task.id });
+    expect(res.task.status).toBe('movedToBacklog');
+    // R-task-59 — the walk terminates immediately: a monthly goal holds both a backlog and tasks.
+    expect(res.item.goalId).toBe(month.id);
+    expect(res.item.fromPeriodKey).toBe(month.period_key);
+  });
+
+  it('R-task-56 — and it can be parked into a week and moved back, over MCP', async () => {
+    const { month, week } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: month.id, title: 'this week actually' })).task;
+
+    const parked = (await ok(t, token, 'retarget_task', { task_id: task.id, period: week.period_key })).task;
+    expect(parked.scope).toBe('Weekly');
+    expect(parked.goal_id).toBe(week.id);
+
+    const back = (await ok(t, token, 'retarget_task', { task_id: task.id, period: month.period_key })).task;
+    expect(back.scope).toBe('Monthly');
+    expect(back.goal_id).toBe(month.id);
+  });
+
+  /**
+   * ⚠ **A8 (R-task-54, S-lens-31-2) — `list_tasks` is the surface, so `list_tasks` does the suppressing.**
+   *
+   * `shapes.ts` states the rule that a month task says nothing at all inside a week and that the
+   * suppression belongs to the surface rendering it. `list_tasks(scope="month")` IS that surface, and the
+   * instructions block promises A MONTH TASK IS NEVER LATE IN A WEEK — while the payload handed the agent
+   * `"2 months · since Jun"` to read out loud.
+   */
+  it('S-lens-31-2 — a month task in a WEEK listing carries no carry label, though its age is still honest', async () => {
+    const { year } = await tree();
+    // A month task that has genuinely aged: created in June, read from a week in August. The clamp means
+    // a task created NOW can never have a positive age, so the clock has to move for this to be real.
+    t.clock.set('2026-06-10T10:00:00.000Z');
+    const june = (await ok(t, token, 'create_goal', { title: 'Jun 2026', horizon: 'Monthly', parent_id: year.id })).goal;
+    const task = (await ok(t, token, 'create_task', { goal_id: june.id, title: 'since a while ago' })).task;
+    t.clock.set('2026-08-31T10:00:00.000Z');
+
+    const listed = (await ok(t, token, 'list_tasks', { scope: 'month' })).tasks.find((x: { id: string }) => x.id === task.id);
+    expect(listed, 'the carried month task was not in the band at all').toBeTruthy();
+    // The AGE is honest — the same task in the Monthly lens must still earn its chip (R-task-54)…
+    expect(listed.carry_age).toBe(2);
+    expect(listed.carry_unit).toBe('months');
+    // …and the SENTENCE is suppressed, because this listing is a week's.
+    expect(listed.carry_label, 'the week listing handed the agent a late-sounding sentence').toBe('');
+  });
+
+  /**
+   * ⚠ **A8 (R-measure-4) — the refusal must be the SERVICE's, because MCP is a second front door.**
+   *
+   * A guard that lives in a Zod refinement on `MeasureInput` protects `/api/*` and nothing else: the MCP
+   * tools declare their own input schemas, so `set_task_measure` would hand `start === target` straight
+   * through to a service that never checked. The rule has one enforcement point for the same reason
+   * `assertTaskGoal` does.
+   */
+  it('S-measure-4-3 — target === start is refused over MCP too, with its own code and its own recovery', async () => {
+    const { week } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: week.id, title: 'no movement' })).task;
+    const err = await refused(
+      t,
+      token,
+      'set_task_measure',
+      { task_id: task.id, measure: { kind: 'counter', start: 5, target: 5 } },
+      'MEASURE_TARGET_EQUALS_START',
+    );
+    expect(err.retryable).toBe(false);
+    // The recovery must name the honest alternative rather than inviting a fabricated target.
+    expect(err.recovery).toMatch(/target: null/);
+  });
+
+  it('S-measure-4-3 — and on create_task’s inline measure, which is the same rule one call earlier', async () => {
+    const { week } = await tree();
+    await refused(
+      t,
+      token,
+      'create_task',
+      { goal_id: week.id, title: 'no movement', measure: { kind: 'counter', start: 5, target: 5 } },
+      'MEASURE_TARGET_EQUALS_START',
+    );
+  });
+
   it('S-task-48-1 — create_task’s inline `new_weekly_goal` makes both rows, and NAMES the one it made', async () => {
     const { month } = await tree();
     const other = (await ok(t, token, 'create_goal', { title: 'no week yet', horizon: 'Monthly', parent_id: (await tree()).year.id })).goal;

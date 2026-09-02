@@ -393,8 +393,18 @@ export const NewWeeklyGoalInput = z.object({ parentId: Ulid, title: Title }).str
  * refused" true through `.strict()` rather than through a handler remembering to drop it.
  *
  * `target` is **optional and nullable, and the two mean the same thing** — no target, the AMRAP case
- * (R-measure-4). `target === start` is refused with `MEASURE_TARGET_EQUALS_START` (422) here, at the
- * edge, because it names no movement and "maintain" is out of scope (S-measure-4-3).
+ * (R-measure-4).
+ *
+ * ⚠ **`target === start` is refused by the SERVICE, not by a refinement here, and that is deliberate.**
+ * A `.refine()` guards `/api/*` and nothing else: the MCP tools declare their own input schemas, so
+ * `set_task_measure` handed `start === target` straight through to a service that never checked — it
+ * wrote a `5 / 5` measure with no progress and logged `Measure added: counter, 5 → 5`. Worse, every Zod
+ * failure is flattened to `VALIDATION_FAILED` by `api/validate.ts`, so the refusal could never carry its
+ * own code: `MEASURE_TARGET_EQUALS_START` sat in `ERROR_STATUS` with an MCP recovery line and was never
+ * emitted, while the web rendered the constant's NAME to the owner as a toast.
+ *
+ * The rule now has **one enforcement point**, `TaskService.assertMeasure`, reachable from every front
+ * door — the same shape `assertTaskGoal` has for R-task-51 (S-measure-4-3).
  *
  * There is **no direction field** and there must never be one: `target > start` counts up, `target <
  * start` counts down, and a flag would restate what the two numbers already say (R-measure-2,
@@ -407,11 +417,7 @@ export const MeasureInput = z
     target: MeasureNumber.nullable().default(null),
     unit: MeasureUnit.default(''),
   })
-  .strict()
-  .refine((v) => v.target === null || v.target !== v.start, {
-    error: 'MEASURE_TARGET_EQUALS_START',
-    path: ['target'],
-  });
+  .strict();
 
 /**
  * R-task-3/41/48 / **R-task-51/52/57** — a task is created under a **Monthly or a Weekly goal**, and
