@@ -4,6 +4,8 @@ The owner's instruction, verbatim:
 
 > *"Remember you change should go through subagents, build, UX research(if changes needed in fe),
 > code quality, e2e."*
+>
+> *"Also we can include an architect before build only if we need to plan on a complex task"*
 
 Every change goes through subagents. The orchestrator coordinates, merges, deploys and reports —
 it does not implement.
@@ -13,11 +15,12 @@ it does not implement.
 | # | Stage | When | Output |
 |---|---|---|---|
 | 1 | **UX research** | any change a user can see | `docs/work/NN-*/UX-PLAN.md` |
-| 2 | **Build** | always | code + tests + `build.md` |
-| 3 | **Code quality** | always | review findings, by a different agent |
-| 4 | **E2E** | always | a browser walkthrough of the real scenarios |
+| 2 | **Architect** | complex tasks only — see below | `docs/work/NN-*/PLAN.md` |
+| 3 | **Build** | always | code + tests + `build.md` |
+| 4 | **Code quality** | always | review findings, by a different agent |
+| 5 | **E2E** | always | a browser walkthrough of the real scenarios |
 
-**No agent reviews its own work.** Stages 3 and 4 are separate agents from stage 2.
+**No agent reviews its own work.** Stages 4 and 5 are separate agents from stage 3.
 
 ### 1 — UX research
 Mandatory before any front-end change, and **its call is final**. The orchestrator does not
@@ -25,14 +28,30 @@ substitute its own design. This rule exists because the orchestrator kept sketch
 inline and getting them wrong: shortening tab labels instead of a scrolling strip, a `…`
 placeholder, a fallback-font chevron, a picker that flooded a sheet.
 
-### 2 — Build
-Follows the UX plan literally. Ambiguity in the plan is a question, not a guess.
+### 2 — Architect (conditional)
+For complex work only — not a routine stage. Reach for it when a change touches load-bearing logic,
+crosses package boundaries, needs a migration, or could drift into a second source of truth. It
+produces a plan with a recommendation, a migration path in independently verifiable steps, and the
+risks — especially anything that would fail *silently*.
 
-### 3 — Code quality
+Worked example: `docs/work/22-instant-periods/PLAN.md`. Moving period logic client-side looked like
+a refactor; the architect pass established that the deliverable was the **anti-drift mechanism**,
+not the move — one shared module to prevent drift, a boundary fixture table checked from both sides
+to detect it, and a runtime echo assertion to catch version skew a shared module cannot. It also
+found that `utils/periodKeys.ts` **already** duplicated the server's functions while its own doc
+block argued it did not. Built without that pass, it would have shipped a second calendar.
+
+Skip it for a label change, a copy fix, or a contained component.
+
+### 3 — Build
+Follows the UX plan and the architect's plan literally. Ambiguity in either is a question, not a
+guess.
+
+### 4 — Code quality
 A fresh agent reads the diff for correctness, dead code, duplicated rules, retired entities still
 reachable, and tests that assert a label rather than a rule.
 
-### 4 — E2E
+### 5 — E2E
 A browser walkthrough of the numbered scenarios, not a green suite. Every defect the owner has
 found in this product survived a fully green test run:
 
