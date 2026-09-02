@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { labelOf, periodKeyOf, type Horizon } from '@goal-cascade/shared';
+import { labelOf, periodKeyOf, taskWeeksInMonth, type Horizon } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useBacklog, useCreateBacklogItem, useConvertBacklogItem, useCreateTask, useGoal } from '../api/queries';
 import { toApiError } from '../api/errors';
@@ -10,9 +10,20 @@ import { Sheet } from './Sheet';
 import { FieldError, Loading, commandError } from './states';
 import { recentGoalIds, useGoalPicker } from './GoalPicker';
 import { hostOf } from '../utils/tree';
-import { shortDate } from '../utils/dates';
+import { shortDate, weekOfLabel } from '../utils/dates';
 import { lensPath, BACKLOG_PATH } from '../routes';
-import { implicitWeeklyGoalNote, taskDestinationNote } from '../lens/copy';
+import { AddMeasureLink, emptyDraft, MeasureFields, validateDraft, type MeasureDraft } from './Measure';
+import { ChipRadioGroup, type ChipOption } from './ChipRadioGroup';
+import { VISUALLY_HIDDEN } from './Sparkline';
+import {
+  addedToMonthToast,
+  implicitWeeklyGoalNote,
+  landsUnder,
+  monthChipName,
+  monthDestinationNote,
+  taskDestinationNote,
+  WHEN_THIS_LANDS,
+} from '../lens/copy';
 
 /**
  * The `+` drawer, the task-create sheet, and the backlog pull — the places work enters this app.
@@ -294,12 +305,18 @@ const monthLabelOfWeek = (weekStart: string): string => labelOf('Monthly', perio
 export function TaskCreateSheet({
   goalId: initialGoalId,
   newWeekly,
+  monthGoal,
+  monthKey,
   weekStart,
   title: initialTitle,
   fromBacklogId,
 }: {
   goalId?: string;
   newWeekly?: { parentId: string; title: string };
+  /** ⚠ **A8** — the Monthly goal that was tapped. Its month is the default destination. */
+  monthGoal?: { id: string; title: string };
+  /** ⚠ **A11** — a SEED for `When this lands`, read once at mount and never again. */
+  monthKey?: string;
   weekStart?: string;
   title?: string;
   fromBacklogId?: string;
@@ -312,23 +329,61 @@ export function TaskCreateSheet({
   const convertItem = useConvertBacklogItem();
   const backlogQ = useBacklog();
 
+  /**
+   * ⚠ **A11 (`32-week-selection` §4.5) — the chosen period is STATE, and the prop is a seed.**
+   *
+   * *"The `weekStart` prop is a seed and is never read after mount"* is the whole of the zero-candidate
+   * correctness fix: `implicitWeeklyGoalNote`, `taskDestinationNote`, `monthLabelOfWeek`, the toast and
+   * the post-save navigation all read the **chosen** period from here. A build that leaves one of them
+   * reading the prop reproduces the bug in a smaller place.
+   */
+  const [period, setPeriod] = useState<string>(monthKey ?? weekStart ?? clock.currentMonday);
+  /** Whether the owner has moved the control — the status announces a CONSEQUENCE, not the initial state. */
+  const [moved, setMoved] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [title, setTitle] = useState(initialTitle ?? '');
   const [cond, setCond] = useState('');
   const [refused, setRefused] = useState<string | null>(null);
+  /** Q-E — a measure may be attached AT CREATE, in one command. Collapsed until asked for. */
+  const [measuring, setMeasuring] = useState(false);
+  const [draft, setDraft] = useState<MeasureDraft>(emptyDraft);
   /** D-18 / S-backlog-26-3 — the server's own candidate list, when it refuses an ambiguous conversion. */
   const [serverCandidates, setServerCandidates] = useState<{ id: string; title: string }[] | null>(null);
 
   /**
-   * ⚠ **R-nav-31** — the same picker as everywhere else, in `weeklyTarget` mode. When the server has
-   * named the candidates it wins: it knows the subtree *at or under* the item's goal, and the client is
-   * not allowed to hold one (R-lens-16), so a level-skipped Weekly goal reaches this list only that way.
+   * ⚠ **A8/A11 — the month is the FIRST option and the DEFAULT** (the owner's ruling on
+   * `32-week-selection` §9.2). `R-task-57`'s *"nothing is inferred"* only holds if the zero-decision path
+   * is the zero-inference one: one row, on the goal you tapped, in the month you are looking at. A week
+   * is then something the owner explicitly asked for, and **a control the owner drives is not an
+   * inference**.
+   *
+   * The option list is `[the month, then the month's own weeks that are not before the current one]`.
+   * Bounded by the month, because a week outside it is a week the lens that created the work will never
+   * show — which is the leak A9's clamp closed. Past weeks are **omitted, never disabled** (R-goal-36,
+   * D-5): a picker must not offer what the server would refuse, and there is nothing to explain because
+   * nothing on screen implies the missing weeks were ever there.
+   */
+  const options: ChipOption[] = monthKey
+    ? [
+        { value: monthKey, label: labelOf('Monthly', monthKey), name: monthChipName(labelOf('Monthly', monthKey)) },
+        ...taskWeeksInMonth(monthKey, clock.today).map((w) => ({ value: w, label: shortDate(w), name: weekOfLabel(w) })),
+      ]
+    : [];
+  const isMonth = !!monthKey && period === monthKey;
+  /** The Monthly goal a week narrowing hangs its resolved (or minted) Weekly goal under. */
+  const parent = monthGoal ?? newWeekly;
+  const parentId = monthGoal?.id ?? newWeekly?.parentId ?? '';
+  const parentTitle = monthGoal?.title ?? newWeekly?.title ?? '';
+
+  /**
+   * ⚠ **R-nav-31** — the same picker as everywhere else, in `weeklyTarget` mode, whose `weekStart` now
+   * comes from state rather than from a prop. **The rule gains no fifth mode: a week is not a goal.**
    */
   const weeklyPicker = useGoalPicker({
     mode: {
       kind: 'weeklyTarget',
-      parentId: newWeekly?.parentId ?? '',
-      weekStart: newWeekly ? weekStart : undefined,
+      parentId,
+      weekStart: parent && !isMonth ? period : undefined,
       ...(serverCandidates ? { candidates: serverCandidates } : {}),
     },
     value: picked,
@@ -341,33 +396,34 @@ export function TaskCreateSheet({
   const choices = weeklyPicker.options;
 
   /**
-   * ⚠ **A9 — the first candidate is preselected at EVERY count, including one.**
-   *
-   * This used to read `choices.length > 1`, and the gap was the whole defect: with exactly one candidate
-   * nothing was written into state, the destination block did not render, and the code path was — in its
-   * own comment — *"used silently"*. The owner added three tasks from a Monthly goal, was never told which
-   * weekly goal or which week they went to, and could not find them again.
-   *
-   * Writing it into state rather than leaving it as a `??` fallback is what makes the row render as
-   * SELECTED and be announced (R-lens-13). A single candidate is now a filled choice, not an absence.
+   * ⚠ **A9 — the first candidate is preselected at EVERY count, including one.** A single candidate is a
+   * destination, not an absence of choice; writing it into STATE rather than leaving it as a `??` fallback
+   * is what makes the row render as SELECTED and be announced (R-lens-13).
    */
   useEffect(() => {
-    if (!initialGoalId && picked === null && choices.length > 0) setPicked(choices[0]!.id);
-  }, [initialGoalId, picked, choices]);
+    if (!initialGoalId && !isMonth && picked === null && choices.length > 0) setPicked(choices[0]!.id);
+  }, [initialGoalId, isMonth, picked, choices]);
   const resolved = initialGoalId ?? picked ?? choices[0]?.id ?? null;
-  const willCreateGoal = !initialGoalId && !!newWeekly && choices.length === 0;
-  const week = clock.offsetOf(weekStart);
-  /**
-   * ⚠ **A9 — the destination block renders whenever this sheet resolves one, at every candidate count.**
-   * Zero, one or several: the sheet names the weekly goal and the week before `Save task` is reachable.
-   */
-  const resolvesDestination = !initialGoalId && (!!newWeekly || !!serverCandidates);
+  const willCreateGoal = !initialGoalId && !isMonth && !!parent && choices.length === 0;
+  /** A9 — the destination block renders whenever this sheet resolves one, at every candidate count. */
+  const resolvesDestination = !initialGoalId && (!!parent || !!serverCandidates);
 
   const close = () => ui.closeSheet();
   const busy = createTask.isPending || convertItem.isPending;
-  const blocked = busy || !title.trim() || (!resolved && !willCreateGoal);
+  const measure = measuring ? validateDraft(draft).input : null;
+  const measureBlocked = measuring && !measure;
+  const blocked = busy || !title.trim() || measureBlocked || (!isMonth && !resolved && !willCreateGoal);
 
-  /** Where the work landed, and the two things the owner is owed for it (R-task-49). */
+  /**
+   * ⚠ **Where the work landed, and what the owner is owed for it.**
+   *
+   * A week: the toast names the week and the app **moves to the Weekly lens at that week**, because
+   * staying put would leave the task invisible from the screen that made it (R-task-41, R-nav-19).
+   * A month: the task lands on the very card that was tapped — in the Monthly card's own list, or in the
+   * Weekly lens's month band — so **nothing moves**, which is R-task-57's rule satisfied by construction
+   * rather than by a branch. The toast still names the destination, because a write that does not say
+   * where it went is the unnamed-destination defect A9 closed.
+   */
   const landed = (createdGoalTitle: string | null, landedWeek: string | undefined) => {
     close();
     if (landedWeek) {
@@ -375,6 +431,8 @@ export function TaskCreateSheet({
         detail: createdGoalTitle ? `Added to week of ${shortDate(landedWeek)}, under ${createdGoalTitle}.` : undefined,
       });
       navigate(lensPath('Weekly', landedWeek));
+    } else if (isMonth && monthKey) {
+      ui.showToast(addedToMonthToast(labelOf('Monthly', monthKey)));
     } else {
       ui.showToast('Task added');
     }
@@ -404,19 +462,61 @@ export function TaskCreateSheet({
   const save = () => {
     if (!title.trim()) return;
     setRefused(null);
-    const goalPart = resolved ? { goalId: resolved } : { newWeeklyGoal: { parentId: newWeekly!.parentId, title: newWeekly!.title } };
+    /**
+     * ⚠ **The month path creates exactly ONE row.** `newWeeklyGoal` can never fire as a side effect of
+     * accepting the default — it is sent only after the owner named a week (R-rm-6, the defect A8 deletes).
+     */
+    const goalPart = isMonth
+      ? { goalId: monthGoal!.id }
+      : resolved
+        ? { goalId: resolved }
+        : { newWeeklyGoal: { parentId, title: parentTitle } };
     if (fromBacklogId) {
       convertItem.mutate(
-        { id: fromBacklogId, ...goalPart, week, title: title.trim(), cond: cond.trim() },
-        { onSuccess: (d) => landed(d.goal?.title ?? null, d.goal?.periodKey ?? weekStart), onError },
+        {
+          id: fromBacklogId,
+          // R-backlog-31 — a month key lands the item on the goal it is ALREADY on: no resolution, no
+          // candidate list, no ambiguity and no implicitly created goal.
+          ...(isMonth ? {} : goalPart),
+          ...(monthKey ? { period } : { week: clock.offsetOf(weekStart) }),
+          title: title.trim(),
+          cond: cond.trim(),
+        },
+        { onSuccess: (d) => landed(d.goal?.title ?? null, isMonth ? undefined : (d.goal?.periodKey ?? period)), onError },
       );
       return;
     }
     createTask.mutate(
-      { ...goalPart, title: title.trim(), cond: cond.trim(), description: '', links: [], source: fromBacklogId ? 'backlog' : 'goal' },
-      { onSuccess: (d) => landed(d.goal?.title ?? null, d.goal?.periodKey ?? (initialGoalId ? undefined : weekStart)), onError },
+      {
+        ...goalPart,
+        // ⚠ The BAND'S own month, or the week the owner named. Never a clamp and never a substitution.
+        ...(monthKey ? { period } : {}),
+        title: title.trim(),
+        cond: cond.trim(),
+        description: '',
+        links: [],
+        source: fromBacklogId ? 'backlog' : 'goal',
+        ...(measure ? { measure } : {}),
+      },
+      {
+        onSuccess: (d) =>
+          landed(d.goal?.title ?? null, isMonth ? undefined : (d.goal?.periodKey ?? (initialGoalId ? undefined : (monthKey ? period : weekStart)))),
+        onError,
+      },
     );
   };
+
+  /** Every sentence in the block is a pure function of the CHOSEN period, from this change onward. */
+  const destinationNote = isMonth && monthKey ? monthDestinationNote(labelOf('Monthly', monthKey)) : taskDestinationNote(shortDate(period), monthLabelOfWeek(period));
+  const createNote = implicitWeeklyGoalNote(parentTitle, shortDate(period));
+  const status = !moved
+    ? ''
+    : isMonth
+      ? destinationNote
+      : choices.length === 0
+        ? // It already names the week; pairing it with the destination line would say the date three times.
+          createNote
+        : landsUnder(destinationNote, choices.find((c) => c.id === (picked ?? choices[0]!.id))?.title ?? '');
 
   return (
     <Sheet label={weeklyPicker.taken ? weeklyPicker.heading : 'New task'} headerRight={weeklyPicker.headerRight} onClose={close}>
@@ -440,34 +540,63 @@ export function TaskCreateSheet({
         />
 
         {/*
-          * ⚠ **A9 — WHERE THIS GOES, at one candidate, at several, and at none.**
-          *
-          * The rule is now the same sentence at every count: **name the weekly goal, name the week, and
-          * offer a way to change it before saving.** What varies is only which of the two rows carries the
-          * goal — a filled picker row when one exists to choose, the create note when none does.
-          *
-          * One candidate used to render nothing at all, on the theory that a choice with one option is not
-          * a choice. It is not a choice; it is still an ANSWER, and the owner needed the answer, not the
-          * choice. A filled row costs one line and is the difference between work that landed somewhere
-          * and work that vanished.
+         * ⚠ **A8 (Q-E) — a measure, attached in the same command.** One `linkBtn` collapsed, the same
+         * `MeasureFields` block expanded in place — **no second sheet, no takeover, no new modal pattern**
+         * (a sheet inside a sheet is a shape this product has nowhere). A task with no measure renders
+         * exactly as it did before: one line, and nothing else.
+         *
+         * It sits between the done-condition and `WHERE THIS GOES` — the task's own properties before the
+         * task's destination, which is the order the sheet already reads in.
+         */}
+        <div style={{ marginTop: 6 }}>
+          {/* A real disclosure: `aria-expanded` reflects the block, and the same control closes it again. */}
+          <AddMeasureLink expanded={measuring} onToggle={() => setMeasuring(!measuring)} />
+          {measuring && <MeasureFields draft={draft} onChange={setDraft} idPrefix="new-task-measure" />}
+        </div>
+
+        {/*
+          * ⚠ **A9/A11 — WHERE THIS GOES: the period FIRST, then the goal it scopes, then the sentence.**
+          * Reading order is decision order.
           */}
         {resolvesDestination && (
           <div style={{ marginTop: 14 }}>
             <div style={{ ...S.fieldLabel, marginBottom: 6 }}>WHERE THIS GOES</div>
-            {choices.length > 0 ? (
-              weeklyPicker.control
-            ) : (
-              /* Stated before it happens. Nothing may be created invisibly (R-task-49). */
-              <div style={{ fontSize: 13, color: S.body, background: S.T.paper, border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px' }}>
-                {weekStart ? implicitWeeklyGoalNote(newWeekly?.title ?? '', shortDate(weekStart)) : 'A weekly goal will be created for this task.'}
-              </div>
-            )}
             {/*
-              * The week, always, and the month it belongs to beside it. A9's clamp fix puts that week
-              * inside the month the owner is looking at; naming the month is what makes that checkable
-              * from the sheet rather than only from the code.
-              */}
-            {weekStart && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>{taskDestinationNote(shortDate(weekStart), monthLabelOfWeek(weekStart))}</div>}
+             * The chips render only with two or more options, which from A8 is always true for a Monthly
+             * origin (the month is a second option by construction). A single-valued selector renders
+             * nothing — `permittedHorizons`' own rule, one control over.
+             */}
+            {options.length > 1 && (
+              <ChipRadioGroup
+                label={WHEN_THIS_LANDS}
+                options={options}
+                value={period}
+                onChange={(v) => {
+                  // Changing the week clears the picked Weekly goal; the preselect effect fills it from
+                  // the new week's candidates. A goal from the old week is never carried across — that
+                  // pair is illegal, and `weeklyTarget`'s contract is "the goals inside this ONE week".
+                  setPeriod(v);
+                  setPicked(null);
+                  setMoved(true);
+                }}
+                style={{ marginBottom: 10 }}
+              />
+            )}
+            {/* With no week there is nothing to resolve: no goal row, no created goal, no picker. */}
+            {!isMonth &&
+              (choices.length > 0 ? (
+                weeklyPicker.control
+              ) : (
+                /* Stated before it happens. Nothing may be created invisibly (R-task-49). */
+                <div style={{ fontSize: 13, color: S.body, background: S.T.paper, border: `1px solid ${S.T.line}`, borderRadius: 12, padding: '10px 12px' }}>
+                  {parent ? createNote : 'A weekly goal will be created for this task.'}
+                </div>
+              ))}
+            <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>{destinationNote}</div>
+            {/* R-lens-13 — `aria-checked` announces the SELECTION; this announces the CONSEQUENCE. */}
+            <div role="status" style={VISUALLY_HIDDEN}>
+              {status}
+            </div>
           </div>
         )}
         {item && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>From the backlog: {item.title}</div>}
@@ -492,7 +621,7 @@ export function TaskCreateSheet({
  * Tapping an item opens the create sheet pre-filled and bound to the target — the existing pull, moved out
  * of the dead plan screen unchanged (R-backlog-8: converted, never duplicated).
  */
-export function PullSheet({ goalId, horizon, weekStart }: { goalId: string; horizon: Horizon; weekStart?: string }) {
+export function PullSheet({ goalId, horizon, monthKey }: { goalId: string; horizon: Horizon; monthKey?: string }) {
   const S = useSkin();
   const ui = useUI();
   const detailQ = useGoal(goalId);
@@ -521,9 +650,15 @@ export function PullSheet({ goalId, horizon, weekStart }: { goalId: string; hori
             onClick={() =>
               ui.openSheet({
                 kind: 'taskCreate',
+                /*
+                 * ⚠ **A8/A11** — a Monthly origin inherits the create sheet's `When this lands` control by
+                 * construction, which is the correct outcome: `Pull from backlog` and `+ Task` sit in one
+                 * row on the same card, and an item that could only ever become work in the month's first
+                 * week had the identical defect `+ Task` had.
+                 */
                 ...(horizon === 'Weekly'
                   ? { goalId, weekStart: goal?.periodKey }
-                  : { newWeekly: { parentId: goalId, title: goal?.title ?? '' }, weekStart }),
+                  : { monthGoal: { id: goalId, title: goal?.title ?? '' }, monthKey }),
                 title: b.title,
                 fromBacklogId: b.id,
               })

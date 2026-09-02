@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient, type UseMutationResult } from '@tanstack/react-query';
 import type {
   ApiTokenStatusResponse,
+  MeasureInput,
   BacklogItemView,
   BacklogResponse,
   GoalDetailResponse,
@@ -727,6 +728,103 @@ export function useCancelTask() {
   });
 }
 
+/**
+ * ⚠ **A8, new (R-task-56)** — **Park in a week / Move to the month.** Not a fourth exit: the task stays
+ * open, keeps its title, its links, its timeline and **every reading**, and only its goal, its scope and
+ * its period move. One hook for both directions, because the key's format is the discriminator.
+ *
+ * The task changes SCOPE, so it leaves one lens's list and joins another's. The detail cache takes the
+ * fresh row at once — the page it was raised from has to re-render with the opposite control — and the
+ * invalidation is what settles which list it belongs to.
+ */
+export function useRetargetTask() {
+  return useCommand<
+    { id: string; period: string; goalId?: string; newWeeklyGoal?: { parentId: string; title: string }; version?: number },
+    Awaited<ReturnType<ApiClient['retargetTask']>>
+  >({
+    run: (c, v, k) =>
+      c.retargetTask(
+        v.id,
+        {
+          period: v.period,
+          ...(v.goalId ? { goalId: v.goalId } : {}),
+          ...(v.newWeeklyGoal ? { newWeeklyGoal: v.newWeeklyGoal } : {}),
+          ...(v.version ? { version: v.version } : {}),
+        },
+        k,
+      ),
+    onSuccess: (d, _v, qc) => patchTask(qc, d.task),
+    invalidate: [...WEEK_KEYS, ['goal']],
+    inline: true,
+    // The sheet renders the refusal beside the control that caused it; a toast would be in its way.
+    quiet: ['NO_WEEKLY_GOAL', 'AMBIGUOUS_CONVERSION_TARGET'],
+  });
+}
+
+/**
+ * ⚠ **A8, new (R-measure-1)** — attach a measure or replace its shape. **It never touches a reading**;
+ * `current` is derived and is not a field, so a `PUT` here changes what the numbers mean and not what
+ * they are.
+ */
+export function useSetMeasure() {
+  return useCommand<{ id: string; measure: MeasureInput; version?: number }, Awaited<ReturnType<ApiClient['setMeasure']>>>({
+    run: (c, v, k) => c.setMeasure(v.id, { measure: v.measure, ...(v.version ? { version: v.version } : {}) }, k),
+    onSuccess: (d, _v, qc) => patchTask(qc, d.task),
+    // A measure renders on every task row in every lens, so a lens read is stale the moment one lands.
+    invalidate: WEEK_KEYS,
+    inline: true,
+  });
+}
+
+/** Removes the measure and **every reading** with it (R-measure-1) — confirmed by count at the call site. */
+export function useClearMeasure() {
+  return useCommand<{ id: string }, Awaited<ReturnType<ApiClient['clearMeasure']>>>({
+    run: (c, v) => c.clearMeasure(v.id),
+    onSuccess: (d, _v, qc) => patchTask(qc, d.task),
+    invalidate: WEEK_KEYS,
+    inline: true,
+  });
+}
+
+/**
+ * ⚠ **A8, new (R-measure-3)** — record one value. Exactly one of `value` or `delta`; the server resolves
+ * a delta against `current` and stores the **absolute**, which is what makes deletion one rule.
+ *
+ * **No timeline entry is ever written** (R-measure-7). The response is the whole `TaskDetailView`,
+ * readings included, so the sparkline, the value line and the bar all repaint from one round trip.
+ */
+export function useRecordReading() {
+  return useCommand<{ id: string; value?: number; delta?: number; version?: number }, Awaited<ReturnType<ApiClient['recordReading']>>>({
+    run: (c, v, k) =>
+      c.recordReading(
+        v.id,
+        {
+          ...(v.value !== undefined ? { value: v.value } : {}),
+          ...(v.delta !== undefined ? { delta: v.delta } : {}),
+          ...(v.version ? { version: v.version } : {}),
+        },
+        k,
+      ),
+    onSuccess: (d, _v, qc) => patchTask(qc, d.task),
+    invalidate: WEEK_KEYS,
+    inline: true,
+  });
+}
+
+/**
+ * R-measure-5/7 — one reading, deleted by its own id, leaving **no trace anywhere**: no timeline entry,
+ * no undo bar (which would be a trace holding the value it claims to have removed). `current` falls back
+ * to the latest surviving reading, else `start` — the server's one rule, rendered from its response.
+ */
+export function useDeleteReading() {
+  return useCommand<{ id: string; readingId: string }, Awaited<ReturnType<ApiClient['deleteReading']>>>({
+    run: (c, v) => c.deleteReading(v.id, v.readingId),
+    onSuccess: (d, _v, qc) => patchTask(qc, d.task),
+    invalidate: WEEK_KEYS,
+    inline: true,
+  });
+}
+
 export function useAddTaskLink() {
   return useCommand<{ id: string; url: string }, Awaited<ReturnType<ApiClient['addTaskLink']>>>({
     run: (c, v, k) => c.addTaskLink(v.id, { url: v.url }, k),
@@ -838,6 +936,8 @@ export function useConvertBacklogItem() {
       goalId?: string;
       newWeeklyGoal?: { parentId: string; title: string };
       week?: number;
+      /** ⚠ **A8 (R-backlog-31)** — a month key takes `Add to this month`; a caller that knows only a week offset keeps passing `week`. */
+      period?: string;
       title?: string;
       cond?: string;
       version?: number;
@@ -850,7 +950,7 @@ export function useConvertBacklogItem() {
         {
           ...(v.goalId ? { goalId: v.goalId } : {}),
           ...(v.newWeeklyGoal ? { newWeeklyGoal: v.newWeeklyGoal } : {}),
-          period: addWeeks(currentMonday, v.week ?? 0),
+          period: v.period ?? addWeeks(currentMonday, v.week ?? 0),
           ...(v.title ? { title: v.title } : {}),
           cond: v.cond ?? '',
           ...(v.version ? { version: v.version } : {}),

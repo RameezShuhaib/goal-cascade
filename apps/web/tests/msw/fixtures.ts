@@ -7,9 +7,11 @@ import type {
   LearningView,
   LensResponse,
   LifeGroupView,
+  MeasureView,
   MeResponse,
   PeriodView,
   PreferencesView,
+  ReadingView,
   TaskDetailView,
   TaskView,
   UserView,
@@ -152,6 +154,33 @@ export const task = (over: Partial<TaskView> = {}): TaskView => ({
   createdAt: NOW,
   updatedAt: NOW,
   version: 1,
+  ...over,
+});
+
+/**
+ * ⚠ **A8 (R-measure-1/4)** — a measure, defaulting to the plainest one there is: a counter from zero with
+ * **no target**, which is a first-class measure and not a degraded one.
+ *
+ * `progress` is **the server's** — `(current − start) / (target − start)`, `null` when there is no target
+ * OR when `target === start`. A fixture that computed it here would be testing the fixture; a fixture that
+ * set it beside a contradicting `target` is exactly the state R-measure-4 says the client must render
+ * honestly, and several tests pass one deliberately.
+ */
+export const measure = (over: Partial<MeasureView> = {}): MeasureView => ({
+  kind: 'counter',
+  start: 0,
+  current: 0,
+  target: null,
+  unit: '',
+  progress: null,
+  ...over,
+});
+
+/** One recorded value. **No week, month, period or scope field, ever** (R-measure-5, S-measure-5-2). */
+export const reading = (over: Partial<ReadingView> & { value: number }): ReadingView => ({
+  id: ulid(70),
+  taskId: ulid(20),
+  at: NOW,
   ...over,
 });
 

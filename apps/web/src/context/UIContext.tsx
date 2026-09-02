@@ -42,8 +42,25 @@ export type Sheet =
       newWeekly?: { parentId: string; title: string };
       /** Candidates when more than one Weekly goal could take it — the first is preselected (R-task-49). */
       candidates?: { id: string; title: string }[];
-      /** The absolute Monday the task will land in, for the copy and for the navigation afterwards. */
+      /**
+       * The absolute Monday a **Weekly** origin's task lands in. Unchanged, and it is not a seed: from a
+       * Weekly goal the week IS the goal, and there is no second week the sheet could mean.
+       */
       weekStart?: string;
+      /**
+       * ⚠ **A8/A11 — a MONTHLY origin: the goal that was tapped, and the month it sits in.**
+       *
+       * `+ Task` on a Monthly goal defaults to **one row — the task — on the goal you tapped, in the
+       * month you are looking at** (R-task-57, the owner's own ruling on `32-week-selection` §9.2).
+       * A week is an explicit narrowing made in the sheet's `When this lands` control, and only then is
+       * `monthGoal` used as `newWeeklyGoal`'s parent (R-task-48, which is why it survives A8).
+       *
+       * **`monthKey` is a seed and is never read after the sheet mounts.** Every sentence in
+       * `WHERE THIS GOES`, the toast and the navigation all read the *chosen* period; a build that leaves
+       * one of them reading the prop reproduces A9's leak in a smaller place.
+       */
+      monthGoal?: { id: string; title: string };
+      monthKey?: string;
       title?: string;
       fromBacklogId?: string;
     }
@@ -85,7 +102,13 @@ export type Sheet =
     }
   | { kind: 'moveGoal'; goalId: string; lifeGoalsOnly?: boolean }
   /** R-backlog-28 — `Pull from the backlog`, from a Weekly or Monthly goal's card. */
-  | { kind: 'pull'; goalId: string; horizon: Horizon; weekStart?: string };
+  | { kind: 'pull'; goalId: string; horizon: Horizon; monthKey?: string }
+  /**
+   * ⚠ **A8, new (R-task-56) — Park in a week.** The ONE new sheet kind this amendment adds; the measure
+   * is inline on every surface it appears on (`33-measurables-ux` §6.8). Un-park needs no sheet: there is
+   * nothing to choose on the way back, so it is one tap with no confirm.
+   */
+  | { kind: 'retarget'; taskId: string };
 
 export interface ToastAction {
   label: string;

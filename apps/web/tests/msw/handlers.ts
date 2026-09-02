@@ -102,6 +102,21 @@ export const handlers: HttpHandler[] = [
   http.post('/api/tasks/:id/links', cmd(() => HttpResponse.json(F.taskResponse()))),
   http.delete('/api/tasks/:id/links/:linkId', () => HttpResponse.json(F.taskResponse())),
 
+  /*
+   * ⚠ **A8 — the five routes the measures and Park work added.** Every one answers the whole
+   * `TaskDetailView`, readings included, so one round trip repaints the value line, the bar, the
+   * sparkline and the row in every lens.
+   *
+   * `cmd` wraps only the three that are behind the API's `idempotent` middleware — the two DELETEs carry
+   * no `Idempotency-Key`, and demanding one here would be testing a rule the server does not have.
+   */
+  http.put('/api/tasks/:id/measure', cmd(() => HttpResponse.json(F.taskResponse()))),
+  http.delete('/api/tasks/:id/measure', () => HttpResponse.json(F.taskResponse())),
+  http.post('/api/tasks/:id/readings', cmd(() => HttpResponse.json(F.taskResponse()))),
+  http.delete('/api/tasks/:id/readings/:readingId', () => HttpResponse.json(F.taskResponse())),
+  // R-task-56 — `goal` is the Weekly goal a park minted, when it minted one; null on every un-park.
+  http.post('/api/tasks/:id/retarget', cmd(() => HttpResponse.json({ task: F.taskDetail(), goal: null, serverNow: F.NOW }))),
+
   http.get('/api/backlog', () => HttpResponse.json(F.backlogResponse())),
   http.post('/api/backlog', cmd(() => HttpResponse.json(F.backlogItemResponse(), { status: 201 }))),
   http.patch('/api/backlog/:id', () => HttpResponse.json(F.backlogItemResponse())),

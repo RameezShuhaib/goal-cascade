@@ -187,8 +187,15 @@ export function horizonEmptyCopy(lens: Exclude<Horizon, 'Life'>): EmptyCopy {
  * being unplanned is a fact and not a failure. The red carry chip stays the only escalation in the product
  * (R-task-11, R-lens-11).
  */
-export function plannedNess(b: { weeklyGoals: number; thisWeek: number | null }): string {
-  if (b.weeklyGoals === 0) return 'Nothing planned yet';
+export function plannedNess(b: { weeklyGoals: number; thisWeek: number | null }, hasTasks = false): string {
+  /**
+   * ⚠ **A8 (R-goal-47, amended) — one new case, and it exists because the screen contradicts the old
+   * string.** `Nothing planned yet` above four visible month tasks is a claim about the month that the
+   * tasks directly beneath it disprove; `No weeks yet` is the same fact narrowed to what the line is
+   * actually about, which is how a month breaks into weeks. With no weeks **and** no tasks the original
+   * string is unchanged, verbatim.
+   */
+  if (b.weeklyGoals === 0) return hasTasks ? NO_WEEKS_YET : 'Nothing planned yet';
   const head = `${b.weeklyGoals} weekly goal${b.weeklyGoals === 1 ? '' : 's'}`;
   if (b.thisWeek === null) return head;
   return b.thisWeek > 0 ? `${head} · ${b.thisWeek} this week` : `${head} · nothing this week`;
@@ -250,3 +257,89 @@ export const taskDestinationNote = (week: string, month: string): string => `Lan
  * sentence, sitting beside a hardcoded copy of that sentence, is a rule with two definitions.
  */
 export const TASKS_LIVE_ON_TASK_GOALS = 'Tasks live on monthly and weekly goals.';
+
+// ---- A8: the month band, the Monthly lens's tasks, and Park ------------------
+
+/**
+ * ⚠ **R-lens-31, amended by `33-measurables-ux` §7.1 — the band's heading NAMES ITS MONTH, always.**
+ *
+ * The rule proposed the bare words `THIS MONTH`. On Wed 2 Sep the band holds **August** (a week belongs
+ * to its Monday's month, R-goal-33), and a heading that will not name the month it is showing is exactly
+ * the labelling defect R-lens-29 exists to fix one lens over — it also makes the seam unreportable, since
+ * an owner seeing `THIS MONTH` above August's work has no way to tell a bug from the Monday rule.
+ * `S.sectionLabel` renders it uppercase, so the screen reads `THIS MONTH · AUG 2026`.
+ */
+export const monthBandLabel = (month: string): string => `This month · ${month}`;
+export const monthBandName = (month: string, tasks: number): string =>
+  `This month, ${month} — ${tasks} task${tasks === 1 ? '' : 's'} whose deadline is the end of the month`;
+
+/**
+ * The band's one sentence. It, plus the band's position, is the **entire** signal that this is not this
+ * week's work — nothing in the band is tinted, dimmed, indented, shrunk or greyed, because every cheap way
+ * to say *"this is not this week"* is a way of saying *"this matters less"*, and the owner's sentence is
+ * the opposite: the deadline is the end of the month, which is a commitment and not a footnote.
+ */
+export const monthBandNote = (month: string): string => `Due by the end of ${month}, not by the end of this week.`;
+
+/**
+ * ⚠ **The August trap, closed by omission** (`33-measurables-ux` §4.2/§4.3).
+ *
+ * On 2 Sep the band is August's and August is past for planning, so **no card in the band renders
+ * `+ Task` at all** and `PERIOD_IN_PAST` is unreachable rather than handled. In its place the band's foot
+ * takes R-lens-29's idiom one lens over: name the period that is elsewhere, say what is true, and offer
+ * one tap to it. It carries no colour — a month that has ended is a fact about the calendar, not a
+ * problem with the plan.
+ */
+export const monthEndedNote = (past: string, current: string): string =>
+  `${past} has ended. New work for the month goes in ${current}.`;
+/** The destination spelled out, R-lens-29's own rule for the same idiom. The visible half is `weekElsewhereAction`. */
+export const monthLensLinkName = (month: string): string => `Go to ${month} on the Monthly lens`;
+
+/**
+ * ⚠ **R-lens-32** — and NOT `WeeklyCard`'s `Nothing on this yet.` A Monthly **goal's page** renders a task
+ * list and a backlog block one above the other (R-goal-41 as amended), and two adjacent lists both reading
+ * `Nothing on this yet.` is the one place R-backlog-30's distinction is lost in a word.
+ */
+export const NOTHING_ON_MONTH = 'Nothing on this month yet.';
+/** R-goal-47's new case. See `plannedNess`. */
+export const NO_WEEKS_YET = 'No weeks yet';
+
+/**
+ * ⚠ **A11 (`32-week-selection` §3.1) — `When this lands`, and never `Which week`.**
+ *
+ * The name has to stay true after A8 puts a **month** in the option list, and a control renamed between
+ * amendments is a control screen-reader users learn twice. It also matches the block's own verb: the note
+ * beneath it already says `Lands in …`.
+ */
+export const WHEN_THIS_LANDS = 'When this lands';
+/** The month chip's accessible name — the label alone would not say what choosing it means. */
+export const monthChipName = (month: string): string => `${month} — the whole month, no particular week`;
+/** The destination line when the month is chosen. There is no goal row: with no week there is nothing to resolve. */
+export const monthDestinationNote = (month: string): string => `Lands in ${month} — no particular week.`;
+/** The consequence of changing the week, announced because the goal row changes under the user (R-lens-13). */
+export const landsUnder = (note: string, goalTitle: string): string => `${note} Under ${goalTitle}.`;
+
+/**
+ * ⚠ **R-task-56, amended by `33-measurables-ux` §7.2 — `WHERE THIS GOES` on the task page.**
+ *
+ * The eyebrow is **the create sheet's own string, reused**, and the block sits above the three exits,
+ * separated from them by that eyebrow and a gap and by nothing else — no border, no card, no colour,
+ * because Park **is not an exit** (R-task-13 is unchanged at exactly three) and a coloured well would be
+ * the first "this group is different" surface in the product.
+ */
+export const WHERE_THIS_GOES = 'WHERE THIS GOES';
+export const monthTaskPlaceLine = (month: string): string => `In ${month} — the whole month, no particular week.`;
+export const weekTaskPlaceLine = (week: string): string => `In the week of ${week}.`;
+export const PARK_IN_A_WEEK = 'Park in a week';
+/**
+ * ⚠ The un-park button's **visible** label spells its destination — `Move to Sep 2026`, not `Move to the
+ * month` — because there is no sheet on that path to state where the work lands, and a one-tap write that
+ * does not name its destination is the defect A9 spent an amendment closing.
+ */
+export const moveToMonth = (month: string): string => `Move to ${month}`;
+export const moveToMonthName = (month: string): string => `Move to ${month} — the whole month, no particular week.`;
+export const parkedToast = (week: string): string => `Parked in the week of ${week}`;
+export const movedToMonthToast = (month: string): string => `Moved to ${month}`;
+export const PARK_IT = 'Park it';
+/** The create sheet's toast for the month path — `Added to week of 31 Aug`'s twin, one scope up. */
+export const addedToMonthToast = (month: string): string => `Added to ${month}`;

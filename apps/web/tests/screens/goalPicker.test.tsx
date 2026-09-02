@@ -219,8 +219,13 @@ describe('R-nav-31 — each mode offers exactly the legal goals', () => {
 
     // ⚠ **A9** — the sheet names the destination rather than listing the candidates, and the row is the
     // way to change it.
+    //
+    // ⚠ **A11 verdict, not a weakening** — `R-task-57` as amended makes the MONTH the default, so the
+    // `weeklyTarget` picker this test is about is reached by naming a week first. One tap; every
+    // assertion below is unchanged, including the one that `weeklyTarget` renders no horizon selector.
     expect(await within(sheet).findByText('WHERE THIS GOES')).toBeInTheDocument();
-    await user.click(within(sheet).getByRole('button', { name: /^Choose a goal: Three easy runs and one long run/ }));
+    await user.click(within(sheet).getByRole('radio', { name: 'Week of 31 Aug' }));
+    await user.click(await within(sheet).findByRole('button', { name: /^Choose a goal: Three easy runs and one long run/ }));
     const picker = await screen.findByRole('dialog', { name: 'Choose a goal' });
 
     expect(within(picker).getByRole('option', { name: /^Three easy runs and one long run/ })).toBeInTheDocument();

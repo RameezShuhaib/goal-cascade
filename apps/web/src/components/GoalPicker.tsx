@@ -3,6 +3,7 @@ import { HORIZONS, MAX_PAGE, rankGoals, type GoalView, type Horizon, type LensRe
 import { useLens } from '../api/queries';
 import { useParentOptions } from '../lens/useParentOptions';
 import { useSkin } from '../skin';
+import { ChipRadioGroup } from './ChipRadioGroup';
 import { rank } from '../utils/periodKeys';
 
 /**
@@ -583,17 +584,6 @@ export function GoalPickerList({
     setHorizon(h);
     setActive(0);
   };
-  const onHorizonKey = (e: ReactKeyboardEvent, index: number) => {
-    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-    let next = -1;
-    if (step !== 0) next = (index + step + horizons.length) % horizons.length;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = horizons.length - 1;
-    if (next < 0) return;
-    e.preventDefault();
-    pickHorizon(horizons[next]!);
-    document.getElementById(`${domId}-h-${horizons[next]}`)?.focus();
-  };
 
   const move = (to: number) => {
     if (rows.length === 0) return;
@@ -650,29 +640,26 @@ export function GoalPickerList({
        * `tests/screens/contrast.test.ts` has nothing new to check.
        */}
       {scoped && (
-        <div role="radiogroup" aria-label="Horizon" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-          {horizons.map((h, i) => {
-            const on = h === shownHorizon;
+        /*
+         * ⚠ **A11/A8 — the keyboard model is `ChipRadioGroup`'s now, and this file no longer owns a copy
+         * of it** (`32-week-selection` §7's "extract, do not duplicate" directive). A9 wrote it here; A11's
+         * `When this lands` control and A8's measure-kind chips ask for the identical thing, and *"a second
+         * copy of a keyboard model is how two controls in one sheet come to disagree about `Home`."*
+         *
+         * Nothing about this control's DOM changes: the same `role="radiogroup"` named `Horizon`, the same
+         * ids, the same `aria-label` carrying the count so "this tab is empty" is heard and not only seen.
+         */
+        <ChipRadioGroup
+          label="Horizon"
+          idPrefix={`${domId}-h`}
+          value={shownHorizon}
+          onChange={(h) => pickHorizon(h as Horizon)}
+          style={{ marginBottom: 10 }}
+          options={horizons.map((h) => {
             const count = options.filter((o) => o.horizon === h).length;
-            return (
-              <button
-                key={h}
-                id={`${domId}-h-${h}`}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                // The accessible name carries the count, so "this tab is empty" is heard and not only seen.
-                aria-label={`${h} — ${count} goal${count === 1 ? '' : 's'}`}
-                tabIndex={on ? 0 : -1}
-                onClick={() => pickHorizon(h)}
-                onKeyDown={(e) => onHorizonKey(e, i)}
-                style={S.chipBtn(on)}
-              >
-                {h}
-              </button>
-            );
+            return { value: h, label: h, name: `${h} — ${count} goal${count === 1 ? '' : 's'}` };
           })}
-        </div>
+        />
       )}
 
       {searchable && (

@@ -23,6 +23,7 @@ import {
   MeResponse,
   MoveTaskToBacklogResponse,
   PreferencesResponse,
+  RetargetTaskResponse,
   RevokeApiTokenResponse,
   TaskDetailResponse,
   TaskResponse,
@@ -47,8 +48,11 @@ import {
   type PatchLearningRequest,
   type PatchPreferencesRequest,
   type PatchTaskRequest,
+  type RecordReadingRequest,
   type ReplanGoalRequest,
   type RepeatWeekRequest,
+  type RetargetTaskRequest,
+  type SetMeasureRequest,
   type UncheckTaskRequest,
 } from '@goal-cascade/shared';
 import { recordServerNow } from '../lib/serverClock';
@@ -316,6 +320,31 @@ export class HttpApiClient {
   /** D-13 — links are addressed by their own id, never by list index. */
   removeTaskLink(id: string, linkId: string) {
     return this.request('DELETE', ENDPOINTS.taskLink(id, linkId), TaskResponse);
+  }
+
+  /**
+   * ⚠ **A8, new (R-task-56)** — Park in a week / Move to the month, as ONE call in both directions:
+   * the direction is the task's scope against the key's format, and two methods would be one operation
+   * under two names. The response carries the Weekly goal a park minted, when it minted one (R-task-48).
+   */
+  retargetTask(id: string, body: RetargetTaskRequest, key: string) {
+    return this.request('POST', ENDPOINTS.taskRetarget(id), RetargetTaskResponse, { body, idempotencyKey: key });
+  }
+  /** ⚠ **A8, new (R-measure-1)** — attach a measure, or replace the one that is there. */
+  setMeasure(id: string, body: SetMeasureRequest, key: string) {
+    return this.request('PUT', ENDPOINTS.taskMeasure(id), TaskResponse, { body, idempotencyKey: key });
+  }
+  /** Removes the measure AND every reading, in one transaction — which is why the UI confirms it. */
+  clearMeasure(id: string) {
+    return this.request('DELETE', ENDPOINTS.taskMeasure(id), TaskResponse);
+  }
+  /** ⚠ **A8, new (R-measure-3)** — exactly one of `value` or `delta`; the server stores the absolute. */
+  recordReading(id: string, body: RecordReadingRequest, key: string) {
+    return this.request('POST', ENDPOINTS.taskReadings(id), TaskResponse, { body, idempotencyKey: key });
+  }
+  /** R-measure-5/7 — one reading, by its own id, leaving no trace. */
+  deleteReading(id: string, readingId: string) {
+    return this.request('DELETE', ENDPOINTS.taskReading(id, readingId), TaskResponse);
   }
 
   // ---- backlog ------------------------------------------------------------

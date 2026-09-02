@@ -324,10 +324,58 @@ describe('Creating a goal (R-nav-32)', () => {
 });
 
 /**
- * R-task-49 — **`+ Task` from a Monthly goal.** Tasks live on weekly goals, so this is structurally two
- * creates; made literal it is the worst flow in the product. The second step is inferred, never asked.
+ * R-task-57 — **`+ Task` from a Monthly goal.** A month task on the goal you tapped, by default; and a
+ * week task under a resolved (or minted) Weekly goal when the owner names one of the month's weeks.
  */
-describe('Creating a task from a Monthly goal — the two-step, made one (R-task-48/49)', () => {
+/**
+ * ⚠ **A8/A11 — the THREE tests below are restated, not weakened, and here is the verdict for all three.**
+ *
+ * `R-task-49` is **retired in full by A8** (`R-task-51`, `R-task-57`): a Monthly goal holds the task
+ * itself, so there is nothing to infer. `R-task-57` as amended by A11 (`32-week-selection` §8.3, and the
+ * owner's own ruling on its §9.2) makes **the month the first option of `When this lands` and the
+ * default**, so the zero-decision path is now the zero-inference one: one row, on the goal you tapped, in
+ * the month you are looking at.
+ *
+ * The inference each of these covers is therefore no longer the DEFAULT — it is what happens **after the
+ * owner names one of the month's weeks**, which is `R-task-48`'s surviving flow (one of the three that
+ * still names a week). So each test gains one tap on the week chip and **keeps every assertion it had**,
+ * plus a new one for the default it displaced. Nothing is deleted and nothing is loosened.
+ */
+describe('Creating a task from a Monthly goal — the month by default, a week by choice (R-task-57/48)', () => {
+  /**
+   * ⚠ **A8/A11 — the default, which is the state the three tests below then narrow AWAY from.**
+   *
+   * `+ Task` on a Monthly goal creates **one row** on the goal that was tapped: no picker, no resolution,
+   * no implicitly created Weekly goal, and — because the task lands on the very card that was tapped —
+   * **the lens does not move** (R-task-57). `newWeeklyGoal` can never fire as a side effect of accepting
+   * this default, which is the defect R-rm-6 deletes.
+   */
+  it('R-task-57: the MONTH is the default, and it creates one row on the goal you tapped', async () => {
+    const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
+    await screen.findByText('Lift three times a week');
+    await user.click(screen.getAllByRole('button', { name: '+ Task' })[0]!);
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
+
+    // The month is the FIRST option and it is checked; the week is offered beside it, never instead of it.
+    const chips = within(sheet).getByRole('radiogroup', { name: 'When this lands' });
+    expect(within(chips).getByRole('radio', { name: 'Aug 2026 — the whole month, no particular week' })).toBeChecked();
+    expect(within(sheet).getByText('Lands in Aug 2026 — no particular week.')).toBeInTheDocument();
+    // With no week there is nothing to resolve: no goal row, and no sentence about a goal being created.
+    expect(within(sheet).queryByRole('button', { name: /^Choose a goal/ })).not.toBeInTheDocument();
+    expect(within(sheet).queryByText(/This starts a weekly goal/)).not.toBeInTheDocument();
+
+    await user.type(within(sheet).getByLabelText('What needs doing?'), 'Book the gym induction');
+    await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
+
+    await waitFor(async () => {
+      const body = await bodyOf(lastRequest('POST', '/api/tasks'));
+      expect(body).toMatchObject({ goalId: F.M, period: '2026-08', title: 'Book the gym induction' });
+      expect(body).not.toHaveProperty('newWeeklyGoal');
+    });
+    // R-task-57 — the lens does NOT move: the row is on the card that was tapped.
+    expect(screen.getByRole('tab', { name: 'Monthly', selected: true })).toBeInTheDocument();
+  });
+
   it('with NO weekly goal in the target week, one is created — and the sheet says so before you save', async () => {
     server.use(
       http.get('/api/goals', ({ request }) => {
@@ -342,10 +390,14 @@ describe('Creating a task from a Monthly goal — the two-step, made one (R-task
     await user.click(screen.getAllByRole('button', { name: '+ Task' })[0]!);
 
     const sheet = await screen.findByRole('dialog', { name: 'New task' });
-    // Nothing may be created invisibly (R-task-49).
-    expect(
-      await within(sheet).findByText('This starts a weekly goal "Lift three times a week" for the week of 31 Aug. You can rename it after.'),
-    ).toBeInTheDocument();
+    // ⚠ **A11** — the week is now an explicit narrowing. One tap, and everything below is unchanged.
+    await user.click(within(sheet).getByRole('radio', { name: 'Week of 31 Aug' }));
+    // Nothing may be created invisibly (R-task-48/49's surviving half) — and at zero candidates the note
+    // is BOTH rendered and announced, which is why it appears twice: once on screen, once in the sheet's
+    // `role="status"`. It already names the week, so it is announced alone rather than paired with the
+    // destination line, which would say `31 Aug` three times in one utterance.
+    const note = await within(sheet).findAllByText('This starts a weekly goal "Lift three times a week" for the week of 31 Aug. You can rename it after.');
+    expect(note).toHaveLength(2);
     // ⚠ **A9** — and the week is named on the ZERO-candidate row too, with the month it belongs to.
     expect(within(sheet).getByText('WHERE THIS GOES')).toBeInTheDocument();
     expect(within(sheet).getByText('Lands in the week of 31 Aug · Aug 2026.')).toBeInTheDocument();
@@ -364,8 +416,10 @@ describe('Creating a task from a Monthly goal — the two-step, made one (R-task
     await waitFor(async () => {
       const body = await bodyOf(lastRequest('POST', '/api/tasks'));
       // R-task-48's wire: exactly one of `goalId` or `newWeeklyGoal`, and NO week field of any kind.
-      expect(body).toMatchObject({ newWeeklyGoal: { parentId: F.M, title: 'Lift three times a week' }, title: 'Tuesday easy 6k' });
+      expect(body).toMatchObject({ newWeeklyGoal: { parentId: F.M, title: 'Lift three times a week' }, period: F.THIS_MONDAY, title: 'Tuesday easy 6k' });
       expect(body).not.toHaveProperty('goalId');
+      // ⚠ **A8 (R-task-52)** — `period` is a canonical key and the format is the discriminator. There is
+      // still no `week` offset, at either scope.
       expect(body).not.toHaveProperty('week');
     });
 
@@ -393,6 +447,8 @@ describe('Creating a task from a Monthly goal — the two-step, made one (R-task
     await user.click(screen.getAllByRole('button', { name: '+ Task' })[0]!);
 
     const sheet = await screen.findByRole('dialog', { name: 'New task' });
+    // ⚠ **A11** — the week is chosen, not defaulted to. The rest of this test is unchanged.
+    await user.click(within(sheet).getByRole('radio', { name: 'Week of 31 Aug' }));
     await waitFor(() => expect(within(sheet).queryByText(/This starts a weekly goal/)).not.toBeInTheDocument());
 
     // The destination, before saving: the weekly goal, the week, and the month that week belongs to.
@@ -412,7 +468,7 @@ describe('Creating a task from a Monthly goal — the two-step, made one (R-task
 
     await waitFor(async () => {
       const body = await bodyOf(lastRequest('POST', '/api/tasks'));
-      expect(body).toMatchObject({ goalId: F.W, title: 'Tuesday easy 6k' });
+      expect(body).toMatchObject({ goalId: F.W, period: F.THIS_MONDAY, title: 'Tuesday easy 6k' });
       expect(body).not.toHaveProperty('newWeeklyGoal');
     });
   });
@@ -438,15 +494,17 @@ describe('Creating a task from a Monthly goal — the two-step, made one (R-task
     await user.click(screen.getAllByRole('button', { name: '+ Task' })[0]!);
 
     const sheet = await screen.findByRole('dialog', { name: 'New task' });
-    // ⚠ **A9** — the same block, the same two facts, at a different candidate count. One rule, three rows.
+    // ⚠ **A11** — one tap on the week chip; the same block, the same two facts, at every candidate count.
     expect(await within(sheet).findByText('WHERE THIS GOES')).toBeInTheDocument();
-    expect(within(sheet).getByRole('button', { name: /^Choose a goal: Three easy runs and one long run/ })).toBeInTheDocument();
+    await user.click(within(sheet).getByRole('radio', { name: 'Week of 31 Aug' }));
+    // `find`, not `get`: the chosen week's candidates are a read, so the row it fills arrives a tick later.
+    expect(await within(sheet).findByRole('button', { name: /^Choose a goal: Three easy runs and one long run/ })).toBeInTheDocument();
     expect(within(sheet).getByText('Lands in the week of 31 Aug · Aug 2026.')).toBeInTheDocument();
     await user.type(within(sheet).getByLabelText('What needs doing?'), 'Tuesday easy 6k');
     await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
 
     // Accepting the preselection costs zero taps, and it is the FIRST, never an arbitrary one.
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/api/tasks'))).toMatchObject({ goalId: F.W }));
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/api/tasks'))).toMatchObject({ goalId: F.W, period: F.THIS_MONDAY }));
   });
 
   it('R-task-3: a title and no done-condition is enough, and a blank title cannot be saved', async () => {

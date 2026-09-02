@@ -1,14 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
+import { labelOf, type TaskDetailView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useAddTaskLink, useCompleteTask, useGoal, usePatchTask, useRemoveTaskLink, useTask, useUncheckTask } from '../api/queries';
+import { useAddTaskLink, useCompleteTask, useGoal, usePatchTask, useRemoveTaskLink, useRetargetTask, useTask, useUncheckTask } from '../api/queries';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { TopActions } from '../components/TopActions';
 import { FieldError, LoadError, commandError } from '../components/states';
 import { TaskPageSkeleton, useSkeleton } from '../components/Skeleton';
 import { CarryLabel } from '../components/TaskRow';
-import { instantLabel, periodOfLabel, weekOfLabel } from '../utils/dates';
+import { MeasureBlock } from '../components/Measure';
+import {
+  monthTaskPlaceLine,
+  movedToMonthToast,
+  moveToMonth,
+  moveToMonthName,
+  PARK_IN_A_WEEK,
+  weekTaskPlaceLine,
+  WHERE_THIS_GOES,
+} from '../lens/copy';
+import { instantLabel, periodOfLabel, shortDate, weekOfLabel } from '../utils/dates';
 import { goalPath, LENS_SEGMENT, lensPath, lensPathForScope } from '../routes';
 import { hostOf } from '../utils/tree';
 
@@ -158,6 +169,13 @@ export function TaskPage() {
 
   const set = (p: Partial<typeof fields>) => setDraft({ ...fields, ...p });
   const lifeRoot = goalQ.data?.ancestors[0];
+  /**
+   * ⚠ **R-task-56 — the un-park destination, from an EXISTING read.** `GET /goals/:id` already carries
+   * `ancestors` for this page's own context line, so naming the month costs no wire change, no new field
+   * and no `canUnpark` flag. A Weekly goal with no Monthly ancestor (R-goal-32 permits it) has no legal
+   * target — `HORIZON_CONFLICT` — and the control is **withdrawn, not disabled** (D-5).
+   */
+  const monthlyAncestor = [...(goalQ.data?.ancestors ?? [])].reverse().find((a) => a.horizon === 'Monthly');
   const weeklyGoal = goalQ.data?.goal;
   const age = task.carryAge;
 
@@ -359,6 +377,22 @@ export function TaskPage() {
       </div>
       <FieldError>{commandError(addLink.error) ?? commandError(removeLink.error)}</FieldError>
 
+      {/*
+       * ⚠ **A8 (R-measure-1…9) — the measure.** Between `LINKS` and `WHERE THIS GOES`, and deliberately
+       * **far from the checkbox at the top**: the two share no control and no row, because completion and
+       * the number are independent in both directions (R-measure-6).
+       */}
+      <MeasureBlock task={task} />
+
+      {/*
+       * ⚠ **A8 (R-task-56) — `WHERE THIS GOES`: Park in a week, and back again.**
+       *
+       * It sits ABOVE the three exits, separated from them by its own eyebrow and a gap and **by nothing
+       * else** — no border, no card, no colour. Park is not an exit (R-task-13 is unchanged at exactly
+       * three) and a coloured well would be the first "this group is different" surface in the product.
+       */}
+      <WhereThisGoes task={task} monthlyAncestor={monthlyAncestor ?? null} />
+
       {/* R-task-17 — the other two exits are withdrawn once the task is done or has already left. */}
       {task.status === 'open' && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 16 }}>
@@ -426,4 +460,67 @@ const clampedLink = {
 function mondayInPath(path: string | null): string | null {
   const m = path ? new RegExp(`^/${LENS_SEGMENT.Weekly}/(\\d{4}-\\d{2}-\\d{2})$`).exec(path) : null;
   return m ? m[1]! : null;
+}
+
+/**
+ * ⚠ **A8 (R-task-56, amended by `33-measurables-ux` §7.2) — where this task lives, and how to move it.**
+ *
+ * | state | line | control |
+ * |---|---|---|
+ * | a month task | `In Aug 2026 — the whole month, no particular week.` | `Park in a week` → the sheet |
+ * | a week task with a Monthly ancestor | `In the week of 31 Aug.` | `Move to Sep 2026` — one tap, no sheet |
+ * | a week task with none | the line only | — |
+ *
+ * **The asymmetry is inherent to the operation, not a gap in the design.** Park takes a sheet because a
+ * week is a choice; un-park takes none because there is nothing to choose on the way back — and it takes
+ * no confirm either, because it writes a logged, named, reversible event and loses nothing: every reading
+ * survives (R-measure-5).
+ *
+ * The un-park button's **visible** label spells its destination (`Move to Sep 2026`, never `Move to the
+ * month`), because there is no sheet on that path to state where the work lands. Its accessible name adds
+ * only the clause a month is not a week.
+ *
+ * Both are withdrawn — **never disabled, and with no sentence apologising for the absence** (D-5) — when
+ * the task is not open, on R-task-17's existing rule: a task that has left a period cannot be moved
+ * between periods.
+ */
+function WhereThisGoes({ task, monthlyAncestor }: { task: TaskDetailView; monthlyAncestor: { periodKey: string } | null }) {
+  const S = useSkin();
+  const ui = useUI();
+  const retarget = useRetargetTask();
+  const isMonth = task.scope === 'Monthly';
+  const monthLabel = monthlyAncestor ? labelOf('Monthly', monthlyAncestor.periodKey) : '';
+
+  const line = isMonth
+    ? monthTaskPlaceLine(labelOf('Monthly', task.originPeriodKey))
+    : weekTaskPlaceLine(shortDate(task.originPeriodKey));
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ ...S.fieldLabel, marginBottom: 5 }}>{WHERE_THIS_GOES}</div>
+      <div style={{ fontSize: 13, color: S.body }}>{line}</div>
+      {task.status === 'open' && isMonth && (
+        <button type="button" style={{ ...S.menuBtn, marginTop: 10 }} onClick={() => ui.openSheet({ kind: 'retarget', taskId: task.id })}>
+          {PARK_IN_A_WEEK}
+        </button>
+      )}
+      {task.status === 'open' && !isMonth && monthlyAncestor && (
+        <button
+          type="button"
+          style={{ ...S.menuBtn, marginTop: 10 }}
+          aria-label={moveToMonthName(monthLabel)}
+          disabled={retarget.isPending}
+          onClick={() =>
+            retarget.mutate(
+              { id: task.id, period: monthlyAncestor.periodKey, version: task.version },
+              { onSuccess: () => ui.showToast(movedToMonthToast(monthLabel)) },
+            )
+          }
+        >
+          {moveToMonth(monthLabel)}
+        </button>
+      )}
+      <FieldError>{commandError(retarget.error)}</FieldError>
+    </div>
+  );
 }

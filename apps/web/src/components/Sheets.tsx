@@ -1,7 +1,7 @@
 import { useUI } from '../context/UIContext';
 import { BacklogDrawer, PullSheet, TaskCreateSheet } from './BacklogSheets';
 import { DeleteGoalSheet, GoalFormSheet, MoveGoalSheet, ReplanGoalSheet } from './GoalModals';
-import { ConfirmTaskExitSheet } from './TaskSheets';
+import { ConfirmTaskExitSheet, RetargetTaskSheet } from './TaskSheets';
 
 /**
  * One place decides which overlay is showing, from `UIContext`'s discriminated `Sheet` union.
@@ -29,6 +29,8 @@ export function Sheets() {
         <TaskCreateSheet
           goalId={sheet.goalId}
           newWeekly={sheet.newWeekly}
+          monthGoal={sheet.monthGoal}
+          monthKey={sheet.monthKey}
           weekStart={sheet.weekStart}
           title={sheet.title}
           fromBacklogId={sheet.fromBacklogId}
@@ -57,7 +59,10 @@ export function Sheets() {
     case 'moveGoal':
       return <MoveGoalSheet goalId={sheet.goalId} lifeGoalsOnly={sheet.lifeGoalsOnly} />;
     case 'pull':
-      return <PullSheet goalId={sheet.goalId} horizon={sheet.horizon} weekStart={sheet.weekStart} />;
+      return <PullSheet goalId={sheet.goalId} horizon={sheet.horizon} monthKey={sheet.monthKey} />;
+    /** ⚠ **A8 (R-task-56)** — Park in a week. Un-park has no sheet: one tap, no confirm, no choice. */
+    case 'retarget':
+      return <RetargetTaskSheet taskId={sheet.taskId} />;
     case 'uncheck':
       return null;
   }

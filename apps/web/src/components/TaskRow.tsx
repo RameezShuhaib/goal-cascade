@@ -8,6 +8,7 @@ import { instantLabel, monthSinceLabel, shortDate, weekLabel } from '../utils/da
 import { taskPath } from '../routes';
 import { useWeekClock } from '../lib/weekClock';
 import { FieldError, commandError } from './states';
+import { MeasureLine } from './Measure';
 
 /**
  * One task row: the checkbox, the body, the carry label, and the skippable uncheck follow-up.
@@ -26,7 +27,37 @@ import { FieldError, commandError } from './states';
  * these values across tasks is silently wrong now; `tests/screens/weeklyLens.test.tsx` asserts the
  * negative case directly, because nothing that renders changed and only an assertion can hold it.
  */
-export function TaskRow({ t, week }: { t: TaskView; week: number }) {
+export function TaskRow({
+  t,
+  week,
+  period,
+  suppressCarry = false,
+}: {
+  t: TaskView;
+  week: number;
+  /**
+   * ⚠ **A8 (R-task-55) — the period a completion here belongs to, when the CALLER knows it.**
+   *
+   * A completion names a canonical key at the task's own scope. For a week task that is the viewed
+   * Monday, which `week` already carries. For a **month** task the caller knows better than the clock
+   * does: the month band completes into **its own month** (`monthPeriodKey` — `2026-08` on 2 Sep), and a
+   * Monthly card completes into the month on screen. Falling back to the current month would tick a task
+   * into September from August's band, and the row would vanish off the screen it was ticked on.
+   */
+  period?: string;
+  /**
+   * ⚠ **R-lens-31 / S-lens-31-2 — the month band suppresses the carry label, and it does it HERE.**
+   *
+   * A month task is never late inside a week: its deadline is the end of the month, and the week has no
+   * standing to say otherwise. The suppression is a flag **at the call site** and is deliberately not
+   * derived from `scope`, from `carryUnit` or from the lens inside `CarryLabel` — the same task in the
+   * Monthly lens must still show its chip, and a rule enforced inside the component it applies to is a
+   * rule that cannot be asserted from outside it. It renders **nothing at all**: no chip, no grey line,
+   * no badge, no `aria-hidden` element and no empty node, so a screen reader hears exactly what a
+   * sighted user sees, which is nothing.
+   */
+  suppressCarry?: boolean;
+}) {
   const S = useSkin();
   const ui = useUI();
   const navigate = useNavigate();
@@ -50,7 +81,7 @@ export function TaskRow({ t, week }: { t: TaskView; week: number }) {
     } else {
       // R-task-14 — the completion belongs to the week being VIEWED, not to "now": past weeks stay fully
       // interactive. R-task-44's future bound is the server's, and `completable` is how the row knows.
-      complete.mutate({ id: t.id, period: clock.periodFor(t.scope, week), version: t.version });
+      complete.mutate({ id: t.id, period: period ?? clock.periodFor(t.scope, week), version: t.version });
     }
   };
 
@@ -92,7 +123,16 @@ export function TaskRow({ t, week }: { t: TaskView; week: number }) {
           </div>
           {t.cond && <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 2 }}>Done when: {t.cond}</div>}
           {t.done && t.doneAt && <div style={{ fontSize: 12, color: S.T.mut, marginTop: 2 }}>Done {instantLabel(t.doneAt)}</div>}
-          <CarryLabel task={t} />
+          {/*
+           * ⚠ **A8 (R-measure-1/4)** — the numbers, then the bar, **inside the title button** so they are
+           * part of the row's accessible name and add no new stop. `Q-D` is honoured: a number invisible
+           * from the lens is a number the owner asked for and did not get.
+           *
+           * It sits **before** `CarryLabel`, because the carry chip is the product's one escalation and
+           * the last thing read should be the only thing that shouts.
+           */}
+          {t.measure && <MeasureLine m={t.measure} done={t.done} size="row" />}
+          {!suppressCarry && <CarryLabel task={t} />}
         </button>
       </div>
       {promptOpen && <UncheckPrompt task={t} />}

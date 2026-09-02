@@ -4,6 +4,8 @@ import {
   currentPeriodKey,
   firstDayOf,
   HORIZONS,
+  isPastPeriod,
+  labelOf,
   stepPeriod,
   zoomTo,
   type GoalView,
@@ -25,11 +27,16 @@ import { useCalendarPeriod, type CalendarPeriod } from './useCalendarPeriod';
 import { useNeighbourPrefetch } from './useNeighbourPrefetch';
 import { LensRow, OffNowRow, WeekElsewhereRow } from './LensRow';
 import { LENS_PANEL_ID, LensTabs, lensTabId } from './LensTabs';
-import { CarriedCard, LifeCard, MonthlyCard, PlainCard, WeeklyCard, type LifeRef } from './cards';
+import { CarriedCard, LifeCard, MonthBandCard, MonthlyCard, PlainCard, WeeklyCard, type LifeRef } from './cards';
 import {
   CREATE_LABEL,
   emptyCopy,
   horizonEmptyCopy,
+  monthBandLabel,
+  monthBandName,
+  monthBandNote,
+  monthEndedNote,
+  monthLensLinkName,
   offNowBadge,
   periodTitle,
   weekElsewhereAction,
@@ -90,6 +97,12 @@ interface LensData {
   items: GoalView[];
   carried: GoalView[];
   tasks: TaskView[];
+  /**
+   * ⚠ **A8, new (R-lens-31)** — the month band's tasks and the month they belong to. **Weekly lens only**;
+   * empty and `null` everywhere else, including the Monthly lens, where the month's tasks are `tasks`.
+   */
+  monthTasks: TaskView[];
+  monthPeriodKey: string | null;
   /** R-lens-24 — has this horizon ever held a goal, and does the account have Life goals at all? */
   hasAnyAtHorizon: boolean;
   hasLifeGoals: boolean;
@@ -510,8 +523,14 @@ function Body({
    * same lens guard the band does.
    */
   const showCarried = lens === 'Weekly' && data.carried.length > 0;
+  /**
+   * ⚠ **R-lens-31 — the band renders when `lens === 'Weekly'` and `monthTasks` is non-empty. Nothing else
+   * gates it**, including a week with no plan and nothing carrying: a month whose work is still open is
+   * not an empty week, and the empty state would otherwise swallow the one section that has content.
+   */
+  const showMonthBand = lens === 'Weekly' && data.monthTasks.length > 0 && data.monthPeriodKey !== null;
 
-  if (data.items.length === 0 && data.carried.length === 0) {
+  if (data.items.length === 0 && data.carried.length === 0 && !showMonthBand) {
     /**
      * R-lens-24 — **three empty states, not two.** *"`Q3 2026` is unclaimed"* means *this period is
      * empty*; *"Nothing quarterly yet"* means *you have never used this horizon*. They cannot both be
@@ -571,6 +590,11 @@ function Body({
           Nothing planned for this week — the work below is still carrying.
         </div>
       )}
+      {/*
+       * ⚠ **A8 (R-lens-31) — the month band, and it is LAST.** Below this week's plan and below the
+       * carried band, because the week's own plan is what the week is for.
+       */}
+      {showMonthBand && <MonthBand tasks={data.monthTasks} monthPeriodKey={data.monthPeriodKey!} />}
     </div>
   );
 }
@@ -675,7 +699,8 @@ function Item({
   life: LifeRef | null;
 }) {
   if (lens === 'Weekly') return <WeeklyCard goal={goal} tasks={tasks} week={weekOffset} canCreate={canCreate} life={life} />;
-  if (lens === 'Monthly') return <MonthlyCard goal={goal} canCreate={canCreate} life={life} />;
+  // ⚠ **A8 (R-lens-32)** — `tasks` on the Monthly lens is the MONTH's tasks, and the card nests them.
+  if (lens === 'Monthly') return <MonthlyCard goal={goal} tasks={tasks} canCreate={canCreate} life={life} />;
   return <PlainCard goal={goal} life={life} />;
 }
 
@@ -724,6 +749,124 @@ function CarriedBand({
             <CarriedCard key={g.id} goal={g} tasks={tasks.filter((t) => t.goalId === g.id)} week={weekOffset} life={lifeOf(g)} />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ⚠ **A8 (R-lens-31) — THE MONTH BAND.** The Weekly lens's third section: the month tasks of the month
+ * this week belongs to, grouped by their Monthly goal, **behind its own hairline and its own header**.
+ *
+ * ── The heading names its month, always (`33-measurables-ux` §7.1) ────────────
+ * `THIS MONTH · AUG 2026`, never the bare words. On Wed 2 Sep the band holds **August** (R-goal-33's
+ * Monday rule), and a heading that will not name the month it is showing is the labelling defect
+ * R-lens-29 exists to fix one lens over — it also makes the seam unreportable, because an owner who sees
+ * `THIS MONTH` above August's work cannot tell a bug from the rule.
+ *
+ * ── The August trap, and why it is closed by OMISSION (§4.2) ──────────────────
+ * `+ Task` renders **iff the band's month is not past**, which is the product's existing rule
+ * (R-goal-36, R-task-41, R-task-57) applied unchanged — the same one that already withdraws every create
+ * affordance from a past week and from the carried band. On 2 Sep the band is August's, August is past
+ * for planning, and **there is no control in the band that can be tapped to create anything**.
+ *
+ * **The invariant, stated so it can be audited: the band passes its own `monthPeriodKey`.** It never
+ * passes `currentPeriodKey('Monthly', today)`, never clamps, never substitutes and never falls back.
+ * Because the control renders only when that month is not past, the two are equal wherever it renders —
+ * so there is no branch in which the band creates into a month other than the one it is showing, and
+ * `PERIOD_IN_PAST` is **unreachable rather than handled**. *A build that adds a clamp here has
+ * reintroduced A9's leak in a new place.*
+ *
+ * The tempting alternative — keep `+ Task` and quietly create into September — cannot be right in either
+ * direction: the new task either appears in August's band, which is false, or it does not, which is a
+ * create that vanishes from the screen that made it (R-task-41's rule, R-nav-19's reason, and the exact
+ * defect A9 spent an amendment closing). Labelling the button `+ Task in Sep 2026` fixes the honesty and
+ * not the vanishing.
+ *
+ * ── Where the band's GOALS come from ──────────────────────────────────────────
+ * `monthTasks` arrives with no goals: `items`, `carried`, `groups` and `parents` on a Weekly payload are
+ * all about **Weekly** goals. So the band reads the **Monthly lens for its own month** — one extra
+ * request, cached under the key the Monthly tab itself uses, so switching to that tab afterwards costs
+ * nothing. The alternative was one `GET /goals/:id` per goal in the band, which is N requests for two
+ * fields. The band waits for it rather than drawing a card with no title: it is the last section on the
+ * screen, and a half-drawn card reads as a bug in a way a section arriving a moment later does not.
+ */
+function MonthBand({ tasks, monthPeriodKey }: { tasks: TaskView[]; monthPeriodKey: string }) {
+  const S = useSkin();
+  const ui = useUI();
+  const navigate = useNavigate();
+  const clock = useWeekClock();
+  const monthly = useLens('Monthly', monthPeriodKey);
+
+  const key = `Weekly|__month|${monthPeriodKey}`;
+  const collapsed = !!ui.collapsed[key];
+  const label = labelOf('Monthly', monthPeriodKey);
+
+  /** R-goal-36 / R-task-41 / R-task-57, unchanged and applied at one scale up. */
+  const canCreate = !isPastPeriod('Monthly', monthPeriodKey, clock.today);
+  /** R-lens-30's ruling: the client's own calendar arithmetic, through `@goal-cascade/shared`. */
+  const currentMonthKey = currentPeriodKey('Monthly', clock.today);
+
+  const goals = monthly.data?.items ?? [];
+  const byId = new Map(goals.map((g) => [g.id, g]));
+  const lives = new Map(
+    (monthly.data?.groups ?? []).filter((g): g is LifeGroupView & { id: string } => g.id !== null).map((g) => [g.id, g.title]),
+  );
+  /** `monthTasks` order, grouped by goal, first appearance preserved — the server's order, kept. */
+  const order: string[] = [];
+  for (const t of tasks) if (!order.includes(t.goalId)) order.push(t.goalId);
+  const cards = order.map((id) => ({ goal: byId.get(id), tasks: tasks.filter((t) => t.goalId === id) })).filter((c) => c.goal !== undefined);
+  if (cards.length === 0) return null;
+
+  return (
+    <div data-testid="month-band" style={{ borderTop: `1px solid ${S.T.line}`, paddingTop: 12 }}>
+      <CollapsibleHeader
+        collapsed={collapsed}
+        onToggle={() => ui.toggleCollapsed(key)}
+        name={monthBandName(label, tasks.length)}
+        what="band"
+        label={monthBandLabel(label)}
+      />
+      {!collapsed && (
+        <>
+          {/*
+           * The band's one sentence. It, plus the band's position, is the ENTIRE signal that this is not
+           * this week's work: nothing below is tinted, dimmed, indented, shrunk or greyed. It is plain
+           * text and takes no focus stop, read in DOM order immediately after the header.
+           */}
+          <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 2 }}>{monthBandNote(label)}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 7 }}>
+            {cards.map(({ goal, tasks: own }) => (
+              <MonthBandCard
+                key={goal!.id}
+                goal={goal!}
+                tasks={own}
+                /* ⚠ The band's OWN month. Never `currentPeriodKey`, never a clamp. */
+                monthPeriodKey={monthPeriodKey}
+                canCreate={canCreate}
+                life={goal!.lifeRootId && lives.has(goal!.lifeRootId) ? { id: goal!.lifeRootId, title: lives.get(goal!.lifeRootId)! } : null}
+              />
+            ))}
+          </div>
+          {/*
+           * R-lens-29's shape, one lens over: name the period that is elsewhere, say what is true, and
+           * offer one tap to it. No colour and no escalation — a month that has ended is a fact about the
+           * calendar, not a problem with the plan.
+           */}
+          {!canCreate && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12.5, color: S.T.mut }}>{monthEndedNote(label, labelOf('Monthly', currentMonthKey))}</div>
+              <button
+                type="button"
+                style={S.linkBtn}
+                aria-label={monthLensLinkName(labelOf('Monthly', currentMonthKey))}
+                onClick={() => navigate(lensPath('Monthly', currentMonthKey))}
+              >
+                {weekElsewhereAction(labelOf('Monthly', currentMonthKey))}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

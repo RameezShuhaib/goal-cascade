@@ -1,14 +1,13 @@
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { taskWeekForMonth, type GoalView, type Horizon, type TaskView } from '@goal-cascade/shared';
+import type { GoalView, Horizon, TaskView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
-import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
 import { TaskRow } from '../components/TaskRow';
 import { goalPath } from '../routes';
 import { shortDate } from '../utils/dates';
 import { plural } from '../utils/tree';
-import { lifeLine, lifeLineName, NOT_UNDER_LIFE, NOT_UNDER_LIFE_NAME, plannedNess, stalePlanLine } from './copy';
+import { lifeLine, lifeLineName, NOT_UNDER_LIFE, NOT_UNDER_LIFE_NAME, NOTHING_ON_MONTH, plannedNess, stalePlanLine } from './copy';
 
 /** The Life goal an item's chain reaches, or `null` when it reaches none (R-lens-20). */
 export interface LifeRef {
@@ -240,30 +239,35 @@ export function PlainCard({ goal, life }: { goal: GoalView; life: LifeRef | null
  * The card carries **no `+ Weekly goal`** (R-task-49, Q-20 amended): a create button for the horizon below
  * on every card is a tree growing back one affordance at a time.
  */
-export function MonthlyCard({ goal, canCreate, life }: { goal: GoalView; canCreate: boolean; life: LifeRef | null }) {
+export function MonthlyCard({
+  goal,
+  tasks,
+  canCreate,
+  life,
+}: {
+  goal: GoalView;
+  /** ⚠ **A8 (R-lens-32)** — the goal's own MONTH tasks, from `LensResponse.tasks` on the Monthly lens. */
+  tasks: TaskView[];
+  canCreate: boolean;
+  life: LifeRef | null;
+}) {
+  const S = useSkin();
   const navigate = useNavigate();
-  const clock = useWeekClock();
   const b = goal.weeklyBreakdown;
   /**
-   * ⚠ **A9 (R-task-49) — the target week must be INSIDE the month this card is in.**
+   * ⚠ **A8 / A11 (R-rm-6) — `targetWeek` and its `taskWeekForMonth` import are GONE from this card.**
    *
-   * This used to call `weekForMonth`, whose first branch compares today's **calendar** month with the
-   * card's — so on Wed 2 Sep 2026 a September card resolved the week of Mon 31 Aug, a week that belongs to
-   * **August** by the product's own Monday rule (R-goal-33). The task went into a month the owner was not
-   * looking at, R-goal-47's September line went on saying `Nothing planned yet`, and the app navigated
-   * them into August. `taskWeekForMonth` compares the month of the **current week** instead, so its answer
-   * is inside `goal.periodKey` by construction: the week you are living in when this month holds it, and
-   * this month's first week when it does not.
-   *
-   * The zoom keeps the old behaviour under its own name (`zoomWeekForMonth`) — landing on the week you are
-   * living in is right for a zoom and wrong for a create, which is why they are two functions now.
-   *
-   * `clock.today` is the SERVER's clock in the owner's stored zone (R-auth-5); no Monday is derived here.
+   * A9 gave the card a clamp so `+ Task` from a Monthly goal could resolve a week inside the month it was
+   * looking at. A8 removes the question: `+ Task` on a Monthly goal creates a **month task on the goal you
+   * tapped**, and a week is an explicit narrowing the owner makes in the sheet's own `When this lands`
+   * control, seeded from `monthKey` (`32-week-selection` §4.5). The card computes no week at all, so there
+   * is no second place for the clamp to go stale.
    */
-  const targetWeek = taskWeekForMonth(goal.periodKey, clock.today);
-  const line = b ? plannedNess(b) : null;
+  const line = b ? plannedNess(b, tasks.length > 0) : null;
+  /** Zero is never rendered and never spoken — the Life card's own precedent for a card's folded counts. */
+  const nameBits = [line ? line.replace(/ · /g, ', ').toLowerCase() : null, tasks.length > 0 ? plural(tasks.length, 'task') : null].filter(Boolean);
   return (
-    <CardShell label={line ? `${goal.title}, ${line.replace(/ · /g, ', ').toLowerCase()}.` : undefined}>
+    <CardShell label={nameBits.length > 0 ? `${goal.title}, ${nameBits.join(', ')}.` : undefined}>
       <button
         type="button"
         onClick={() => navigate(goalPath(goal.id))}
@@ -276,7 +280,89 @@ export function MonthlyCard({ goal, canCreate, life }: { goal: GoalView; canCrea
       {/* The planned-ness line is text and takes no focus stop; it is folded into the card's name above. */}
       {line && <Muted>{line}</Muted>}
       <BacklogLine goal={goal} />
-      {canCreate && <LinkRow goal={goal} horizon="Monthly" weekStart={targetWeek} />}
+      {/*
+       * ⚠ **A8 (R-lens-32) — the month's tasks, nested under a hairline in exactly the place and shape
+       * `WeeklyCard` already puts a week's.** A month task and a week task are the same object drawn the
+       * same way, one lens apart: same `TaskRow`, same checkbox, same `Done when:`, same measure — and the
+       * **carry chip counted in months**, which is this lens's job and the one thing that stops a month
+       * task becoming a silent second backlog (R-task-54, R-backlog-30). It is the card's only structural
+       * addition: no new row and no new line, inside the card that already exists.
+       *
+       * `period={goal.periodKey}` — a completion here names the month **on screen** (R-task-55).
+       */}
+      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 8 }}>
+        {tasks.map((t) => (
+          <TaskRow key={t.id} t={t} week={0} period={goal.periodKey} />
+        ))}
+        {tasks.length === 0 && (
+          <div style={{ fontSize: 13, color: S.T.mut, paddingTop: 8, borderTop: `1px solid ${S.T.lineSoft}` }}>{NOTHING_ON_MONTH}</div>
+        )}
+      </div>
+      {canCreate && <LinkRow goal={goal} horizon="Monthly" monthKey={goal.periodKey} />}
+    </CardShell>
+  );
+}
+
+/**
+ * ⚠ **R-lens-31 — a card in the Weekly lens's MONTH BAND.**
+ *
+ * **Ordinary cards, ordinary `TaskRow`s, at ordinary size, weight and colour.** Nothing here is tinted,
+ * dimmed, indented, shrunk or greyed. This product states a difference in *words* and not in a colour
+ * (`nothing this week` is the same grey as `3 weekly goals`; no goal is muted anywhere, R-goal-38), and
+ * demoting the month's work into a visual footnote is the opposite of what the owner asked for: the
+ * deadline is the end of the month, which is a commitment and not an afterthought. Position, a heading
+ * that names the month, and one sentence carry the whole distinction.
+ *
+ * **The four things it does not render**, each with its reason — stated because an undocumented divergence
+ * is how the next person "fixes" it in the wrong direction:
+ *
+ *  - **`plannedNess`** — that line is about how a month breaks into weeks, and the band exists to say the
+ *    deadline is the month rather than any week in it. It would answer a question this band is refusing.
+ *  - **`BacklogLine`** — a backlog count is an invitation to pull, and the band offers no pull. Exactly
+ *    `CarriedCard`'s reason, at a different card.
+ *  - **`Pull from backlog`** — a pull is a planning decision about a goal's own deferred work, and the
+ *    goal's lens and page are where that backlog lives. The band is a week's *view* of a month, not a
+ *    planning surface for one. (`33-measurables-ux` §8.1, the owner taking the plan's recommendation.)
+ *  - **`Nothing on this month yet.`** — **unreachable.** A goal is in the band only because it holds a
+ *    month task visible in this month, so its filtered list is never empty.
+ *
+ * `+ Task` renders **iff the band's month is not past** (`canCreate`), and it sits on the **card's** foot
+ * rather than the band's, because the card is the goal: nothing is chosen, nothing is inferred, and no
+ * goal picker is needed. A band-foot create would have to ask which Monthly goal, and the only honest way
+ * to ask is a fifth `R-nav-31` mode.
+ */
+export function MonthBandCard({
+  goal,
+  tasks,
+  monthPeriodKey,
+  canCreate,
+  life,
+}: {
+  goal: GoalView;
+  tasks: TaskView[];
+  /** The band's OWN month — never the current one, never a clamp. It is what a create here passes. */
+  monthPeriodKey: string;
+  canCreate: boolean;
+  life: LifeRef | null;
+}) {
+  const navigate = useNavigate();
+  return (
+    <CardShell label={`${goal.title}, ${plural(tasks.length, 'task')}.`}>
+      <button
+        type="button"
+        onClick={() => navigate(goalPath(goal.id))}
+        style={{ width: '100%', textAlign: 'left', border: 'none', background: 'none', padding: 0, cursor: 'pointer', minWidth: 0, fontFamily: 'inherit' }}
+      >
+        <Title goal={goal} />
+      </button>
+      <LifeLine life={life} goalId={goal.id} />
+      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 8 }}>
+        {tasks.map((t) => (
+          /* ⚠ `suppressCarry` — the flag is passed HERE so a test can prove it by rendering the band. */
+          <TaskRow key={t.id} t={t} week={0} period={monthPeriodKey} suppressCarry />
+        ))}
+      </div>
+      {canCreate && <LinkRow goal={goal} horizon="Monthly" monthKey={monthPeriodKey} pull={false} />}
     </CardShell>
   );
 }
@@ -289,7 +375,22 @@ export function MonthlyCard({ goal, canCreate, life }: { goal: GoalView; canCrea
  * invisible: from a Weekly goal it attaches to that goal; from a Monthly goal the Weekly goal is resolved
  * or created for you (R-task-49).
  */
-function LinkRow({ goal, horizon, weekStart }: { goal: GoalView; horizon: Horizon; weekStart?: string }) {
+function LinkRow({
+  goal,
+  horizon,
+  monthKey,
+  pull = true,
+}: {
+  goal: GoalView;
+  horizon: Horizon;
+  /**
+   * ⚠ **A8/A11 — the MONTH, not a target week** (`32-week-selection` §4.5). The sheet seeds its own
+   * `When this lands` control from this key and owns the answer from then on; the card resolves nothing.
+   */
+  monthKey?: string;
+  /** The month band offers no pull — a pull is a planning decision, and the band is a week's view. */
+  pull?: boolean;
+}) {
   const S = useSkin();
   const ui = useUI();
   return (
@@ -300,14 +401,16 @@ function LinkRow({ goal, horizon, weekStart }: { goal: GoalView; horizon: Horizo
         onClick={() =>
           horizon === 'Weekly'
             ? ui.openSheet({ kind: 'taskCreate', goalId: goal.id, weekStart: goal.periodKey })
-            : ui.openSheet({ kind: 'taskCreate', newWeekly: { parentId: goal.id, title: goal.title }, weekStart })
+            : ui.openSheet({ kind: 'taskCreate', monthGoal: { id: goal.id, title: goal.title }, monthKey })
         }
       >
         + Task
       </button>
-      <button type="button" style={{ ...S.linkBtn, flex: 1, textAlign: 'right' }} onClick={() => ui.openSheet({ kind: 'pull', goalId: goal.id, horizon, weekStart })}>
-        Pull from backlog
-      </button>
+      {pull && (
+        <button type="button" style={{ ...S.linkBtn, flex: 1, textAlign: 'right' }} onClick={() => ui.openSheet({ kind: 'pull', goalId: goal.id, horizon, monthKey })}>
+          Pull from backlog
+        </button>
+      )}
     </div>
   );
 }
