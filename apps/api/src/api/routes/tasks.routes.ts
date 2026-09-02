@@ -108,8 +108,9 @@ export const tasksRoutes = new Hono<AppBindings>()
    *
    * `PUT` and not `PATCH`: a measure is one coherent triple plus a unit, and a partial edit that changed
    * `start` without restating `target` could silently create the `target === start` state the product
-   * refuses (`MEASURE_TARGET_EQUALS_START`). The schema refines the pair together, so it can only refuse
-   * a whole measure.
+   * refuses (`MEASURE_TARGET_EQUALS_START`). Sending the whole measure means the service always has both
+   * numbers to compare — the refusal is `TaskService.assertMeasure`'s, because a Zod refinement here
+   * would guard this route and leave the MCP surface, which declares its own schemas, unguarded.
    */
   .put(E.taskMeasure(':id'), idempotent, zParams(IdParams), zJson(SetMeasureRequest), async (c) =>
     c.json(await c.get('container').resolve(TaskService).setMeasure(ctx(c), params(c, IdParams).id, body(c, SetMeasureRequest))),

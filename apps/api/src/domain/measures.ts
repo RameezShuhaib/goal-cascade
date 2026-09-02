@@ -49,11 +49,12 @@ export const NO_MEASURE: MeasureColumns = {
  *
  *  1. **`target === null`** — the AMRAP case. No progress, no percentage, no completion criterion and no
  *     bar; just the number, its unit and its history. A first-class measurable, not a degraded one.
- *  2. **`target === start`** — refused at the edge with `MEASURE_TARGET_EQUALS_START`, and if such a row
+ *  2. **`target === start`** — refused on the way in by `TaskService.assertMeasure`, and if such a row
  *     exists anyway (a migration, a hand-edit, a bug) **no division is performed**: the field is omitted
  *     from the wire and the UI renders the numbers alone. `NaN`, `Infinity`, `0%` and `100%` are each
  *     specifically forbidden as the answer (S-measure-4-3). This is the one place a divide-by-zero can
- *     reach a screen, and a wrong number is worse than no number.
+ *     reach a screen, and a wrong number is worse than no number. **Both halves are load-bearing**: this
+ *     function is what holds when the guard is bypassed, which is the only reason it can be.
  *
  * **The raw ratio may exceed 1 and is never clamped here.** 18 leads against a target of 15 is `1.2`; the
  * row reads `18 / 15 leads`, never `120%`, and only the bar's *drawn fill* is clamped, in the client, for

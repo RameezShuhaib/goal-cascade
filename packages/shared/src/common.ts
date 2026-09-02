@@ -578,11 +578,11 @@ export const TaskEventView = z.object({
  * when:
  *  1. there is no `target` — the AMRAP case, a first-class tracked measurement with no completion
  *     criterion, no percentage and no bar (R-measure-4);
- *  2. `target === start` — refused at the edge with `MEASURE_TARGET_EQUALS_START`, and if such a row
- *     exists anyway (a migration, a hand-edit) the field is **omitted from the wire** rather than
- *     computed. `NaN`, `Infinity`, `0%` and `100%` are each specifically forbidden as the answer: this is
- *     the one place a divide-by-zero can reach a screen, and a wrong number is worse than no number
- *     (S-measure-4-3).
+ *  2. `target === start` — refused on the way in by `TaskService.assertMeasure` with
+ *     `MEASURE_TARGET_EQUALS_START`, and if such a row exists anyway (a migration, a hand-edit) the field
+ *     is **omitted from the wire** rather than computed. `NaN`, `Infinity`, `0%` and `100%` are each
+ *     specifically forbidden as the answer: this is the one place a divide-by-zero can reach a screen,
+ *     and a wrong number is worse than no number (S-measure-4-3).
  *
  * **The raw ratio may exceed 1 and is never clamped here.** 18 leads against a target of 15 is `1.2` and
  * renders as `18 / 15 leads` — never `120%`, never a bar drawn past its own end. Only the bar's *drawn

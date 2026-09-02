@@ -6,6 +6,7 @@ import { useCompleteTask, usePatchTask, useUncheckTask } from '../api/queries';
 import { useSkin } from '../skin';
 import { instantLabel, monthSinceLabel, shortDate, weekLabel } from '../utils/dates';
 import { taskPath } from '../routes';
+import { useWeekClock } from '../lib/weekClock';
 import { FieldError, commandError } from './states';
 
 /**
@@ -33,6 +34,9 @@ export function TaskRow({ t, week }: { t: TaskView; week: number }) {
   const from = useLocation().pathname;
   const complete = useCompleteTask();
   const uncheck = useUncheckTask();
+  // ⚠ **A8 (R-task-55)** — a completion names a period at the TASK'S scope; `week` is only right for a
+  // week task, and a month task reaches this row from a Monthly goal's page and from the month band.
+  const clock = useWeekClock();
 
 
   const toggle = () => {
@@ -46,7 +50,7 @@ export function TaskRow({ t, week }: { t: TaskView; week: number }) {
     } else {
       // R-task-14 — the completion belongs to the week being VIEWED, not to "now": past weeks stay fully
       // interactive. R-task-44's future bound is the server's, and `completable` is how the row knows.
-      complete.mutate({ id: t.id, week, version: t.version });
+      complete.mutate({ id: t.id, period: clock.periodFor(t.scope, week), version: t.version });
     }
   };
 

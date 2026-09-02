@@ -9,7 +9,7 @@ import { FieldError, LoadError, commandError } from '../components/states';
 import { TaskPageSkeleton, useSkeleton } from '../components/Skeleton';
 import { CarryLabel } from '../components/TaskRow';
 import { instantLabel, periodOfLabel, weekOfLabel } from '../utils/dates';
-import { goalPath, LENS_SEGMENT, lensPath } from '../routes';
+import { goalPath, LENS_SEGMENT, lensPath, lensPathForScope } from '../routes';
 import { hostOf } from '../utils/tree';
 
 /**
@@ -62,7 +62,8 @@ export function TaskPage() {
     if (task) headingRef.current?.focus();
   }, [task?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const backTo = from ?? lensPath('Weekly', task?.originPeriodKey);
+  // ⚠ **A8 (R-task-52)** — the destination is the task's OWN lens, so it agrees with `backLabel` below.
+  const backTo = from ?? (task ? lensPathForScope(task.scope, task.originPeriodKey) : lensPath('Weekly'));
   /**
    * ⚠ **R-nav-30 P3** — this is a **client-side** fact whenever the page was reached from a lens: `fromWeek`
    * comes out of `location.state.from`, so the control names where you came from before any read starts.
@@ -192,7 +193,7 @@ export function TaskPage() {
     // R-task-50 — completing here returns to the lens with the toast, because the reason the page was
     // opened is now done.
     complete.mutate(
-      { id: task.id, week, version: task.version },
+      { id: task.id, period: clock.periodFor(task.scope, week), version: task.version },
       {
         onSuccess: () => {
           ui.showToast('Done');

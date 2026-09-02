@@ -28,7 +28,6 @@ import { HORIZONS } from '../../domain/enums';
 import { DomainError, notFound } from '../../domain/errors';
 import {
   ancestorsIn,
-  childrenIn,
   indexTree,
   isLifeHorizon,
   lifeRootIn,
@@ -43,7 +42,6 @@ import {
   isPeriodKeyFor,
   labelOf,
   lastMondayIn,
-  offsetOf,
   periodKeyOf,
   periodViewOf,
   replanPeriods,
@@ -70,7 +68,7 @@ import type { GuardedWrite } from '../ports/statement';
 import { GuardedBatch } from './guarded-batch';
 import { ActivityLog } from './activity-log';
 import { newestFirst } from './backlog.service';
-import { backlogLabelsOf, currentPeriodOf, toBacklogItemView, toTaskView, weekView } from './views';
+import { backlogLabelsOf, currentPeriodOf, toBacklogItemView, toTaskView } from './views';
 
 /**
  * Goals, and the five lenses (R-lens-1 … R-lens-27).

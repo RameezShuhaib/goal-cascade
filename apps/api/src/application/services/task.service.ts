@@ -24,7 +24,6 @@ import {
   type TaskDetailView,
   type TaskResponse,
   type TasksResponse,
-  type TaskView,
 } from '@goal-cascade/shared';
 import { inject, injectable } from 'tsyringe';
 import type { BacklogItem, BacklogLink, Goal, Reading, Task, TaskLink } from '../../domain/entities';
@@ -32,7 +31,7 @@ import { DomainError, notFound } from '../../domain/errors';
 import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
 import { FIRST_SORT_KEY, topKey } from '../../domain/sort-keys';
 
-import { dateInTimezone, isPastPeriod, isPeriodKeyFor, labelOf, periodKeyOf } from '@goal-cascade/shared';
+import { dateInTimezone, isPastPeriod, isPeriodKeyFor } from '@goal-cascade/shared';
 import { NO_MEASURE } from '../../domain/measures';
 import type { RequestContext } from '../context';
 import {
@@ -357,7 +356,7 @@ export class TaskService {
    * against the resolved week. A task under a FUTURE Weekly goal cannot be completed at all until that
    * week arrives, because no week satisfies both bounds (S-task-44-1).
    */
-  async complete(ctx: RequestContext, id: string, input: CompleteTaskRequest): Promise<TaskResponse> {
+  async complete(ctx: RequestContext, id: string, input: { period?: string; version?: number }): Promise<TaskResponse> {
     const task = await this.load(ctx, id);
     this.assertNotExited(task, 'complete');
     if (task.status === 'done') {
@@ -423,7 +422,11 @@ export class TaskService {
    * (S-backlog-29-2). This is the one cost of R-goal-32's level-skipping, it is rare, and refusing beats
    * inventing a home.
    */
-  async moveToBacklog(ctx: RequestContext, id: string, input: MoveTaskToBacklogRequest): Promise<MoveTaskToBacklogResponse> {
+  async moveToBacklog(
+    ctx: RequestContext,
+    id: string,
+    input: { period?: string; reason?: string; version?: number },
+  ): Promise<MoveTaskToBacklogResponse> {
     const task = await this.load(ctx, id);
     this.assertOpenForExit(task);
     // R-task-36 — the week may be a future one: changing your mind about next week is not a fourth exit.
@@ -639,9 +642,13 @@ export class TaskService {
      * ⚠ **R-measure-3 — `currentFrom`, not `readings.at(-1)`.**
      *
      * "The latest surviving reading" is `(at desc, id desc)`, and there is one spelling of that rule.
-     * `.at(-1)` was a second one that agrees with it only by coincidence of `listByTask`'s `ORDER BY`;
-     * a **back-dated** reading is where they come apart, and an edit that touched nothing but the unit
-     * would then silently adopt it as the current value.
+     *
+     * **This is de-duplication, not a bug fix, and it is worth being exact about which.** `.at(-1)` was a
+     * SECOND spelling that happens to be correct: `D1ReadingRepo.listByTask` orders `asc(at), asc(id)`,
+     * so the last element IS the max by `(at, id)` for every input, back-dated readings included. What it
+     * was not is *robust* — it is correct only for as long as that `ORDER BY` stays exactly what it is,
+     * and nothing in the repo says the reading list's order is load-bearing for anything but the
+     * sparkline. `currentFrom` states the rule instead of depending on it.
      */
     const readings = await this.readings.listByTask(ctx.userId, task.id);
     const patch: Partial<Task> = {
@@ -1147,7 +1154,25 @@ export class TaskService {
    * `period <= currentPeriod` for **complete** only (R-task-44) — you cannot finish work in a period that
    * has not happened — while the other two exits work on future-dated work (R-task-36).
    */
-  private assertPeriodFor(ctx: RequestContext, task: Task, period: string, opts: { allowFuture: boolean }): string {
+  private assertPeriodFor(
+    ctx: RequestContext,
+    task: Task,
+    requested: string | undefined,
+    opts: { allowFuture: boolean },
+  ): string {
+    /**
+     * ⚠ **A8 — the default is resolved HERE, where the task is already in hand.**
+     *
+     * `/api/*` always names a period (`CompleteTaskRequest.period` is required — R-task-55 says the client
+     * names the period it is standing in, and only the client knows which surface it is on). A caller
+     * that has no surface — an MCP agent saying "tick this off" — means the current period **at the
+     * task's own scope**, and that needs the task's `scope`.
+     *
+     * It used to be resolved in the MCP layer, which had to fetch the whole task first: a second D1 read
+     * plus `ensureCarried`'s lazy write, on every `complete_task` that omitted `period`, to learn one
+     * enum. This method is downstream of `load()`, so here it is free.
+     */
+    const period = requested ?? this.nowPeriod(ctx, task);
     /**
      * ⚠ **The scope check comes FIRST, and it is not a formality.** `'2026-08-31' >= '2026-08'` and
      * `'2026-08-31' <= '2026-09'` are both true as string comparisons, so a Monday would satisfy both

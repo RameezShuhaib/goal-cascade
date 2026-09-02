@@ -385,15 +385,20 @@ describe('R-measure-3 / D-15 — the reading commands guard what every other tas
   });
 
   /**
-   * ⚠ **R-measure-3 — "the latest surviving reading" is `(at desc, id desc)`, and there is ONE spelling
-   * of that rule.**
+   * ⚠ **R-measure-3 — an edit re-derives `current` by `(at desc, id desc)`, and a BACK-DATED reading is
+   * the case that pins it.**
    *
-   * `setMeasure` recomputed `current` as `readings.at(-1)?.value` — a second spelling that agrees with
-   * `currentFrom` only by coincidence of the repository's `ORDER BY`. A **back-dated** reading is where
-   * the two come apart: it is not the latest by `at`, but it is last in insertion order, so an edit that
-   * touched nothing but the unit would silently adopt it as the current value.
+   * ⚠ **This is coverage, not a regression guard, and the difference is worth stating.** `setMeasure`
+   * used to spell the rule a second way, as `readings.at(-1)?.value`. That spelling is **correct for
+   * every input** — `D1ReadingRepo.listByTask` orders `asc(at), asc(id)`, so the last element is the max
+   * by `(at, id)` — and this test passed against it. It was replaced with `currentFrom` for
+   * de-duplication, not because it was wrong: one rule with one spelling cannot drift, and the second
+   * one was correct only for as long as that `ORDER BY` stayed exactly what it is.
+   *
+   * What the test is for is the PROPERTY: recording a value dated earlier than one already stored must
+   * not make it the current one, and an edit that touches nothing but the unit must not move the number.
    */
-  it('R-measure-3 — editing a measure re-derives `current` by (at desc, id desc), not by insertion order', async () => {
+  it('R-measure-3 — a back-dated reading never becomes `current`, and an edit does not move it', async () => {
     const { cookie, weekly } = await line();
     const task = await seedTask(t, cookie, { goalId: weekly.id, title: 'weight', measure: { kind: 'gauge', start: 80, target: 75 } });
     await record(cookie, task.id, { value: 78, at: '2026-09-01T10:00:00.000Z' });

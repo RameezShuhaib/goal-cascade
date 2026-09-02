@@ -240,3 +240,78 @@ describe('The task page — editing, and the draft it must not lose', () => {
     await waitFor(() => expect(lastRequest('DELETE', '/links/')?.url).toContain(F.ulid(70)));
   });
 });
+
+/**
+ * ⚠ **A8 — the task page opened COLD on a month task.**
+ *
+ * A month task's `originPeriodKey` is a month key, and this page uses it for two things: the label on the
+ * back control and its destination. A8 fixed the label (`Aug 2026` rather than `Week of NaN Aug`) and
+ * left the destination `lensPath('Weekly', …)` → `/week/2026-08`, which `validKeyFor` drops as
+ * non-canonical for the Weekly lens — so the control **named one place and went to another**. That is
+ * worse than the state before, where both halves were visibly broken and neither could be trusted.
+ *
+ * Reachable today: a month task exists the moment one is created over MCP or HTTP, and `/task/:id` is a
+ * real address (R-task-45) that a pasted link or a reload arrives at with no `location.state`.
+ */
+describe('A8 — a MONTH task on its own page (R-task-45, R-task-52)', () => {
+  const monthTask = () =>
+    F.taskDetail({
+      id: F.ulid(21),
+      goalId: F.M,
+      title: 'Sign two clients',
+      scope: 'Monthly',
+      originPeriodKey: '2026-08',
+      carryUnit: 'months',
+      carryAge: 0,
+      completable: true,
+    });
+
+  const openCold = async () => {
+    server.use(http.get('/api/tasks/:id', () => HttpResponse.json(F.taskResponse(monthTask()))));
+    const app = renderApp(<AppShell />, { route: `/task/${F.ulid(21)}` });
+    await screen.findByRole('heading', { level: 1, name: 'Sign two clients' });
+    return app;
+  };
+
+  it('R-task-52 — the back control names its MONTH and goes to the Monthly lens at that month', async () => {
+    /**
+     * The lens the tap lands on is asserted by what it RENDERS, because `MemoryRouter` leaves
+     * `window.location` alone — and rendering is the property anyway: `/week/2026-08` is not a week, so
+     * the Weekly lens dropped the key and fell back to the current week, which is a link that lied.
+     * Reading the Monthly lens's own heading is the only way to tell the two apart.
+     */
+    const monthly = new Promise<string>((resolve) => {
+      server.use(
+        http.get('/api/goals', ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('lens') === 'Monthly') resolve(url.searchParams.get('period') ?? '');
+          return HttpResponse.json(F.lens({ lens: 'Monthly', period: F.period({ horizon: 'Monthly', periodKey: '2026-08' }) }));
+        }),
+      );
+    });
+
+    const app = await openCold();
+    await app.user.click(screen.getByRole('button', { name: /Aug 2026/ }));
+    expect(await monthly).toBe('2026-08');
+  });
+
+  /**
+   * ⚠ **The checkbox on this page posts a period, and it must be one of the TASK'S scope.**
+   *
+   * `useCompleteTask` resolves its `week` offset to a Monday, so completing a month task from here sent
+   * `period: '2026-08-31'` and the server refused it with `WEEK_OUT_OF_RANGE` — the scope check doing
+   * exactly its job (`assertPeriodFor`). The page renders the checkbox because the wire says
+   * `completable: true`, which it correctly is; only the payload was wrong.
+   */
+  it('R-task-55 — completing a month task posts its MONTH, not a Monday', async () => {
+    server.use(http.get('/api/goals', () => HttpResponse.json(F.lens({ lens: 'Monthly' }))));
+    const app = await openCold();
+    await app.user.click(screen.getByRole('button', { name: 'Complete Sign two clients' }));
+
+    const body = await waitFor(async () => (await bodyOf(lastRequest('POST', '/complete'))) as { period: string });
+    // A MONTH key, at the task's own scope. The Monday this page used to send is refused by the
+    // server's scope check with `WEEK_OUT_OF_RANGE`, which is that check doing exactly its job.
+    expect(body.period).toBe('2026-08');
+    expect(body.period).not.toBe(F.THIS_MONDAY);
+  });
+});

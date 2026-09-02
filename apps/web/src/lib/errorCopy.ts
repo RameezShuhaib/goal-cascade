@@ -105,6 +105,23 @@ export function presentError(err: ApiError): ErrorPresentation {
     case 'NOT_FOUND':
       // R-auth-3 — indistinguishable from someone else's row, by design. Refresh: our copy is stale.
       return e("That's no longer here.", { refresh: 'all' });
+    /**
+     * ⚠ **A8 (R-measure-4, R-measure-3, R-measure-1)** — the three codes the measures work added, each
+     * with a sentence a person can act on. This file's own rule is that a new domain code arrives WITH a
+     * case: without one they fall to `default:` and read "Couldn't save — try again.", which is advice
+     * that cannot work — retrying an identical 4xx produces an identical 4xx.
+     *
+     * They are unreachable until the measures UI lands, which is the next piece of work. That is the
+     * argument for adding them now rather than later: a code with no copy is invisible right up to the
+     * moment it is in front of the owner.
+     */
+    case 'MEASURE_TARGET_EQUALS_START':
+      // Never "pick something else" — the honest alternative is the one the product actually has.
+      return e('A target the same as the start names no movement. Give a different target, or none at all.');
+    case 'MEASURE_KIND_MISMATCH':
+      return e('This one is set to a value, not added to.');
+    case 'NO_MEASURE':
+      return e("This task doesn't carry a number yet.");
     case 'VALIDATION_FAILED':
       return e(firstIssueMessage(err) ?? "Couldn't save — check the values.");
     case 'RATE_LIMITED':

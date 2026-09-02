@@ -20,7 +20,7 @@ import type { RequestContext } from '../context';
 import type { BacklogItem, BacklogLink, Goal, Task, TaskEvent, TaskLink } from '../../domain/entities';
 import { TASK_EVENT_GLYPHS, type TaskScope, type TaskSource } from '../../domain/enums';
 import { DomainError, notFound } from '../../domain/errors';
-import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
+import { indexTree, isLifeHorizon } from '../../domain/goal-tree';
 
 import { between, rekey, topKey, withinGoal } from '../../domain/sort-keys';
 import { dateInTimezone, isPastPeriod, isPeriodKeyFor } from '@goal-cascade/shared';

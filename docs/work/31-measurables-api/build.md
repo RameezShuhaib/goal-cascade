@@ -13,11 +13,12 @@ Two commits, deliberately:
 | 1 | `refactor: originPeriodKey, donePeriodKey, carryAge, and an explicit completion period` | the wide mechanical renames, no migration, no behaviour |
 | 2 | `feat(api): month-level tasks and measurable tasks` | the schema, the migration, every rule, the MCP surface |
 
-Green at the end: **655 api / 437 web / 132 shared**, typecheck clean across all three workspaces.
+Green at the end: **655 api / 439 web / 132 shared**, typecheck clean across all three workspaces.
 Floors were 562 / 431 / 113. Nothing deployed, nothing merged.
 
-A third commit, `fix(api): …`, answers a code-quality review; §9 is its ledger and every entry there
-has a test that fails without it.
+Two further commits answer two review passes; **§9 is their ledger**, and it marks which entries are
+defects with a failing test and which are de-duplication or coverage — a distinction the first version of
+that section got wrong about itself.
 
 ---
 
@@ -387,8 +388,15 @@ and names `weekForMonth`, and `S-lens-9-7` still requires both functions to be d
 
 ## 9. The review pass — six defects, four hardening items
 
-A code-quality review of the two commits above found six defects with concrete failure scenarios. Every
-one is fixed with a test that was **proven to fail first**; none of the existing tests was weakened.
+A code-quality review of the two commits above found six defects with concrete failure scenarios. Each of
+the **six** is fixed with a test proven to fail first; none of the existing tests was weakened.
+
+⚠ **Two of §9.7's four hardening items are de-duplication and coverage, not defects, and the first
+version of this section claimed otherwise.** `setMeasure`'s `.at(-1)` was correct for every input (see
+its entry), and `retarget_task` already took `PeriodKeyParam`, so §9.3's Park round-trip test is coverage
+of a path that worked rather than proof of one that did not. **In this repo a doc block is the review's
+primary evidence, and a false one is precisely how §9.1 shipped green** — `views.ts` described that bug
+in prose while the code committed it. An over-claimed ledger entry is the same failure one layer up.
 
 ### 9.1 (severe) Four read models computed "the current month" from the current WEEK
 
@@ -430,9 +438,10 @@ it names movement.
 schema and the default (a Monday) was refused by the scope check — **no reachable value worked**, on a
 surface whose `create_task` actively steers agents into creating month tasks. A surface that can only
 create is worse than one that cannot: it accumulates work the agent can never close. Widened to
-`PeriodKeyParam`, with the default resolved at the task's own scope through the existing
-`currentPeriodOf` (not a second timezone ladder). `move_task_to_backlog`'s description no longer claims
-the item goes "above its week". Four MCP tests, including Park round-tripping over the tool surface.
+`PeriodKeyParam`, and the default is resolved **inside the service**, where the task is already loaded
+(see §9.8). `move_task_to_backlog`'s description no longer claims the item goes "above its week", and its
+TITLE no longer does either. Four MCP tests — three of them proof, and the Park round-trip **coverage**:
+`retarget_task` already took `PeriodKeyParam`, so that path was never broken.
 
 ### 9.4 `from week of NaN Aug` in the web backlog
 
@@ -460,14 +469,55 @@ the rest of that file, on both the create and the edit path.
 
 ### 9.7 Four hardening items
 
-- **`weekly-target.ts` bypassed `MAX_WEEKLY_GOALS_PER_WEEK`.** The cap lived on `TaskService`'s own copy
+- **`weekly-target.ts` bypassed `MAX_WEEKLY_GOALS_PER_WEEK`.** A real defect, with a test proven to fail. The cap lived on `TaskService`'s own copy
   of `mintWeeklyGoal`, so the backlog conversion had always skipped it and **Park inherited the bypass**
   when the rule was extracted. Moved into the shared resolver, where all three inline-create paths meet
   it. A rule enforced by whichever caller remembered is a rule with a hole in it.
 - **`deleteReading` was missing `assertNotExited`.** Its five siblings all refuse an exited task (D-15), so
   a cancelled task's readings were the one thing in the product still mutable after the exit — and a
-  deletion leaves no trace to notice it by (R-measure-7).
-- **`setMeasure` recomputed `current` as `readings.at(-1)?.value`**, a second spelling of "the latest
-  surviving reading" that agrees with `currentFrom` only by coincidence of the repository's `ORDER BY`. A
-  **back-dated** reading is where they come apart. Now `currentFrom`, with the back-dating case pinned.
+  deletion leaves no trace to notice it by (R-measure-7). A real defect, with a test proven to fail.
+- **`setMeasure` spelled "the latest surviving reading" a second way**, as `readings.at(-1)?.value`.
+  ⚠ **De-duplication, NOT a bug fix, and the first version of this entry got that wrong.**
+  `D1ReadingRepo.listByTask` orders `asc(at), asc(id)`, so the last element **is** the max by `(at, id)`
+  for every input — back-dated readings included — and the test written for it passed against the
+  unfixed code. The claim that "a back-dated reading is where they come apart" was false and is
+  withdrawn. What the second spelling lacked was robustness: it was correct only for as long as that
+  `ORDER BY` stayed exactly what it is, and nothing declares the reading list's order load-bearing
+  beyond the sparkline. `currentFrom` states the rule rather than depending on it, and the test stands
+  as coverage of the property (a back-dated reading never becomes `current`) rather than as proof of a
+  regression.
 - **`park()`'s dead `void today;`** and its unused parameter, plus two imports left dangling by the fixes.
+
+### 9.8 A second review pass — seven items, and one claim of mine that was wrong
+
+- ⚠ **The `setMeasure` entry in §9.7 over-claimed and is corrected there.** See that entry: the
+  verifier ran the test against the unfixed code and it passed, because `.at(-1)` really is
+  `currentFrom` under the repository's ordering. The change stands as de-duplication.
+- **The task page's back control named a month and went to a week.** `lensPath('Weekly', '2026-08')`
+  is `/week/2026-08`, which `validKeyFor` drops as non-canonical, landing on the current week. A8 had
+  fixed the LABEL and left the destination, which is worse than the state before it — both halves were
+  visibly broken then, and neither could be trusted. `lensPathForScope` makes them one fact, at both
+  call sites (`TaskPage`, `TaskSheets`).
+- **Completing a month task from its own page posted a Monday**, refused `WEEK_OUT_OF_RANGE` — the
+  scope check doing its job on a payload the client got wrong. `useWeekClock.periodFor(scope, offset)`
+  is the one spelling, used by the page, the row and the exit sheet. Pre-existing and low
+  reachability, but real against live data, so it is fixed here rather than routed on.
+- **`MEASURE_TARGET_EQUALS_START`, `MEASURE_KIND_MISMATCH` and `NO_MEASURE` had no `errorCopy` case**
+  and fell to `default:` — "Couldn't save — try again.", advice that cannot work on a 4xx. Added now
+  rather than with the measures UI, because a code with no copy is invisible until it is in front of
+  the owner.
+- **`move_task_to_backlog`'s TITLE still said "above its week"** under a description that had been
+  corrected. A title is what an agent reads in `tools/list`, often without the description under it.
+- **Three stale doc blocks** claiming the `target === start` refusal lives in a schema refinement
+  (`tasks.routes.ts`, `domain/measures.ts`, `common.ts`), and one citing a `views.test.ts` that does
+  not exist. The real pin is `tests/tasks/month-tasks.test.ts`'s `R-goal-34` block.
+- **Seven dangling imports** across the three services this branch touched; only `labelOf` in
+  `task.service.ts` went dangling here, the rest predate it.
+- **The MCP default-period path cost two D1 round trips plus a lazy write** to learn one enum. Moved
+  into `TaskService.assertPeriodFor`, which is downstream of `load()` and has the task in hand — so
+  `/api/*` still requires the client to name its period (R-task-55) while an agent, which has no
+  surface to be standing on, gets the current one at the task's own scope for free.
+
+**Not done, and flagged rather than decided:** `noUnusedLocals` in `tsconfig.base.json` would have
+caught the dangling imports and the dead `void today;`. It is not added here because it would light up
+files this branch never touched, and that is a repo-wide call rather than an amendment's.

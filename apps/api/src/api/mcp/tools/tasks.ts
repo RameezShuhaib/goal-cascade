@@ -17,7 +17,6 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { GoalService, TaskService } from '../../../application/services';
-import { currentPeriodOf } from '../../../application/services/views';
 import { guard } from '../errors';
 import { goalOut, ok, readingOut, stampIdempotencyKey, taskOut, week, weekOut, type McpDeps } from '../shapes';
 
@@ -59,27 +58,6 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
     } catch {
       return undefined;
     }
-  };
-
-  /**
-   * ⚠ **A8 (R-task-55) — the default period, resolved AT THE TASK'S OWN SCOPE.**
-   *
-   * An agent that names no period means "the one I am standing in", and for a month task that is a MONTH
-   * key. Defaulting to `ctx.currentWeekStart` made every month task **impossible to complete or backlog
-   * over MCP**: the explicit month failed the input schema, and the default Monday was refused by the
-   * scope check — no reachable value worked, on a surface whose `create_task` actively steers agents into
-   * making month tasks.
-   *
-   * A caller-supplied period is passed through untouched, so the seam case (S-task-55-2 — completing a
-   * month task from the August band on 2 September) stays the agent's own statement rather than something
-   * derived here.
-   */
-  const currentPeriodFor = async (taskId: string, period: string | undefined): Promise<string> => {
-    if (period !== undefined) return period;
-    const res = await dc.resolve(TaskService).get(ctx, taskId, week(ctx, 0));
-    // `currentPeriodOf` and not a local `periodKeyOf(..., today)`: the owner's timezone ladder (R-auth-5)
-    // has one implementation, and a second one here would be a second answer to what day it is.
-    return currentPeriodOf(ctx, res.task.scope);
   };
 
   // ── list_tasks ─────────────────────────────────────────────────────────────────────────────────
@@ -262,7 +240,10 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
     async ({ task_id, period }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
-        const res = await dc.resolve(TaskService).complete(ctx, task_id, { period: await currentPeriodFor(task_id, period) });
+        // No period? The SERVICE resolves it at the task's own scope, where the task is already loaded —
+        // R-task-55's "the client names the period it is standing in" is about a client with a surface,
+        // and an agent has none.
+        const res = await dc.resolve(TaskService).complete(ctx, task_id, { ...(period !== undefined ? { period } : {}) });
         return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
       }),
   );
@@ -288,7 +269,7 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
   server.registerTool(
     'move_task_to_backlog',
     {
-      title: 'Park a task above its week (exit 2 of 3)',
+      title: 'Move a task to a backlog (exit 2 of 3)',
       description:
         "Take a task out of its period and park it in the backlog of the nearest goal that can hold one, keeping the description and links and noting which period it came from.\n\nWHERE IT LANDS DEPENDS ON THE TASK'S SCOPE. For a WEEK task it is the nearest goal ABOVE the week — normally the monthly parent — and never its own weekly goal, because a weekly goal IS a week and the point of this exit is to leave it; a weekly goal hanging directly off a life goal has nowhere to put it and the exit is refused (LIFE_GOAL_NO_BACKLOG). For a MONTH task it is the monthly goal the task is already on: a monthly goal holds both a backlog and tasks, deliberately, and that is the one-tap demotion for a month task that has carried too long. The item then reads `from Sep 2026` rather than `from week of ...`.\n\nOnly OPEN tasks can be moved, future-dated ones included. The reason is OPTIONAL — this product is deliberately guilt-free; pass only what the user actually said.",
       inputSchema: z
@@ -307,7 +288,7 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
         const res = await dc
           .resolve(TaskService)
           .moveToBacklog(ctx, task_id, {
-            period: await currentPeriodFor(task_id, period),
+            ...(period !== undefined ? { period } : {}),
             ...(reason !== undefined ? { reason } : {}),
           });
         return ok({

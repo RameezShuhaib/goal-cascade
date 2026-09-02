@@ -167,7 +167,8 @@ export function toTaskView(
  * ⚠ **It has exactly ONE legitimate caller: `TaskService.get`**, because the task page is addressed by a
  * `?week=` and a month task's viewed period is the month that week belongs to. **Every other caller wants
  * `currentPeriodOf`.** If you are reaching for this to fill `toTaskView`'s `currentPeriodKey`, you want
- * the other one; `views.test.ts` pins the distinction with the exact date that separates them.
+ * the other one — `tests/tasks/month-tasks.test.ts`'s `R-goal-34` block pins the distinction at the exact
+ * date that separates them, and four call sites got it wrong before it existed.
  */
 export const periodForScope = (scope: TaskScope, weekStart: string): string =>
   scope === 'Monthly' ? periodKeyOf('Monthly', weekStart) : weekStart;

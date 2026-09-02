@@ -658,10 +658,26 @@ export function usePatchTask() {
  * Exit 1 of 3 (R-task-14). The week is explicit because past weeks stay fully interactive (R-nav-5) and a
  * completion belongs to the week it was made in (R-task-8) — not to "now".
  */
+/**
+ * ⚠ **A8 (R-task-55)** — `period` is a key at the TASK'S OWN SCOPE, so a caller that knows the task
+ * passes `period` directly and one that only knows a week offset keeps passing `week`.
+ *
+ * A month task completed from its page used to send the viewer's Monday and be refused with
+ * `WEEK_OUT_OF_RANGE` — the server's scope check doing exactly its job. The row renders a checkbox
+ * because the wire says `completable: true`, which it correctly is; only the payload was wrong.
+ */
 export function useCompleteTask() {
   const { currentMonday } = useWeekClock();
-  return useCommand<{ id: string; week?: number; version?: number }, Awaited<ReturnType<ApiClient['completeTask']>>>({
-    run: (c, v, k) => c.completeTask(v.id, { period: addWeeks(currentMonday, v.week ?? 0), ...(v.version ? { version: v.version } : {}) }, k),
+  return useCommand<
+    { id: string; week?: number; period?: string; version?: number },
+    Awaited<ReturnType<ApiClient['completeTask']>>
+  >({
+    run: (c, v, k) =>
+      c.completeTask(
+        v.id,
+        { period: v.period ?? addWeeks(currentMonday, v.week ?? 0), ...(v.version ? { version: v.version } : {}) },
+        k,
+      ),
     onSuccess: (d, _v, qc) => patchTask(qc, d.task),
     invalidate: WEEK_KEYS,
   });
@@ -677,13 +693,21 @@ export function useUncheckTask() {
 }
 
 /** Exit 2 of 3 (R-task-15) — the response carries both the exited task and the item it became. */
+/** ⚠ **A8 (R-task-55)** — same shape as `useCompleteTask`, and for the same reason. */
 export function useMoveTaskToBacklog() {
   const { currentMonday } = useWeekClock();
-  return useCommand<{ id: string; week?: number; reason?: string; version?: number }, Awaited<ReturnType<ApiClient['moveTaskToBacklog']>>>({
+  return useCommand<
+    { id: string; week?: number; period?: string; reason?: string; version?: number },
+    Awaited<ReturnType<ApiClient['moveTaskToBacklog']>>
+  >({
     run: (c, v, k) =>
       c.moveTaskToBacklog(
         v.id,
-        { period: addWeeks(currentMonday, v.week ?? 0), ...(v.reason ? { reason: v.reason } : {}), ...(v.version ? { version: v.version } : {}) },
+        {
+          period: v.period ?? addWeeks(currentMonday, v.week ?? 0),
+          ...(v.reason ? { reason: v.reason } : {}),
+          ...(v.version ? { version: v.version } : {}),
+        },
         k,
       ),
     onSuccess: (d, _v, qc) => {
