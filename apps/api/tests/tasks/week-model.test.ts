@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ITaskRepo } from '../../src/application/ports';
 import { createTestApp, signedInOwner } from '../helpers/app';
-import { codeOf, command, createTask, listWeek, makeGoal, makeLine, makeWeek, seedTask } from './helpers';
+import { IGoalRepo } from '../../src/application/ports';
+import { codeOf, command, createTask, listWeek, makeGoal, makeLine, makeWeek, seedTask, weekAt } from './helpers';
 
 /**
  * The week model — R-task-7/8/39/40/41/42/43, D-1.
@@ -32,7 +33,7 @@ beforeEach(() => at(MON.aug31));
 
 /**
  * The arrange step for every carry test: an owner with a Weekly goal for `originWeek`, and a task under
- * it — created THROUGH the API at that week's clock, because `originWeekStart` comes from the parent and
+ * it — created THROUGH the API at that week's clock, because `originPeriodKey` comes from the parent and
  * a Weekly goal in a past week refuses new tasks (R-task-41, no back-dating).
  */
 async function taskCreatedIn(originWeek: string, viewWeek: string = MON.aug31) {
@@ -53,26 +54,26 @@ describe('D-1 / R-task-40 — a stored week is an absolute Monday, so it cannot 
    */
   it('D-1 — advancing the clock past a Monday leaves origin_week_start untouched and only ages the view', async () => {
     const { cookie, userId, task } = await taskCreatedIn(MON.aug31);
-    expect(task.originWeekStart).toBe(MON.aug31);
-    expect(task.carryWeeks).toBe(0);
+    expect(task.originPeriodKey).toBe(MON.aug31);
+    expect(task.carryAge).toBe(0);
 
     t.clock.advanceWeeks(1);
     const nextWeek = await listWeek(t, cookie, 0);
     expect(nextWeek.week.weekStart).toBe(MON.sep7);
-    expect(nextWeek.tasks[0]?.originWeekStart).toBe(MON.aug31);
-    expect(nextWeek.tasks[0]?.carryWeeks).toBe(1);
+    expect(nextWeek.tasks[0]?.originPeriodKey).toBe(MON.aug31);
+    expect(nextWeek.tasks[0]?.carryAge).toBe(1);
 
     // The same row, viewed in the week it was created in, is still zero weeks old there.
     const its_own_week = await listWeek(t, cookie, -1);
     expect(its_own_week.week.weekStart).toBe(MON.aug31);
-    expect(its_own_week.tasks[0]?.carryWeeks).toBe(0);
+    expect(its_own_week.tasks[0]?.carryAge).toBe(0);
 
     t.clock.advanceWeeks(1);
-    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryWeeks).toBe(2);
+    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryAge).toBe(2);
 
     // And the row itself was never rewritten: same origin, same version, no write of any kind.
     const stored = await t.container().resolve<ITaskRepo>(ITaskRepo).findById(userId, task.id);
-    expect(stored?.originWeekStart).toBe(MON.aug31);
+    expect(stored?.originPeriodKey).toBe(MON.aug31);
     expect(stored?.version).toBe(1);
     expect(stored?.updatedAt).toBe(task.updatedAt);
   });
@@ -84,9 +85,9 @@ describe('D-1 / R-task-40 — a stored week is an absolute Monday, so it cannot 
 
     // The parent is two weeks out; the task takes ITS week, with nothing said about weeks in the request.
     const task = await seedTask(t, cookie, { goalId: ahead.id, title: 'planned ahead' });
-    expect(task.originWeekStart).toBe(MON.sep7);
+    expect(task.originPeriodKey).toBe(MON.sep7);
 
-    for (const key of ['week', 'weekOffset', 'originWeek', 'originWeekStart']) {
+    for (const key of ['week', 'weekOffset', 'originWeek', 'originPeriodKey']) {
       const res = await createTask(t, cookie, { goalId: ahead.id, title: 'nope', [key]: 0 });
       expect(res.status, key).toBe(422);
     }
@@ -96,7 +97,7 @@ describe('D-1 / R-task-40 — a stored week is an absolute Monday, so it cannot 
     const { cookie, userId, task, weekly } = await taskCreatedIn(MON.aug24);
     // Delete the Weekly goal's row directly and re-read the stored task: the week is on the TASK.
     const stored = await t.container().resolve<ITaskRepo>(ITaskRepo).findById(userId, task.id);
-    expect(stored?.originWeekStart).toBe(MON.aug24);
+    expect(stored?.originPeriodKey).toBe(MON.aug24);
     expect(stored?.goalId).toBe(weekly.id);
     void cookie;
   });
@@ -112,7 +113,7 @@ describe('R-task-7/8/42 — visibility, and it never depends on the goal’s per
     ] as const) {
       const res = await listWeek(t, cookie, week);
       expect(res.tasks.map((x) => x.id)).toEqual([task.id]);
-      expect(res.tasks[0]?.carryWeeks).toBe(expected);
+      expect(res.tasks[0]?.carryAge).toBe(expected);
     }
   });
 
@@ -124,7 +125,7 @@ describe('R-task-7/8/42 — visibility, and it never depends on the goal’s per
 
   it('S-task-8-1 — a task completed in week −1 is visible in that week only', async () => {
     const { cookie, task } = await taskCreatedIn(MON.aug17);
-    const done = await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: -1 });
+    const done = await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: weekAt(t, -1) });
     expect(done.status).toBe(200);
 
     expect((await listWeek(t, cookie, -2)).tasks).toEqual([]);
@@ -132,7 +133,7 @@ describe('R-task-7/8/42 — visibility, and it never depends on the goal’s per
     const week1 = await listWeek(t, cookie, -1);
     expect(week1.tasks.map((x) => x.id)).toEqual([task.id]);
     expect(week1.tasks[0]?.done).toBe(true);
-    expect(week1.tasks[0]?.doneWeekStart).toBe(MON.aug24);
+    expect(week1.tasks[0]?.donePeriodKey).toBe(MON.aug24);
   });
 
   /**
@@ -153,25 +154,25 @@ describe('R-task-7/8/42 — visibility, and it never depends on the goal’s per
 describe('R-task-43 — the carry label thresholds, either side of the boundary', () => {
   it('S-task-12-1 — a task created this week has age 0 and earns no label', async () => {
     const { cookie } = await taskCreatedIn(MON.aug31);
-    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryWeeks).toBe(0);
+    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryAge).toBe(0);
   });
 
   it('S-task-10-1 — origin −1 viewed in week 0 is age 1: the gray "since <Monday>" label', async () => {
     const { cookie } = await taskCreatedIn(MON.aug24);
     const res = await listWeek(t, cookie, 0);
-    expect(res.tasks[0]?.carryWeeks).toBe(1);
-    expect(res.tasks[0]?.originWeekStart).toBe(MON.aug24);
+    expect(res.tasks[0]?.carryAge).toBe(1);
+    expect(res.tasks[0]?.originPeriodKey).toBe(MON.aug24);
   });
 
   it('S-task-11-1 — origin −3 viewed in week 0 is age 3: the red "3 weeks · since …" chip', async () => {
     const { cookie } = await taskCreatedIn(MON.aug10);
-    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryWeeks).toBe(3);
+    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryAge).toBe(3);
   });
 
   it('S-task-43-3 / S-task-11-2 — origin −2 viewed in week −1 is age 1: the label follows the VIEWED week', async () => {
     const { cookie } = await taskCreatedIn(MON.aug17);
-    expect((await listWeek(t, cookie, -1)).tasks[0]?.carryWeeks).toBe(1);
-    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryWeeks).toBe(2);
+    expect((await listWeek(t, cookie, -1)).tasks[0]?.carryAge).toBe(1);
+    expect((await listWeek(t, cookie, 0)).tasks[0]?.carryAge).toBe(2);
   });
 
   it('S-task-43-1 / S-lens-11-2 — future-dated work has a NEGATIVE age and no label, at any distance', async () => {
@@ -182,59 +183,104 @@ describe('R-task-43 — the carry label thresholds, either side of the boundary'
     const ahead = await makeWeek(t, userId, monthly.id, MON.sep7);
     const task = await seedTask(t, cookie, { goalId: ahead.id, title: 'next week' });
 
-    expect((await listWeek(t, cookie, 1)).tasks.find((x) => x.id === task.id)?.carryWeeks).toBe(-1);
-    expect((await listWeek(t, cookie, 3)).tasks.find((x) => x.id === task.id)?.carryWeeks).toBe(-1);
+    expect((await listWeek(t, cookie, 1)).tasks.find((x) => x.id === task.id)?.carryAge).toBe(-1);
+    expect((await listWeek(t, cookie, 3)).tasks.find((x) => x.id === task.id)?.carryAge).toBe(-1);
     // …and it is absent from THIS week's numbers entirely (R-task-38).
     expect((await listWeek(t, cookie, 0)).tasks.map((x) => x.id)).not.toContain(task.id);
   });
 
   it('S-task-43-2 — an already-late task keeps the age it has TODAY when projected forward', async () => {
     const { cookie } = await taskCreatedIn(MON.aug10);
-    expect((await listWeek(t, cookie, 2)).tasks[0]?.carryWeeks).toBe(3);
+    expect((await listWeek(t, cookie, 2)).tasks[0]?.carryAge).toBe(3);
   });
 });
 
-describe('R-goal-39 / R-goal-37 — ONLY a Weekly goal holds a task, and the condition is the HORIZON', () => {
+describe('R-task-51 / R-goal-37 — MONTHLY AND WEEKLY goals hold tasks, and the condition is the HORIZON', () => {
   /**
-   * **S-goal-37-1 — the leaf-vs-horizon trap, and the single most important assertion in this file.**
+   * ⚠ **A8 — S-goal-37-1 and S-goal-39-1 are SUPERSEDED and restated one horizon up, as S-task-51-2.**
    *
-   * Because Weekly is terminal every Weekly goal is childless, so "Weekly" implies "no children" — **but
-   * the converse is false**. A Monthly goal with no Weekly children is a leaf by the structural
-   * definition and is precisely the goal that must never hold a task. "A build that admits it has keyed
-   * task ownership on leaf-ness instead of on the horizon", and nothing in the type system or in another
-   * test would have caught it: it would simply be wrong, on the first empty Monthly goal anyone creates.
+   * Both asserted that a **Monthly** goal refuses a task. A Monthly goal now holds one (R-task-51), so the
+   * old assertion is false about the product that exists. Their POINT — that the condition is the horizon
+   * and never leaf-ness — is unchanged, which is why they are restated rather than deleted: the trap moves
+   * from "a childless Monthly goal" to "a childless **Quarterly** goal", and a build that keyed task
+   * ownership on leaf-ness would still pass every other test in this file.
    */
-  it('S-goal-37-1 — a task on a CHILDLESS Monthly goal is refused with NOT_A_WEEKLY_GOAL', async () => {
+  it('S-task-51-2 — a task on a CHILDLESS Quarterly goal is refused with NOT_A_TASK_GOAL', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const life = await makeGoal(t, userId, 'Life', null);
-    const childless = await makeGoal(t, userId, 'Monthly', life.id, '2026-08');
+    const childless = await makeGoal(t, userId, 'Quarterly', life.id, '2026-Q3');
 
     const res = await createTask(t, cookie, { goalId: childless.id, title: 'nope' });
     expect(res.status).toBe(409);
-    expect(res.json.error?.code).toBe('NOT_A_WEEKLY_GOAL');
+    expect(res.json.error?.code).toBe('NOT_A_TASK_GOAL');
+    // `details` carries the horizon, which is what the MCP recovery line quotes back (R-task-51).
+    expect((res.json.error as unknown as { details?: { horizon?: string } }).details?.horizon).toBe('Quarterly');
   });
 
-  it('S-goal-39-1 — and on EVERY other horizon too, childless or not', async () => {
+  it('S-task-51-2 — and on Life and Yearly too, childless or not', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const life = await makeGoal(t, userId, 'Life', null);
     const yearly = await makeGoal(t, userId, 'Yearly', life.id, '2026');
     const quarterly = await makeGoal(t, userId, 'Quarterly', yearly.id, '2026-Q3');
-    const monthly = await makeGoal(t, userId, 'Monthly', quarterly.id, '2026-08');
-    await makeWeek(t, userId, monthly.id, MON.aug31); // so `monthly` is NOT childless either
+    await makeGoal(t, userId, 'Monthly', quarterly.id, '2026-08'); // so `quarterly` is NOT childless
 
-    for (const goal of [life, yearly, quarterly, monthly]) {
+    for (const goal of [life, yearly, quarterly]) {
       const res = await createTask(t, cookie, { goalId: goal.id, title: 'nope' });
       expect(res.status, goal.horizon).toBe(409);
-      expect(res.json.error?.code, goal.horizon).toBe('NOT_A_WEEKLY_GOAL');
+      expect(res.json.error?.code, goal.horizon).toBe('NOT_A_TASK_GOAL');
     }
   });
 
-  it('S-task-39-1 — and a task under a Weekly goal succeeds, taking that goal’s week', async () => {
+  it('S-task-51-1 — a task under a Weekly goal succeeds, taking that goal’s week', async () => {
     const { cookie, userId } = await signedInOwner(t);
     const { weekly } = await makeLine(t, userId, MON.aug31);
     const task = await seedTask(t, cookie, { goalId: weekly.id, title: 'run' });
     expect(task.goalId).toBe(weekly.id);
-    expect(task.originWeekStart).toBe(MON.aug31);
+    expect(task.scope).toBe('Weekly');
+    expect(task.originPeriodKey).toBe(MON.aug31);
+  });
+
+  /**
+   * ⚠ **A8 (R-task-51/52/57) — the owner's whole ask, in one assertion.**
+   *
+   * `+ Task` on a Monthly goal creates **one row**: the task, on the goal that was tapped, in that goal's
+   * month. No Weekly goal is minted, no week is resolved, no picker runs and nothing navigates
+   * (S-task-57-1). The count assertion is the load-bearing half — R-rm-6 exists because the flow this
+   * replaces created a second row the owner never asked for and could not find.
+   */
+  it('S-task-51-1 / S-task-57-1 — a task on a Monthly goal is a MONTH task, and exactly one row is written', async () => {
+    const { cookie, userId } = await signedInOwner(t);
+    const life = await makeGoal(t, userId, 'Life', null);
+    const monthly = await makeGoal(t, userId, 'Monthly', life.id, '2026-08');
+    const before = await t.container().resolve<IGoalRepo>(IGoalRepo).listInterior(userId);
+
+    const task = await seedTask(t, cookie, { goalId: monthly.id, title: 'sign two clients' });
+    expect(task.goalId).toBe(monthly.id);
+    expect(task.scope).toBe('Monthly');
+    expect(task.originPeriodKey).toBe('2026-08');
+    // ⚠ **S-task-57-1** — no Weekly goal exists that did not before.
+    const after = await t.container().resolve<IGoalRepo>(IGoalRepo).listInterior(userId);
+    expect(after.length).toBe(before.length);
+    expect(await t.container().resolve<IGoalRepo>(IGoalRepo).countWeeklyInWeek(userId, MON.aug31)).toBe(0);
+  });
+
+  /**
+   * ⚠ **A8 (R-task-52, S-task-52-1/52-2)** — the key says the scope, and the client supplies neither.
+   */
+  it('S-task-52-1 / S-task-52-2 — the key format matches the scope, and no request may name either', async () => {
+    const { cookie, userId } = await signedInOwner(t);
+    const { monthly, weekly } = await makeLine(t, userId, MON.aug31);
+
+    const month = await seedTask(t, cookie, { goalId: monthly.id, title: 'month work' });
+    const week = await seedTask(t, cookie, { goalId: weekly.id, title: 'week work' });
+    expect(month.originPeriodKey).toBe('2026-08');
+    expect(week.originPeriodKey).toBe(MON.aug31);
+
+    // S-task-52-2 — every spelling of "I will tell you the period myself" is an unknown key.
+    for (const body of [{ scope: 'Monthly' }, { originPeriodKey: '2026-08' }, { originWeek: 1 }, { week: 0 }, { weekOffset: 0 }]) {
+      const res = await createTask(t, cookie, { goalId: weekly.id, title: 'nope', ...body });
+      expect(res.status, JSON.stringify(body)).toBe(422);
+    }
   });
 });
 
@@ -255,14 +301,14 @@ describe('R-task-41 — no back-dating, unbounded forward', () => {
     const far = await makeWeek(t, userId, monthly.id, '2026-11-23'); // 12 weeks out
     const task = await seedTask(t, cookie, { goalId: far.id, title: 'far ahead' });
 
-    expect(task.originWeekStart).toBe('2026-11-23');
+    expect(task.originPeriodKey).toBe('2026-11-23');
     for (const week of [0, 1, 6, 11]) {
       expect((await listWeek(t, cookie, week)).tasks.map((x) => x.id), `week ${week}`).not.toContain(task.id);
     }
     const arrived = await listWeek(t, cookie, 12);
     expect(arrived.tasks.map((x) => x.id)).toContain(task.id);
     // …and it carries no label of any kind when that week is viewed early (R-lens-11).
-    expect(arrived.tasks.find((x) => x.id === task.id)?.carryWeeks).toBeLessThanOrEqual(0);
+    expect(arrived.tasks.find((x) => x.id === task.id)?.carryAge).toBeLessThanOrEqual(0);
   });
 });
 

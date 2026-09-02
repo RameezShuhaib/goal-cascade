@@ -1,4 +1,4 @@
-import { periodKeyOf, weekStartOfDate, weeksBetween } from '@goal-cascade/shared';
+import { addWeeks, periodKeyOf, type TaskScope, weeksBetween, weekStartOfDate } from '@goal-cascade/shared';
 import { useOwnerClockState } from '../utils/periods';
 
 /**
@@ -43,6 +43,23 @@ export interface WeekClock {
    * `CompleteTaskRequest.week`'s own `.max(0)`, which is the server's (R-task-44).
    */
   offsetOf: (monday: string | null | undefined) => number;
+  /**
+   * ⚠ **A8, new (R-task-55) — the period to write a task INTO, at the task's own scope.**
+   *
+   * A completion, and a Move-to-Backlog, name a canonical period rather than an offset, and the server
+   * bounds it **within one scope** — so posting the viewer's Monday for a month task is refused with
+   * `WEEK_OUT_OF_RANGE`, which is the scope check doing exactly its job. A week task keeps its offset,
+   * which is what every lens surface holds.
+   *
+   * For a month task the answer is the **current** month, not the task's origin: the origin may be
+   * months behind (a carried task), and completing into a past month would hide the task from the lens
+   * the owner is standing in. `todayMonthKey` is the same `periodKeyOf('Monthly', today)` the rest of
+   * this hook is built from, so this adds no second date rule (R-lens-30).
+   *
+   * There is one spelling of this because there are three callers — the task page, a task row, and the
+   * exit sheet — and a rule each of them re-derived is a rule two of them would get wrong.
+   */
+  periodFor: (scope: TaskScope, weekOffset: number) => string;
 }
 
 export function useWeekClock(): WeekClock {
@@ -54,5 +71,7 @@ export function useWeekClock(): WeekClock {
     tz,
     todayMonthKey: periodKeyOf('Monthly', today),
     offsetOf: (monday) => (monday ? weeksBetween(currentMonday, monday) : 0),
+    periodFor: (scope, weekOffset) =>
+      scope === 'Monthly' ? periodKeyOf('Monthly', today) : addWeeks(currentMonday, weekOffset),
   };
 }

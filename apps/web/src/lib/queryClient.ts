@@ -113,7 +113,7 @@ export function identityPersister(store: Storage): Persister {
  * Retry only on things that might heal on their own: a dropped network and a 5xx. NEVER a 4xx.
  *
  * A 4xx from this API is a decision, not a hiccup (Q-10: every refusal is a typed code). Retrying a
- * `409 NOT_A_WEEKLY_GOAL` cannot make a Monthly goal a Weekly one; it just delays the message by two
+ * `409 NOT_A_TASK_GOAL` cannot make a Quarterly goal a Monthly one; it just delays the message by two
  * round trips.
  */
 export function shouldRetry(failureCount: number, error: unknown): boolean {

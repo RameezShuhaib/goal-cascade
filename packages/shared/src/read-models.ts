@@ -84,10 +84,54 @@ export const LensResponse = z.object({
    */
   carried: z.array(GoalView),
   /**
-   * R-lens-12 — the tasks visible in the selected week. **Weekly lens only**; empty in the other four,
-   * which show no tasks at all. Visibility is R-task-7/8 and is applied by the server.
+   * R-lens-12 — the tasks visible in the selected period.
+   *
+   * ⚠ **A8 (R-lens-32)** — **the Weekly lens AND the Monthly lens**, and empty in the other three, which
+   * hold no tasks at all because their horizons do not (R-task-51, S-lens-32-2). In the Weekly lens these
+   * are the **week** tasks visible in the selected week; in the Monthly lens they are the **month** tasks
+   * visible in the selected month, which is the surface the owner asked for. Visibility is R-task-53 and
+   * is applied by the server, at one scope, against keys of one format.
+   *
+   * A **carried month task appears here, in the month it has carried into**, with R-task-54's chip.
+   * There is deliberately **no carried band in the Monthly lens**: a month task carries onto the same
+   * goal, so there is nothing to separate it from — unlike a Weekly goal, which is a *different* goal
+   * from the one the week belongs to. Stated because its absence would otherwise read as an omission.
    */
   tasks: z.array(TaskView),
+  /**
+   * ⚠ **A8, new (R-lens-31)** — **the month band: the month tasks of the month this WEEK belongs to.**
+   *
+   * **Weekly lens only.** Empty on every other lens, including Monthly — there the month's tasks are
+   * `tasks`, not a band. Grouped by their Monthly goal in the client; ordered here as every task list is
+   * (open before done, then `createdAt` asc, `id` asc).
+   *
+   * **Which month is R-goal-33's Monday rule and nothing else.** On 2 Sep 2026 the Weekly lens is at the
+   * week of Mon 31 Aug, so its band is **August's** — the same rule that makes `Sep 2026` run 7 Sep –
+   * 4 Oct (R-lens-28) and the same rule R-lens-29's `This week is in Aug 2026` already tells the owner
+   * about. `monthPeriodKey` carries the answer so the client never re-derives it.
+   *
+   * ⚠ **Rendered with NO carry label of any kind** (R-task-54, S-lens-31-2): not the chip, not the gray
+   * `since …`, not a badge, not a muted variant, and no accessible name containing `weeks`, `late`,
+   * `overdue` or `behind`. A month task that is not done in week 2 is **not late in week 2** — the
+   * deadline is the month, and a week has no standing to say otherwise. The rows still carry their honest
+   * month-scale `carryAge`, because the same task in the Monthly lens must show its chip; **the
+   * suppression belongs to this array's render site, not to the field.**
+   *
+   * ⚠ **These are NOT counted in R-lens-4's group header** (`LifeGroupView.openTasks`), at any lens. That
+   * number answers *"what is on me this week"*, and a month task is precisely the work this amendment
+   * exists to say is **not** on you this week (S-lens-31-3). Counting it there would contradict the
+   * no-late-styling rule one row above it, in a number.
+   */
+  monthTasks: z.array(TaskView),
+  /**
+   * ⚠ **A8, new (R-lens-31)** — the month `monthTasks` belongs to, e.g. `2026-08`. **Weekly lens only**;
+   * `null` on every other lens, Monthly included.
+   *
+   * It is on the wire because it is a date rule the client must not re-implement: the month a week belongs
+   * to is its Monday's month, and R-lens-29 already exists because that is the seam people get wrong.
+   * `labelOf('Monthly', monthPeriodKey)` renders the band's heading.
+   */
+  monthPeriodKey: PeriodKey.nullable(),
   /** Q-12 / R-lens-16 — the opaque cursor for the next page, or `null` when this is the last one. */
   nextCursor: z.string().nullable(),
   /**
@@ -185,7 +229,7 @@ export const ZoomResponse = z.object({ anchor: z.iso.date(), rows: z.array(ZoomR
  *
  * `plan` is gone with the entity (R-rm-2) and `ideas` with theirs (R-rm-1). Every week in the payload is
  * an ABSOLUTE Monday date (D-1), so the snapshot does not decay across a Monday boundary — but
- * `week.offset` and `carryWeeks` are projections against `serverNow`, and a client holding a stale payload
+ * `week.offset` and `carryAge` are projections against `serverNow`, and a client holding a stale payload
  * must refetch rather than re-derive them.
  */
 export const BootstrapResponse = z.object({
@@ -228,7 +272,15 @@ export const GoalDetailResponse = z.object({
    * half of the plan screen (it superseded R-plan-9/10). Empty for every other horizon.
    */
   pullList: z.array(BacklogItemView),
-  /** ⚠ **A2, new** — R-goal-41: the task list on a **Weekly** goal. Empty for every other horizon. */
+  /**
+   * ⚠ **A2, new** — R-goal-41: the goal's own task list.
+   *
+   * ⚠ **A8 (R-task-51, R-lens-32) — populated on a Monthly goal too, and the old comment saying "empty
+   * for every other horizon" was wrong from A8 and is corrected rather than left.** A **Weekly** goal
+   * carries its week tasks; a **Monthly** goal carries its **month** tasks, rendered above its existing
+   * `Backlog (N)` section — the two side by side is where R-backlog-30's distinction is either legible or
+   * lost. Empty for Life, Yearly and Quarterly, which hold no tasks at all.
+   */
   tasks: z.array(TaskView),
   /** R-learning-5 — the learnings tagged to this goal's LIFE ROOT, i.e. the whole line. */
   learnings: z.array(LearningView),

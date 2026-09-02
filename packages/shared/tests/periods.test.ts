@@ -9,7 +9,9 @@ import {
   periodKeyOf,
   replanPeriods,
   stepPeriod,
+  periodsBetween,
   taskWeekForMonth,
+  taskWeeksInMonth,
   zoomTo,
   zoomWeekForMonth,
 } from '../src/index';
@@ -229,5 +231,90 @@ describe('R-goal-40 / D-3 — re-plan options are derived from today and are str
     // through its open tasks (R-lens-12), or is written again as a new Weekly goal.
     expect(replanPeriods('Life', '2026-09-15')).toEqual([]);
     expect(replanPeriods('Weekly', '2026-09-15', '2026-09-14')).toEqual([]);
+  });
+});
+
+/**
+ * ⚠ **A8 (R-task-54) — `periodsBetween`, the arithmetic the month-scale carry chip is counted in.**
+ *
+ * `weeksBetween`'s generalisation, and the only arithmetic A8 adds to the calendar. The caller supplies
+ * the horizon because the keys are never compared across one: `2026-09` and `2026-09-07` are both strings
+ * and would otherwise compare, which is the same fact `scope` exists in the task index for.
+ */
+describe('A8 — periodsBetween counts whole periods at ONE horizon', () => {
+  it('R-task-54 — months, quarters, years and weeks, each in their own unit', () => {
+    expect(periodsBetween('Monthly', '2026-08', '2026-11')).toBe(3);
+    expect(periodsBetween('Monthly', '2026-11', '2026-08')).toBe(-3);
+    expect(periodsBetween('Monthly', '2026-09', '2026-09')).toBe(0);
+    expect(periodsBetween('Weekly', '2026-08-17', '2026-08-31')).toBe(2);
+    expect(periodsBetween('Quarterly', '2026-Q3', '2027-Q1')).toBe(2);
+    expect(periodsBetween('Yearly', '2026', '2029')).toBe(3);
+  });
+
+  it('R-task-54 — it crosses a year end, where naive month arithmetic would drift', () => {
+    expect(periodsBetween('Monthly', '2026-11', '2027-02')).toBe(3);
+    expect(periodsBetween('Monthly', '2026-12', '2027-01')).toBe(1);
+    expect(periodsBetween('Quarterly', '2026-Q4', '2027-Q1')).toBe(1);
+    expect(periodsBetween('Weekly', '2026-12-28', '2027-01-04')).toBe(1);
+  });
+
+  it('a malformed key answers 0 rather than NaN — a carry age is a number that RENDERS', () => {
+    // `NaN weeks - since ...` is worse than no chip, and this is a value the client puts on screen.
+    expect(periodsBetween('Monthly', '2026-13', '2026-09')).toBe(0);
+    expect(periodsBetween('Monthly', '2026-09', 'sometime')).toBe(0);
+    // ...and a key of the WRONG horizon is malformed for this call, which is the guard that matters.
+    expect(periodsBetween('Monthly', '2026-09-07', '2026-09')).toBe(0);
+    expect(periodsBetween('Weekly', '2026-09', '2026-09-07')).toBe(0);
+  });
+});
+
+/**
+ * ⚠ **A11 (`32-week-selection` §4.2/§4.3) — the weeks `+ Task` and Park may offer for a month.**
+ *
+ * The directive the plan gives is that `taskWeekForMonth` becomes the HEAD of this list rather than a
+ * separate predicate, **proven by a test rather than by a comment** — because the two coming apart is
+ * exactly how `weekForMonth` produced three defects at once before A9 split it.
+ */
+describe('A11 — taskWeeksInMonth offers a month\'s own weeks, and taskWeekForMonth is its head', () => {
+  it('the weeks of a month are its MONDAYS, and Sep 2026 is 7, 14, 21, 28', () => {
+    expect(taskWeeksInMonth('2026-09', '2026-08-01')).toEqual(['2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28']);
+    // ...and it does NOT contain the week of Mon 31 Aug, which is August's (R-goal-33).
+    expect(taskWeeksInMonth('2026-09', '2026-08-01')).not.toContain('2026-08-31');
+    // A five-Monday month has five.
+    expect(taskWeeksInMonth('2026-03', '2026-01-01')).toEqual([
+      '2026-03-02',
+      '2026-03-09',
+      '2026-03-16',
+      '2026-03-23',
+      '2026-03-30',
+    ]);
+  });
+
+  it('R-goal-36 — past weeks are OMITTED, never offered-and-disabled', () => {
+    // Standing in the week of Mon 14 Sep: the 7th is behind us and is not on the list at all.
+    expect(taskWeeksInMonth('2026-09', '2026-09-16')).toEqual(['2026-09-14', '2026-09-21', '2026-09-28']);
+    // A past month offers nothing - and `+ Task` does not render on one anyway (R-task-57).
+    expect(taskWeeksInMonth('2026-07', '2026-09-02')).toEqual([]);
+  });
+
+  it('S-lens-9-7 — `taskWeekForMonth` IS the head of the list, at the seam and away from it', () => {
+    for (const [month, today] of [
+      ['2026-09', '2026-09-02'], // the seam: this week is August's, so the month's first week wins
+      ['2026-08', '2026-09-02'], // ...which is exactly this week
+      ['2026-09', '2026-09-16'], // mid-month: the week you are living in
+      ['2026-03', '2026-01-01'], // far ahead: the month's first week
+    ] as const) {
+      expect(taskWeekForMonth(month, today), `${month} @ ${today}`).toBe(taskWeeksInMonth(month, today)[0]);
+    }
+    // A9's own worked example, unchanged by A11: `+ Task` on a September goal on 2 September lands on
+    // Mon 7 Sep, inside the month, and never on Mon 31 Aug.
+    expect(taskWeekForMonth('2026-09', '2026-09-02')).toBe('2026-09-07');
+  });
+
+  it('taskWeekForMonth stays TOTAL where the list is empty, because its callers need an answer', () => {
+    // A past month offers no options, and the clamp still answers the month's first week rather than
+    // `undefined` - the create is refused by `PERIOD_IN_PAST` a layer up, not by a missing value here.
+    expect(taskWeeksInMonth('2026-07', '2026-09-02')).toEqual([]);
+    expect(taskWeekForMonth('2026-07', '2026-09-02')).toBe('2026-07-06');
   });
 });

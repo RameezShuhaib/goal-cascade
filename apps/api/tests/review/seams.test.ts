@@ -51,12 +51,12 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
     const f = await fixture();
     const task = await f.createTask('Draft the thing');
 
-    const moved = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0, reason: 'not this week' });
+    const moved = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { period: WEEK, reason: 'not this week' });
     expect(moved.status).toBe(200);
-    const item = ((await moved.json()) as { item: { id: string; fromWeekStart: string; goalId: string } }).item;
+    const item = ((await moved.json()) as { item: { id: string; fromPeriodKey: string; goalId: string } }).item;
     // A2 (R-backlog-29) - the item lands ABOVE the week, on the monthly parent, because a weekly goal
     // may hold no backlog items and "move to backlog" means the work must LEAVE the week.
-    expect(item).toMatchObject({ goalId: f.monthly.id, fromWeekStart: WEEK });
+    expect(item).toMatchObject({ goalId: f.monthly.id, fromPeriodKey: WEEK });
 
     const back = await f.post(`/api/backlog/${item.id}/convert-to-task`, {});
     expect(back.status).toBe(201);
@@ -70,7 +70,7 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
 
     // D-19 — the item is MARKED, never deleted, and it points at the task it became.
     const itemRow = await db.select().from(backlogItems).where(eq(backlogItems.id, item.id)).get();
-    expect(itemRow).toMatchObject({ status: 'converted', convertedToTaskId: revived.id, fromWeekStart: WEEK });
+    expect(itemRow).toMatchObject({ status: 'converted', convertedToTaskId: revived.id, fromPeriodKey: WEEK });
 
     // R-task-30 — the new task is a NEW task with the right provenance, carrying the links across.
     expect(revived.id).not.toBe(task.id);
@@ -87,7 +87,7 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
   it('a second conversion of the round-tripped item is still refused (the exit did not reset it)', async () => {
     const f = await fixture();
     const task = await f.createTask('Draft the thing');
-    const item = ((await (await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0 })).json()) as {
+    const item = ((await (await f.post(`/api/tasks/${task.id}/move-to-backlog`, { period: WEEK })).json()) as {
       item: { id: string };
     }).item;
 
@@ -101,9 +101,9 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
   it('a task cannot exit twice, and a done task cannot exit at all (R-task-17)', async () => {
     const f = await fixture();
     const task = await f.createTask('Draft the thing');
-    expect((await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0 })).status).toBe(200);
+    expect((await f.post(`/api/tasks/${task.id}/move-to-backlog`, { period: WEEK })).status).toBe(200);
 
-    const twice = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0 });
+    const twice = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { period: WEEK });
     expect(twice.status).toBe(409);
     expect(((await twice.json()) as { error: { code: string } }).error.code).toBe('TASK_ALREADY_EXITED');
     // …and only ONE backlog item was ever produced by that task.
@@ -113,7 +113,7 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
   it('the cascade removes BOTH sides of a round trip and leaves nothing pointing at a dead goal', async () => {
     const f = await fixture();
     const task = await f.createTask('Draft the thing');
-    const item = ((await (await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0 })).json()) as {
+    const item = ((await (await f.post(`/api/tasks/${task.id}/move-to-backlog`, { period: WEEK })).json()) as {
       item: { id: string };
     }).item;
     expect((await f.post(`/api/backlog/${item.id}/convert-to-task`, {})).status).toBe(201);
@@ -154,7 +154,7 @@ describe('REVIEW / attack 1 — task → backlog → task, across two agents’ 
       (await f.t.fetch(`/api/goals/${f.weekly.id}`, { method: 'DELETE', cookie: f.cookie })).status,
     ).toBe(200);
 
-    const exit = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { week: 0 });
+    const exit = await f.post(`/api/tasks/${task.id}/move-to-backlog`, { period: WEEK });
     expect(exit.status).toBe(404); // R-auth-3 — a vanished task is indistinguishable from one that never was
     // No backlog item was minted on the dead goal.
     expect(await db.select().from(backlogItems).where(eq(backlogItems.goalId, f.monthly.id)).all()).toEqual([]);

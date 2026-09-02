@@ -1,5 +1,5 @@
 import { firstIssueMessage, isTransient, type ApiError } from '../api/errors';
-import { TASKS_LIVE_ON_WEEKLY_GOALS } from '../lens/copy';
+import { TASKS_LIVE_ON_TASK_GOALS } from '../lens/copy';
 
 /** Which read models are stale after an error, so the screen catches up with whatever really happened. */
 export type Refresh = 'none' | 'goals' | 'tasks' | 'backlog' | 'me' | 'all';
@@ -45,13 +45,13 @@ export function presentError(err: ApiError): ErrorPresentation {
     case 'LIFE_GOAL_IMMUTABLE':
       return e("A Life goal can't be moved or re-planned.", { refresh: 'goals' });
     /**
-     * ⚠ **A2 (R-goal-39, replaces `NOT_A_LEAF`)** — the condition is the HORIZON, never leaf-ness
-     * (R-goal-37), and the copy has to say so: a Monthly goal with no children is a leaf by the
-     * structural definition and is exactly the goal that must never hold a task. The user-facing
-     * sentence is the one the UX plan fixes: **"Tasks live on weekly goals."**
+     * ⚠ **A8 (R-task-51, replaces A2's `NOT_A_WEEKLY_GOAL`, itself replacing `NOT_A_LEAF`)** — the
+     * condition is the HORIZON, never leaf-ness (R-goal-37), and the copy has to say so: a **Quarterly**
+     * goal with no children is a leaf by the structural definition and is exactly the goal that must
+     * never hold a task. The user-facing sentence now names two horizons.
      */
-    case 'NOT_A_WEEKLY_GOAL':
-      return e(TASKS_LIVE_ON_WEEKLY_GOALS, { refresh: 'goals' });
+    case 'NOT_A_TASK_GOAL':
+      return e(TASKS_LIVE_ON_TASK_GOALS, { refresh: 'goals' });
     case 'NOT_A_LIFE_GOAL':
       return e('Learnings tag a Life goal, or nothing at all.', { refresh: 'goals' });
     case 'LIFE_GOAL_NO_BACKLOG':
@@ -105,6 +105,23 @@ export function presentError(err: ApiError): ErrorPresentation {
     case 'NOT_FOUND':
       // R-auth-3 — indistinguishable from someone else's row, by design. Refresh: our copy is stale.
       return e("That's no longer here.", { refresh: 'all' });
+    /**
+     * ⚠ **A8 (R-measure-4, R-measure-3, R-measure-1)** — the three codes the measures work added, each
+     * with a sentence a person can act on. This file's own rule is that a new domain code arrives WITH a
+     * case: without one they fall to `default:` and read "Couldn't save — try again.", which is advice
+     * that cannot work — retrying an identical 4xx produces an identical 4xx.
+     *
+     * They are unreachable until the measures UI lands, which is the next piece of work. That is the
+     * argument for adding them now rather than later: a code with no copy is invisible right up to the
+     * moment it is in front of the owner.
+     */
+    case 'MEASURE_TARGET_EQUALS_START':
+      // Never "pick something else" — the honest alternative is the one the product actually has.
+      return e('A target the same as the start names no movement. Give a different target, or none at all.');
+    case 'MEASURE_KIND_MISMATCH':
+      return e('This one is set to a value, not added to.');
+    case 'NO_MEASURE':
+      return e("This task doesn't carry a number yet.");
     case 'VALIDATION_FAILED':
       return e(firstIssueMessage(err) ?? "Couldn't save — check the values.");
     case 'RATE_LIMITED':

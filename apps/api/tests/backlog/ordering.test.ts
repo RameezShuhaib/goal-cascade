@@ -30,7 +30,7 @@ beforeAll(async () => {
 const post = (path: string, json: unknown) =>
   t.fetch(`${API_BASE}${path}`, { method: 'POST', cookie: f.cookie, json, idempotencyKey: crypto.randomUUID() });
 
-type Item = { id: string; title: string; sortKey: string; capturedAt: string; goalId: string; version: number; fromWeekStart: string | null };
+type Item = { id: string; title: string; sortKey: string; capturedAt: string; goalId: string; version: number; fromPeriodKey: string | null };
 
 async function capture(goalId: string, title: string): Promise<Item> {
   const res = await post(E.backlog, { goalId, title });
@@ -172,7 +172,7 @@ describe('R-backlog-17/19 — the relative move', () => {
     const b = await capture(M, 'B');
     const c = await capture(M, 'C');
 
-    const convert = await post(E.backlogItemConvert(b.id), { week: 0, goalId: week });
+    const convert = await post(E.backlogItemConvert(b.id), { goalId: week });
     expect(convert.status, await convert.clone().text()).toBe(201);
 
     // R-backlog-20 — conversion leaves a GAP: the survivors keep their relative order, nothing re-keyed.
@@ -195,7 +195,7 @@ describe('R-backlog-17/19 — the relative move', () => {
   it('R-backlog-19 — a converted item cannot be re-ordered at all', async () => {
     const week = (await seedWeeklyGoal(f, M, '2026-08-31', 'Also this week')).id;
     const a = await capture(M, 'A');
-    expect((await post(E.backlogItemConvert(a.id), { week: 0, goalId: week })).status).toBe(201);
+    expect((await post(E.backlogItemConvert(a.id), { goalId: week })).status).toBe(201);
     const res = await reorder(a.id, { to: 'top' });
     expect(res.status).toBe(409);
     expect(await codeOf(res)).toBe('ALREADY_CONVERTED');
@@ -262,7 +262,7 @@ describe('R-backlog-20 — moving, converting and deleting', () => {
     const moved = (await listAll()).find((i) => i.title === 'A')!;
     // S-backlog-10-1 still holds: it did not become newer by being re-filed.
     expect(moved.capturedAt).toBe(a.capturedAt);
-    expect(moved.fromWeekStart).toBe(a.fromWeekStart);
+    expect(moved.fromPeriodKey).toBe(a.fromPeriodKey);
   });
 
   it('S-backlog-20-2 — deleting the middle of a rearranged list leaves the survivors in order, un-re-keyed', async () => {

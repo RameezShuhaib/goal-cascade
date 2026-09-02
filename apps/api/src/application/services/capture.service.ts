@@ -188,7 +188,7 @@ export class LearningService {
  * tasks. `plan` went with the entity (R-rm-2) and `ideas` with theirs (R-rm-1).
  *
  * The payload is a snapshot of ONE week (`week` says which). Weeks in it are absolute Mondays (D-1) so
- * it does not decay across a Monday boundary, but `week.offset` and `carryWeeks` are projections against
+ * it does not decay across a Monday boundary, but `week.offset` and `carryAge` are projections against
  * `serverNow`: a client holding a stale payload must refetch rather than re-derive them.
  */
 @injectable()

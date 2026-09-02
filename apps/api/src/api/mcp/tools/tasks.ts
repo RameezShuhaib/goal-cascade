@@ -1,17 +1,56 @@
-import { LongText, MAX_LINKS, OneLiner, Reason, TaskSource, Title, Ulid, Url, WeekOffset } from '@goal-cascade/shared';
+import {
+  LongText,
+  MAX_LINKS,
+  MAX_READINGS,
+  MeasureNumber,
+  MeasureUnit,
+  OneLiner,
+  PeriodKeyParam,
+  Reason,
+  TaskSource,
+  Title,
+  Ulid,
+  Url,
+  WeekOffset,
+  periodKeyOf,
+} from '@goal-cascade/shared';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { GoalService, TaskService } from '../../../application/services';
 import { guard } from '../errors';
-import { goalOut, ok, stampIdempotencyKey, taskOut, week, weekOut, type McpDeps } from '../shapes';
+import { goalOut, ok, readingOut, stampIdempotencyKey, taskOut, week, weekOut, type McpDeps } from '../shapes';
 
 /** ⚠ **A2 (R-lens-7)** — positive offsets are ordinary now: a future week is reachable and writable. */
 const WeekOffsetArg = WeekOffset.default(0);
 
+/**
+ * ⚠ **A8, new (R-measure-1/2/4)** — a measure, as an agent supplies one.
+ *
+ * There is **no `current`** and no way to send one: it is derived from the readings (R-measure-3). There
+ * is **no direction flag**: `target` above `start` counts up, below it counts down. `target: null` is a
+ * real measure with a history and no percentage — the AMRAP case — and not a broken one. `target` equal
+ * to `start` is refused (`MEASURE_TARGET_EQUALS_START`): it names no movement.
+ */
+const MeasureArg = z
+  .object({
+    kind: z.enum(['counter', 'gauge']).describe('counter = you add to it (+3); gauge = you set it (= 78.5). There is no third.'),
+    start: MeasureNumber.default(0).describe('Where the count begins. 0 for a counter unless told otherwise.'),
+    target: MeasureNumber.nullable()
+      .default(null)
+      .describe('Where it is going, or null for a tracked number with no finish line. Must not equal start.'),
+    unit: MeasureUnit.default('').describe('leads, kg, reps. A word you were given; never parsed or converted.'),
+  })
+  .strict();
+
 export function registerTaskTools(server: McpServer, deps: McpDeps): void {
   const { dc, ctx } = deps;
 
-  /** One goal title for a task's `goal_path`. A task's goal is always a Weekly goal (R-goal-39). */
+  /**
+   * One goal path for a task's `goal_path`.
+   *
+   * ⚠ **A8 (R-task-51)** — a task's goal is a **Monthly or a Weekly** goal, and the old comment here
+   * ("always a Weekly goal") is false from A8. It is the same walk either way.
+   */
   const titleOf = async (goalId: string): Promise<string | undefined> => {
     try {
       const detail = await dc.resolve(GoalService).detail(ctx, goalId);
@@ -25,37 +64,61 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
   server.registerTool(
     'list_tasks',
     {
-      title: 'Tasks visible in one week',
+      title: 'Tasks visible in one week, and that week\'s month',
       description:
-        'The tasks visible in one week. Open tasks appear in EVERY week from the one they were created in onwards — they carry automatically, with no rollover step — and a task\'s week is its OWN stored field, taken from its weekly goal at creation and never changed after. Done tasks appear only in the week they were completed. Cancelled and moved-to-backlog tasks appear in no week at all. Carry ages are SIGNED and measured against today, so work planned for a future week reads NEGATIVE and never as late. Use list_lens(lens="Weekly") when you also want the weekly goals these tasks hang off, including the carried ones.',
+        'The tasks visible in one week. Open tasks appear in EVERY period from the one they were created in onwards — they carry automatically, with no rollover step — and a task\'s period is its OWN stored field, taken from its goal at creation and never changed after. Done tasks appear only in the period they were completed in. Cancelled and moved-to-backlog tasks appear in none. Carry ages are SIGNED and measured against today, so work planned ahead reads NEGATIVE and never as late. A task has a SCOPE: a task on a weekly goal has a week, a task on a monthly goal has a MONTH. `scope="month"` returns the month tasks of the month this week belongs to — a week belongs to its MONDAY\'s month, so on Wed 2 Sep 2026 the current week is Mon 31 Aug and its month is AUGUST. `scope="all"` returns both, and a month task in a week is NOT late: its deadline is the end of the month, so never describe one as overdue or behind because a week has passed. Use list_lens(lens="Weekly") when you also want the weekly goals these tasks hang off, including the carried ones.',
       inputSchema: z
         .object({
           week_offset: WeekOffsetArg,
-          state: z.enum(['all', 'open', 'done', 'carrying']).default('all').describe('carrying = open with carry_weeks >= 1'),
+          scope: z
+            .enum(['week', 'month', 'all'])
+            .default('week')
+            .describe("week = this week's own tasks; month = the month tasks of the month this week belongs to; all = both."),
+          state: z.enum(['all', 'open', 'done', 'carrying']).default('all').describe('carrying = open with carry_age >= 1'),
           limit: z.int().min(1).max(200).optional(),
         })
         .strict(),
     },
-    async ({ week_offset, state, limit }) =>
+    async ({ week_offset, scope, state, limit }) =>
       guard(async () => {
         const w = week(ctx, week_offset);
-        const res = await dc
-          .resolve(TaskService)
-          .list(ctx, { weekStart: w.weekStart, ...(limit !== undefined ? { limit } : {}) });
-        const tasks = res.tasks.filter((t) =>
+        const [weekRes, lens] = await Promise.all([
+          scope === 'month'
+            ? Promise.resolve(null)
+            : dc.resolve(TaskService).list(ctx, { weekStart: w.weekStart, ...(limit !== undefined ? { limit } : {}) }),
+          // The month band is a lens field (R-lens-31), so the month half is read where it is computed
+          // rather than re-derived here — one answer to "which month does this week belong to".
+          scope === 'week' ? Promise.resolve(null) : dc.resolve(GoalService).lens(ctx, { lens: 'Weekly', period: w.weekStart }),
+        ]);
+        const res = weekRes ?? { tasks: [], nextCursor: null, serverNow: ctx.now };
+        const tasks = [...res.tasks, ...(lens?.monthTasks ?? [])].filter((t) =>
           state === 'open'
             ? t.status === 'open'
             : state === 'done'
               ? t.status === 'done'
               : state === 'carrying'
-                ? t.status === 'open' && t.carryWeeks >= 1
+                ? t.status === 'open' && t.carryAge >= 1
                 : true,
         );
         const paths = new Map<string, string | undefined>();
         for (const id of new Set(tasks.map((t) => t.goalId))) paths.set(id, await titleOf(id));
         return ok({
           week: weekOut(w),
-          tasks: tasks.map((t) => taskOut(t, paths.get(t.goalId))),
+          /** R-lens-31 — the month this week belongs to, by the Monday rule. Quote it, never re-derive it. */
+          month_period_key: periodKeyOf('Monthly', w.weekStart),
+          /**
+           * ⚠ **A8 (R-task-54, S-lens-31-2) — THIS listing is a WEEK's, so it suppresses the label.**
+           *
+           * `taskOut` renders `carry_label` from the honest month-scale age, and `shapes.ts` says in
+           * terms that the suppression belongs to the surface — because the SAME task in the Monthly lens
+           * must show its chip. This is that surface. Without the flag the payload handed the agent
+           * `"2 months · since Jun"` to read out loud, one field below an instructions block promising
+           * A MONTH TASK IS NEVER LATE IN A WEEK.
+           *
+           * `carry_age` and `carry_unit` are left honest, so an agent asked *"how long has this been
+           * open"* can still answer; what it cannot do is find a ready-made late-sounding sentence.
+           */
+          tasks: tasks.map((t) => taskOut(t, paths.get(t.goalId), { suppressCarryLabel: t.scope === 'Monthly' })),
           next_cursor: res.nextCursor,
           server_now: res.serverNow,
         });
@@ -83,17 +146,21 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
   server.registerTool(
     'create_task',
     {
-      title: 'Add a task under a weekly goal',
+      title: 'Add a task under a monthly or weekly goal',
       description:
-        'Add a task under a WEEKLY goal. That is the whole condition — the horizon, and nothing else. A monthly goal with no weekly children looks like the end of a branch and still cannot hold a task; passing one is refused with NOT_A_WEEKLY_GOAL. Give EITHER goal_id (an existing weekly goal, from find_goal(only="weekly")) OR new_weekly_goal, which creates the weekly goal and the task in ONE transaction — use that instead of sending the user away when no weekly goal exists for the week yet, and tell them it was created, because nothing may be created invisibly. There is NO week argument: the task takes its week from its weekly goal, once, and it never changes. A weekly goal whose week has PASSED refuses the create (PERIOD_IN_PAST) — there is no back-dating — while a weekly goal any distance ahead accepts one. The done-condition is optional by design: do not fabricate one.',
+        'Add a task under a MONTHLY or a WEEKLY goal. That is the whole condition — the horizon, and nothing else. A quarterly goal with no monthly children looks like the end of a branch and still cannot hold a task; passing one, or a yearly or life goal, is refused with NOT_A_TASK_GOAL. Give EITHER goal_id OR new_weekly_goal. \n\nOn a MONTHLY goal, leaving `period` out is the normal case and creates a MONTH TASK on that goal, in that goal\'s month: one row, nothing inferred, no weekly goal invented, and the task shows up in the Monthly lens and in the month band of every week of that month. It is not late in any of those weeks — the deadline is the end of the month. Pass `period` as one of that month\'s Mondays ONLY when the user actually named a week; that resolves the weekly goal under it, refuses AMBIGUOUS_CONVERSION_TARGET if two qualify, and answers NO_WEEKLY_GOAL if none does — at which point re-send with new_weekly_goal, which creates the weekly goal and the task in ONE transaction, and TELL the user it was created, because nothing may be created invisibly.\n\nOn a WEEKLY goal the task takes that goal\'s week and `period` is unnecessary. A goal whose period has PASSED refuses the create (PERIOD_IN_PAST) — there is no back-dating at either scope — while any distance ahead is accepted. The done-condition is optional by design: do not fabricate one. `measure` attaches a number in the same call; leave it out for an ordinary checkbox, which is what most tasks are.',
       inputSchema: z
         .object({
-          goal_id: Ulid.optional().describe('An existing WEEKLY goal. Mutually exclusive with new_weekly_goal.'),
+          goal_id: Ulid.optional().describe('An existing MONTHLY or WEEKLY goal. Mutually exclusive with new_weekly_goal.'),
           new_weekly_goal: z
             .object({ parent_id: Ulid, title: Title })
             .strict()
             .optional()
-            .describe('Creates a weekly goal for the CURRENT week under parent_id, atomically with the task.'),
+            .describe('Creates a weekly goal for `period` (or the current week) under parent_id, atomically with the task.'),
+          period: PeriodKeyParam.optional().describe(
+            'Where it lands. OMIT on a monthly goal for a month task — that is the normal case. A Monday (2026-09-07) asks for that week instead.',
+          ),
+          measure: MeasureArg.optional().describe('Attach a number in the same call. Omit for an ordinary checkbox.'),
           title: Title,
           cond: OneLiner.default('').describe("The done-condition — how you'll know it's done. Optional."),
           description: LongText.default(''),
@@ -117,6 +184,8 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
           ...(args.new_weekly_goal !== undefined
             ? { newWeeklyGoal: { parentId: args.new_weekly_goal.parent_id, title: args.new_weekly_goal.title } }
             : {}),
+          ...(args.period !== undefined ? { period: args.period } : {}),
+          ...(args.measure !== undefined ? { measure: args.measure } : {}),
           title: args.title,
           cond: args.cond,
           description: args.description,
@@ -125,8 +194,8 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
         });
         return ok({
           task: taskOut(res.task, await titleOf(res.task.goalId)),
-          // R-task-49 — when a weekly goal was created for the owner, SAY SO. It was created without
-          // being asked for, so the agent must name it back rather than let it appear silently.
+          // R-task-48 — when a weekly goal was created for the owner, SAY SO. The agent must name it back
+          // rather than let it appear silently. It is null on every month-scope create, which is most.
           created_weekly_goal: res.goal ? goalOut(res.goal) : null,
           server_now: res.serverNow,
         });
@@ -158,15 +227,23 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
     {
       title: 'Tick a task off (exit 1 of 3)',
       description:
-        "Tick a task off. You may complete into any week from the task's origin week up to and including THIS one, past weeks included — past weeks stay fully editable for work. The task then appears only in the week it was completed in. A week earlier than the task's origin_week_start is refused, and so is ANY future week: you cannot finish work in a week that has not happened. A task whose weekly goal is in a future week therefore cannot be completed at all until that week arrives — `completable` on the task says so.",
+        "Tick a task off. You may complete into any period from the task's origin up to and including the current one, past periods included — past periods stay fully editable for work. The task then appears only in the period it was completed in.\n\nTHE PERIOD IS AT THE TASK'S OWN SCOPE. A week task is completed into a Monday; a MONTH TASK IS COMPLETED INTO A MONTH KEY (2026-09), and sending a Monday for one is refused. Omit `period` and the current period at that scope is used, which is almost always what you want. A period earlier than the task's origin_period_key is refused, and so is ANY future one: you cannot finish work in a period that has not happened. A task whose goal is in a future period therefore cannot be completed at all until it arrives — `completable` on the task says so.",
       inputSchema: z
-        .object({ task_id: Ulid, week_offset: WeekOffset.max(0).default(0).describe('0 or negative. The future is refused.') })
+        .object({
+          task_id: Ulid,
+          period: PeriodKeyParam.optional().describe(
+            'The period you are standing in, AT THE TASK\'S OWN SCOPE: a Monday (2026-09-07) for a week task, a month key (2026-09) for a month task. Omit for the current one. A future period is refused.',
+          ),
+        })
         .strict(),
     },
-    async ({ task_id, week_offset }) =>
+    async ({ task_id, period }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
-        const res = await dc.resolve(TaskService).complete(ctx, task_id, { week: week_offset });
+        // No period? The SERVICE resolves it at the task's own scope, where the task is already loaded —
+        // R-task-55's "the client names the period it is standing in" is about a client with a surface,
+        // and an agent has none.
+        const res = await dc.resolve(TaskService).complete(ctx, task_id, { ...(period !== undefined ? { period } : {}) });
         return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
       }),
   );
@@ -192,17 +269,28 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
   server.registerTool(
     'move_task_to_backlog',
     {
-      title: 'Park a task above its week (exit 2 of 3)',
+      title: 'Move a task to a backlog (exit 2 of 3)',
       description:
-        "Take a task out of the week and park it in the backlog of the nearest goal ABOVE its week — normally the monthly parent — keeping the description and links and noting which week it came from. It does NOT go on its own weekly goal: a weekly goal is a week, and the point of this exit is to leave the week. A weekly goal hanging directly off a life goal has nowhere to put it and the exit is refused (LIFE_GOAL_NO_BACKLOG); complete or cancel remain available. Only OPEN tasks can be moved, future-dated ones included. The reason is OPTIONAL — this product is deliberately guilt-free; pass only what the user actually said.",
-      inputSchema: z.object({ task_id: Ulid, week_offset: WeekOffsetArg, reason: Reason.optional() }).strict(),
+        "Take a task out of its period and park it in the backlog of the nearest goal that can hold one, keeping the description and links and noting which period it came from.\n\nWHERE IT LANDS DEPENDS ON THE TASK'S SCOPE. For a WEEK task it is the nearest goal ABOVE the week — normally the monthly parent — and never its own weekly goal, because a weekly goal IS a week and the point of this exit is to leave it; a weekly goal hanging directly off a life goal has nowhere to put it and the exit is refused (LIFE_GOAL_NO_BACKLOG). For a MONTH task it is the monthly goal the task is already on: a monthly goal holds both a backlog and tasks, deliberately, and that is the one-tap demotion for a month task that has carried too long. The item then reads `from Sep 2026` rather than `from week of ...`.\n\nOnly OPEN tasks can be moved, future-dated ones included. The reason is OPTIONAL — this product is deliberately guilt-free; pass only what the user actually said.",
+      inputSchema: z
+        .object({
+          task_id: Ulid,
+          period: PeriodKeyParam.optional().describe(
+            "The period you are standing in, AT THE TASK'S OWN SCOPE: a Monday for a week task, a month key for a month task. Omit for the current one.",
+          ),
+          reason: Reason.optional(),
+        })
+        .strict(),
     },
-    async ({ task_id, week_offset, reason }) =>
+    async ({ task_id, period, reason }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
         const res = await dc
           .resolve(TaskService)
-          .moveToBacklog(ctx, task_id, { week: week_offset, ...(reason !== undefined ? { reason } : {}) });
+          .moveToBacklog(ctx, task_id, {
+            ...(period !== undefined ? { period } : {}),
+            ...(reason !== undefined ? { reason } : {}),
+          });
         return ok({
           task: taskOut(res.task, await titleOf(res.task.goalId)),
           item: res.item,
@@ -256,6 +344,144 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
       guard(async () => {
         stampIdempotencyKey(deps);
         const res = await dc.resolve(TaskService).removeLink(ctx, task_id, link_id);
+        return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
+      }),
+  );
+  // ── retarget_task — Park in a week / Move to the month (NOT an exit) ───────────────────────────
+  server.registerTool(
+    'retarget_task',
+    {
+      title: 'Park a task in a week, or move it back to its month',
+      description:
+        "Move a task between its month and a week. A MONTH task parked into a week becomes that week's work; a WEEK task moved to its month goes back to the monthly goal above it. It keeps its title, condition, description, links, timeline and EVERY recorded value — only the goal and the period change.\n\nTHIS IS NOT A FOURTH EXIT. The task is still open, still visible and still the user's to finish; complete, move-to-backlog and cancel remain the only three ways a task leaves. Do not use it as a defer, a snooze or a reschedule, and do not describe it as one. A week task cannot be moved to a DIFFERENT week and a month task cannot be moved to a different month: those are the reschedule this product does not have, and both are refused.\n\n`period` is a Monday to park and a month key (2026-09) to move back. Parking resolves the weekly goal under the task's own monthly goal: one qualifies and it is used, two or more gives AMBIGUOUS_CONVERSION_TARGET and you must ask, none gives NO_WEEKLY_GOAL and you re-send with new_weekly_goal. Moving back needs no goal at all — it is the monthly goal above the weekly one, and a weekly goal with no monthly ancestor is refused with HORIZON_CONFLICT. A past period is refused; parking is planning. Retargeting to the period the task is already in does nothing and logs nothing.",
+      inputSchema: z
+        .object({
+          task_id: Ulid,
+          period: PeriodKeyParam.describe('A Monday (2026-09-14) parks it in that week; a month key (2026-09) moves it to that month.'),
+          goal_id: Ulid.optional().describe('Parking only: which weekly goal, when several qualify.'),
+          new_weekly_goal: z
+            .object({ parent_id: Ulid, title: Title })
+            .strict()
+            .optional()
+            .describe('Parking only: creates the weekly goal and parks the task in ONE transaction.'),
+        })
+        .strict(),
+    },
+    async ({ task_id, period, goal_id, new_weekly_goal }) =>
+      guard(async () => {
+        stampIdempotencyKey(deps);
+        const res = await dc.resolve(TaskService).retarget(ctx, task_id, {
+          period,
+          ...(goal_id !== undefined ? { goalId: goal_id } : {}),
+          ...(new_weekly_goal !== undefined
+            ? { newWeeklyGoal: { parentId: new_weekly_goal.parent_id, title: new_weekly_goal.title } }
+            : {}),
+        });
+        return ok({
+          task: taskOut(res.task, await titleOf(res.task.goalId)),
+          created_weekly_goal: res.goal ? goalOut(res.goal) : null,
+          server_now: res.serverNow,
+        });
+      }),
+  );
+
+  // ── set_task_measure ──────────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'set_task_measure',
+    {
+      title: 'Give a task a number, or change the one it has',
+      description:
+        "Attach a measure to a task, or replace the one it has. Two kinds and no third: a COUNTER you add to (+3 calls) and a GAUGE you set (= 78.5 kg). A task with no measure is an ordinary checkbox — that is what most tasks are, and it is not a counter that stops at one.\n\nDirection is implied by the two numbers: target above start counts up, target below start counts down. There is no direction to set. The TARGET IS OPTIONAL — `target: null` is a real, tracked number with a history and no percentage (an AMRAP set, a weight you just want recorded), not a degraded one. A target equal to the start is refused; it names no movement.\n\nEditing never touches the recorded values: the history is the history of the number, not of its shape. Reaching a target does NOT complete the task and completing a task does NOT record a value — the user decides both. Never report a pace, a projection, a trend, a streak or an on-track verdict from a measure; report the numbers that were recorded.",
+      inputSchema: z.object({ task_id: Ulid, measure: MeasureArg }).strict(),
+    },
+    async ({ task_id, measure }) =>
+      guard(async () => {
+        stampIdempotencyKey(deps);
+        const res = await dc.resolve(TaskService).setMeasure(ctx, task_id, { measure });
+        return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
+      }),
+  );
+
+  // ── clear_task_measure ────────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'clear_task_measure',
+    {
+      title: 'Remove a task\'s number and its whole history',
+      description:
+        'Remove a task\'s measure. THIS DELETES EVERY RECORDED VALUE with it, in one transaction, and cannot be undone. Call list_readings first, tell the user how many values will be lost, and get an explicit yes — this refusal-shaped confirmation is the same discipline the goal cascade delete uses. The task becomes an ordinary checkbox again and keeps everything else: title, condition, description, links, timeline, period. A task with no measure is refused with NO_MEASURE.',
+      inputSchema: z.object({ task_id: Ulid }).strict(),
+    },
+    async ({ task_id }) =>
+      guard(async () => {
+        stampIdempotencyKey(deps);
+        const res = await dc.resolve(TaskService).clearMeasure(ctx, task_id);
+        return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
+      }),
+  );
+
+  // ── record_reading ────────────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'record_reading',
+    {
+      title: 'Record a value on a measurable task',
+      description:
+        "Record one value. Give EITHER `value` (the absolute number now) OR `delta` (add this much). A delta against a GAUGE is refused with MEASURE_KIND_MISMATCH, because a gauge is set rather than added to; an absolute value against a COUNTER is fine, and is how you correct one to where it actually is.\n\nWhat is stored is always the ABSOLUTE value after the reading, so deleting one falls the current value back to the one before it. Readings follow the TASK and never the week: they survive the task carrying into a new week or month, being parked into a week, being moved back, being completed and being unchecked. There is no week, month or period on a reading and there never will be.\n\nRecording a value NEVER completes the task, even at or past the target: the user decides when it is done. A reading writes no timeline entry, by design — the values are their own list. A task with no measure is refused with NO_MEASURE; use set_task_measure first.",
+      inputSchema: z
+        .object({
+          task_id: Ulid,
+          value: MeasureNumber.optional().describe('The absolute value now. Use this for a gauge.'),
+          delta: MeasureNumber.optional().describe('Add this much. Counters only.'),
+          at: z.iso.datetime({ offset: true }).optional().describe('When it was recorded. Defaults to now; back-dating is fine.'),
+        })
+        .strict()
+        .refine((v) => (v.value === undefined) !== (v.delta === undefined), 'exactly one of value or delta is required'),
+    },
+    async ({ task_id, value, delta, at }) =>
+      guard(async () => {
+        stampIdempotencyKey(deps);
+        const res = await dc.resolve(TaskService).recordReading(ctx, task_id, {
+          ...(value !== undefined ? { value } : {}),
+          ...(delta !== undefined ? { delta } : {}),
+          ...(at !== undefined ? { at } : {}),
+        });
+        return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
+      }),
+  );
+
+  // ── list_readings ─────────────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'list_readings',
+    {
+      title: "A measurable task's recorded values",
+      description:
+        `Every value recorded on a task, oldest first, each with the time it was recorded. Capped at ${MAX_READINGS} per task, and there is no compaction, rollup or pruning: the values are the user's own and the app does not average or bucket them.\n\nRead these to answer "what have I recorded" and to name the count before clear_task_measure. Do NOT compute a pace, a projection, a forecast, a trend, a moving average, a streak, a completion rate or an on-track verdict from them, and do not sum a measure across tasks — the app deliberately has none of those, and inventing one here would be the first number in this product that judged its owner. Report what was recorded.`,
+      inputSchema: z.object({ task_id: Ulid }).strict(),
+    },
+    async ({ task_id }) =>
+      guard(async () => {
+        const res = await dc.resolve(TaskService).get(ctx, task_id, week(ctx, 0));
+        return ok({
+          task_id,
+          measure: taskOut(res.task, undefined).measure,
+          readings: res.task.readings.map(readingOut),
+          server_now: res.serverNow,
+        });
+      }),
+  );
+
+  // ── delete_reading ────────────────────────────────────────────────────────────────────────────
+  server.registerTool(
+    'delete_reading',
+    {
+      title: 'Delete one recorded value',
+      description:
+        'Delete one recorded value by its id, from list_readings. This is how a mistyped number is corrected: there is no edit — you delete it and record the right one. Deleting the latest value falls the current value back to the one before it; deleting a middle one changes the current value not at all; deleting the only one returns it to the start. It leaves no trace on the timeline, deliberately.',
+      inputSchema: z.object({ task_id: Ulid, reading_id: Ulid }).strict(),
+    },
+    async ({ task_id, reading_id }) =>
+      guard(async () => {
+        stampIdempotencyKey(deps);
+        const res = await dc.resolve(TaskService).deleteReading(ctx, task_id, reading_id);
         return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
       }),
   );

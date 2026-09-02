@@ -5,7 +5,7 @@ import { useCancelTask, useGoal, useMoveTaskToBacklog, useTask } from '../api/qu
 import { useSkin } from '../skin';
 import { Sheet } from './Sheet';
 import { FieldError, commandError } from './states';
-import { lensPath } from '../routes';
+import { lensPath, lensPathForScope } from '../routes';
 
 /**
  * R-task-15/16/18 — exits 2 and 3, both with an OPTIONAL reason. "No mandatory fields. Fast and
@@ -43,7 +43,9 @@ export function ConfirmTaskExitSheet({ taskId, exit, week }: { taskId: string; e
   const done = (message: string) => {
     close();
     ui.showToast(message);
-    navigate(lensPath('Weekly', task?.originWeekStart));
+    // ⚠ **A8 (R-task-52)** — back to the lens the task was IN, which for a month task is the Monthly
+    // one. `lensPath('Weekly', <a month key>)` produced a path that lens drops.
+    navigate(task ? lensPathForScope(task.scope, task.originPeriodKey) : lensPath('Weekly'));
   };
 
   const confirm = () => {
@@ -51,7 +53,7 @@ export function ConfirmTaskExitSheet({ taskId, exit, week }: { taskId: string; e
     const trimmed = reason.trim();
     if (exit === 'backlog') {
       moveToBacklog.mutate(
-        // D-12 — `fromWeekStart` is the week the task was LIVE in, which is the week being viewed.
+        // D-12 — `fromPeriodKey` is the week the task was LIVE in, which is the week being viewed.
         { id: task.id, week, ...(trimmed ? { reason: trimmed } : {}), version: task.version },
         { onSuccess: () => done('Moved to Backlog' + (trimmed ? ' — reason noted' : '')) },
       );

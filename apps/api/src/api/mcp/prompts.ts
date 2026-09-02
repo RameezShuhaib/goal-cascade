@@ -69,23 +69,31 @@ My notes for this week: ${notes}`),
     ({ weeks }) =>
       user(`Show me what is carrying and help me decide what to do about it.
 
-1. Call list_tasks(week_offset=0, state="carrying"). Use goalcascade://week/current to group them by
-   life goal and to see which weekly goals are in the CARRIED band — those are the intentions whose
-   week has passed while their work stayed open.
+1. Call list_tasks(week_offset=0, scope="week", state="carrying"). Use goalcascade://week/current to
+   group them by life goal and to see which weekly goals are in the CARRIED band — those are the
+   intentions whose week has passed while their work stayed open.
 2. For every task at least ${weeks} weeks old, call get_task and read its activity timeline. Tell me:
    when it was created and from where (a goal, a backlog pull, the + drawer), how many weeks it has
    carried, whether it has ever been renamed or had its done-condition changed, and which week its
    weekly goal was written for.
 3. For each one, state the honest reading in one line — for example: "carried 4 weeks, no
-   done-condition, its weekly goal was written for the week of 10 Aug".
+   done-condition, its weekly goal was written for the week of 10 Aug". State what the numbers say and
+   stop there: no pace, no projection, no "at this rate", no on-track or behind verdict, and no guess
+   at whether I will finish. Those are not in this product and they are not yours to add.
 4. Then offer me exactly the three exits this product has, and nothing else:
      - Complete it (complete_task)
      - Move it to the backlog (move_task_to_backlog) — it keeps its description and links, and it
-       lands on the goal ABOVE its week, normally the monthly parent
+       lands on the goal ABOVE its period: the monthly parent for a week task, and for a month task
+       the goal it is already on
      - Cancel it (cancel_task)
    Never offer to defer, snooze, reschedule, or move a task to a different week. Those do not exist,
-   and a task's week is its own stored field that nothing may rewrite.
-5. Act only on what I choose. When I give a reason, pass it through verbatim; when I do not, leave the
+   and a task's period is its own stored field that nothing may rewrite. Parking (retarget_task) is
+   not a fourth exit and is not part of this review: it moves work between a month and a week, which
+   is a different question from "is this still worth doing".
+5. MONTH TASKS ARE NOT PART OF THIS REVIEW unless I ask. A month task that has not been done this week
+   is not carrying and is not late — its deadline is the end of the month. If I ask about them, call
+   list_tasks(scope="month") and read their ages in MONTHS, which is the unit \`carry_unit\` gives you.
+6. Act only on what I choose. When I give a reason, pass it through verbatim; when I do not, leave the
    reason empty — this product never requires one.
 
 Do not create, edit or delete any goal in this workflow. In particular, do not "clean up" a weekly
@@ -105,9 +113,13 @@ goal whose week has passed: it is the record of what that week was for.`),
 1. If a goal was named, resolve it with find_goal first and confirm which one I mean before going on.
 2. Call list_backlog (scoped with goal_id if a goal was named). Group items by their owning goal,
    newest first.
-3. Cross-reference list_lens(lens="Weekly") for this week: an item can become work this week only if a
+3. Cross-reference list_lens(lens="Weekly") for this week: an item can become work THIS WEEK only if a
    weekly goal exists at or under its goal for this week. Summarise how many items there are, how they
    split across lines, and how many have a weekly goal ready to receive them.
+   ⚠ An item on a MONTHLY goal has a second, simpler destination: convert_backlog_item_to_task with
+   \`period\` set to that goal's own month makes it a MONTH TASK on the goal it is already on — nothing
+   is resolved, nothing is created, and it cannot fail the way the week path can. Prefer it whenever I
+   have not named a week, and say which of the two you are proposing before you do either.
 4. Walk me through them a few at a time. For each, propose one of:
      - pull it into this week (convert_backlog_item_to_task) — say which weekly goal will receive it,
        and if there is more than one candidate, ask me which

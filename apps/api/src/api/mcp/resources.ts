@@ -40,25 +40,38 @@ offsets are **ordinary**: any future period is readable and writable, at every h
 **What IS refused is a write into the past.** Creating a goal into an earlier period, or moving one
 there, is \`PERIOD_IN_PAST\`: planning does not rewrite history. A past period is closed to new plan and to
 NOTHING else — you may still edit a title, complete a task that was live that week, or uncheck one. And
-completing a task is bounded the other way too: \`origin_week ≤ week ≤ this week\`, so you cannot finish
-work in a week that has not happened.
+completing a task is bounded the other way too: \`origin ≤ period ≤ this period\`, **at the task's own
+scope**, so you cannot finish work in a period that has not happened. The completion names the period it
+was made in: from the month band of the week of Mon 31 Aug on 2 September it writes \`2026-08\`, the
+period you were standing in, and not "the current month".
 
 **A weekly goal's week is fixed for good.** It is set at creation and is not re-plannable; moving the
 goal to a different parent never changes it. An intention that did not happen carries forward through its
 open tasks, or is written again as a new weekly goal.
 
-**A task's week is its OWN field**, taken from its weekly goal when the task is created and immutable
-after. It is never re-read from the goal, which is why deleting a goal from a query result changes no
-task's week — and why the two legitimately differ once a task carries.
+**A task has a PERIOD and a SCOPE.** A task on a weekly goal has a WEEK; a task on a monthly goal has a
+MONTH. Its \`origin_period_key\` is its OWN field, taken from that goal when the task is created and
+immutable after — except through one named, logged operation, \`retarget_task\` (parking). It is never
+re-read from the goal, which is why deleting a goal from a query result changes no task's period, and why
+the two legitimately differ once a task carries. The key's FORMAT is the scope: \`2026-09\` is a month and
+\`2026-09-07\` is a week's Monday, and every comparison the product makes is inside ONE scope.
 
-**Carrying is a read, not a job.** An open task is visible in every week whose Monday is >= its
-\`origin_week_start\`. Nothing rewrites rows on a Monday; there is no cron in this product at all. Its
-weekly goal carries with it, shown separately as CARRIED and labelled with the week it was written for. A
-DONE task is visible only in the week it was completed. A cancelled or moved-to-backlog task is visible
-in no week.
+**Carrying is a read, not a job, at both scopes.** An open task is visible in every period \`>=\` its
+\`origin_period_key\`, within its own scope: a week task carries into next week, a MONTH TASK CARRIES INTO
+NEXT MONTH. Nothing rewrites rows on a Monday or on the 1st; there is no cron in this product at all. A
+weekly goal carries with its tasks, shown separately as CARRIED and labelled with the week it was written
+for. A DONE task is visible only in the period it was completed in. A cancelled or moved-to-backlog task
+is visible in none.
 
-**Carry age is SIGNED and measured against today**, not against the week you asked for: a task planned
-for next week reads \`-1\`, never \`+1\`, so a plan never ages and the red chip never fires at one.`;
+**Carry age is SIGNED, counted in the task's own unit, and measured against today** rather than against
+the period you asked for: a task planned for next period reads \`-1\`, never \`+1\`, so a plan never ages
+and the red chip never fires at one. \`carry_unit\` is \`weeks\` or \`months\`; never report an age without
+reading it.
+
+**A month task is never late in a week.** It shows in the month band of every week of its month and
+carries no chip, no "since" line and no badge there. Its deadline is the end of the month, so a week has
+no standing to call it late. Between MONTHS the same chip fires normally, where the unit means
+something.`;
 
 /**
  * Resources — stable, re-readable context an agent pulls once and stops asking for.
@@ -103,7 +116,7 @@ export function registerResources(server: McpServer, deps: McpDeps): void {
     {
       title: 'This week',
       description:
-        "This week's lens: the weekly goals written for it, the ones carrying open work in from earlier weeks, and every task visible in the week with its carry label.",
+        "This week's lens: the weekly goals written for it, the ones carrying open work in from earlier weeks, every task visible in the week with its carry label, and — ⚠ A8 — the MONTH BAND: the month tasks of the month this week belongs to (its Monday's month). Those are not this week's work and are never late in it.",
       mimeType: 'application/json',
     },
     async (uri) => json(uri, await weekSnapshot(deps, week(ctx, 0).weekStart)),
@@ -203,6 +216,16 @@ async function weekSnapshot(deps: McpDeps, weekStart: string) {
     this_week: lens.items.map(goalOut),
     carried: lens.carried.map(goalOut),
     tasks: lens.tasks,
+    /**
+     * ⚠ **A8, new (R-lens-31)** — the month band. **Its month is the week's MONDAY's month**, so the week
+     * of Mon 31 Aug carries AUGUST's on 2 September (R-goal-33, the seam R-lens-29 already names).
+     *
+     * These are deliberately a separate key from `tasks` rather than mixed in: they are not this week's
+     * work, they wear no carry label here, and an agent that merged the two arrays would report a month
+     * task as part of the week's load and — worse — as late once weeks had passed (S-lens-31-2).
+     */
+    month_period_key: lens.monthPeriodKey,
+    month_tasks: lens.monthTasks,
     outline: lensOutline(lens.groups, [...lens.items, ...lens.carried]),
     has_forward_content: lens.hasForwardContent,
     server_now: lens.serverNow,

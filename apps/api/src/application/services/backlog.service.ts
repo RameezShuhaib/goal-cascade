@@ -18,12 +18,12 @@ import type {
 import { inject, injectable } from 'tsyringe';
 import type { RequestContext } from '../context';
 import type { BacklogItem, BacklogLink, Goal, Task, TaskEvent, TaskLink } from '../../domain/entities';
-import { TASK_EVENT_GLYPHS, type TaskSource } from '../../domain/enums';
+import { TASK_EVENT_GLYPHS, type TaskScope, type TaskSource } from '../../domain/enums';
 import { DomainError, notFound } from '../../domain/errors';
-import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
+import { indexTree, isLifeHorizon } from '../../domain/goal-tree';
 
 import { between, rekey, topKey, withinGoal } from '../../domain/sort-keys';
-import { dateInTimezone, isPastPeriod, labelOf, weekStartFromOffset } from '@goal-cascade/shared';
+import { dateInTimezone, isPastPeriod, isPeriodKeyFor } from '@goal-cascade/shared';
 import type { GuardedWrite } from '../ports';
 import {
   IBacklogLinkRepo,
@@ -36,7 +36,8 @@ import {
   ITaskRepo,
 } from '../ports';
 import { GuardedBatch } from './guarded-batch';
-import { backlogLabelsOf, toBacklogItemView, type BacklogLabels } from './views';
+import { backlogLabelsOf, currentPeriodOf, toBacklogItemView, type BacklogLabels } from './views';
+import { resolveWeeklyTarget } from './weekly-target';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers. `capture.service.ts` imports `newestFirst` so the two capture-style lists answer in
@@ -82,11 +83,14 @@ export type NewTaskDraft = {
   description: string;
   links: readonly string[];
   source: TaskSource;
+  /** ⚠ **A8 (R-task-52)** — the receiving goal's horizon, copied. `Monthly` or `Weekly`, never anything else. */
+  scope: TaskScope;
   /**
-   * ⚠ **A2 (R-task-40)** — the task's own stored week, taken from the **Weekly goal** receiving it. There
-   * is no target-week parameter anywhere in the product: at creation the two are equal by construction.
+   * ⚠ **A2 (R-task-40), generalised by A8 (R-task-52)** — the task's own stored period, taken from the
+   * goal receiving it. At creation the two are equal by construction: the request names a period only to
+   * CHOOSE the goal, never to disagree with the one it chose.
    */
-  originWeekStart: string;
+  originPeriodKey: string;
   /** Structured provenance for the `created` event (`{ backlogItemId }`). */
   detail: Record<string, unknown>;
 };
@@ -102,7 +106,7 @@ export type TaskWrites = { task: Task; links: TaskLink[]; event: TaskEvent; writ
  * `TaskService` owns everything a task does AFTER it exists; this is the narrow seam where a conversion
  * mints one. See `docs/work/05-backlog-capture/build.md`.
  *
- * ⚠ **A2 (R-task-40)** — `originWeekStart` comes from the **Weekly goal** the conversion resolved, not
+ * ⚠ **A2 (R-task-40)** — `originPeriodKey` comes from the **Weekly goal** the conversion resolved, not
  * from "the current week": the receiving goal names the target week (R-backlog-26), and the task's week
  * is seeded from it once and then immutable. No back-dating survives that, because the resolution itself
  * refuses a past week.
@@ -116,12 +120,22 @@ export function buildTaskWrites(
     id: deps.ids.ulid(),
     userId: ctx.userId,
     goalId: draft.goalId,
+    // ⚠ **A8 (R-task-52)** — the scope comes from the RESOLVED goal's horizon, exactly as the period comes
+    // from its `periodKey`. `Add to this month` lands a Monthly scope; `Add to this week` a Weekly one.
+    scope: draft.scope,
     title: draft.title,
     cond: draft.cond,
     description: draft.description,
     status: 'open',
-    originWeekStart: draft.originWeekStart,
-    doneWeekStart: null,
+    originPeriodKey: draft.originPeriodKey,
+    donePeriodKey: null,
+    // ⚠ **A8 (R-measure-1)** — a conversion never brings a measure: a backlog item has no number to
+    // carry, and inventing one would be the app deciding what the owner meant. Attach it after.
+    measureKind: null,
+    measureStart: null,
+    measureCurrent: null,
+    measureTarget: null,
+    measureUnit: null,
     doneAt: null,
     exitReason: null,
     exitedAt: null,
@@ -146,7 +160,7 @@ export function buildTaskWrites(
     text: CREATED_EVENT_TEXT[draft.source],
     glyph: TASK_EVENT_GLYPHS.created,
     detail: JSON.stringify({ source: draft.source, ...draft.detail }),
-    weekStart: null,
+    periodKey: null,
     at: ctx.now,
   };
   return {
@@ -204,32 +218,39 @@ export function toTaskEventView(e: TaskEvent): TaskEventView {
 /**
  * The freshly created task, with the one event it has.
  *
- * `carryWeeks` is 0 by construction: at creation a task's own week and the week it is being viewed in are
- * the same (R-task-40), so there is nothing for R-task-43's signed age to measure. `completable` is
- * false for a FUTURE week — a task under a Weekly goal that has not arrived cannot be completed at all
- * until it does (R-task-44).
+ * `carryAge` is 0 by construction: at creation a task's own period and the period it is being viewed in
+ * are the same (R-task-40), so there is nothing for R-task-43's signed age to measure. `completable` is
+ * false for a FUTURE period — a task under a goal whose period has not arrived cannot be completed at all
+ * until it does (R-task-44, R-task-55). ⚠ **A8** — `currentPeriodKey` must be the current period AT THE
+ * NEW TASK'S SCOPE, so a month conversion compares month keys and a week conversion compares Mondays.
  */
-export function toNewTaskDetailView(w: TaskWrites, currentWeekStart: string): TaskDetailView {
+export function toNewTaskDetailView(w: TaskWrites, currentPeriodKey: string): TaskDetailView {
   return {
     id: w.task.id,
     goalId: w.task.goalId,
+    scope: w.task.scope,
     title: w.task.title,
     cond: w.task.cond,
     description: w.task.description,
     links: w.links.map(toLinkView),
     status: w.task.status,
     done: false,
-    originWeekStart: w.task.originWeekStart,
-    doneWeekStart: null,
+    originPeriodKey: w.task.originPeriodKey,
+    donePeriodKey: null,
     doneAt: null,
     exitReason: null,
     exitedAt: null,
-    carryWeeks: 0,
-    completable: w.task.originWeekStart <= currentWeekStart,
+    carryAge: 0,
+    carryUnit: w.task.scope === 'Monthly' ? 'months' : 'weeks',
+    completable: w.task.originPeriodKey <= currentPeriodKey,
+    // ⚠ **A8 (R-measure-1)** — a conversion never brings a measure, so a converted task is an ordinary
+    // checkbox and its payload is byte-identical to what it was before A8 (S-measure-1-1).
+    measure: null,
     createdAt: w.task.createdAt,
     updatedAt: w.task.updatedAt,
     version: w.task.version,
     events: [toTaskEventView(w.event)],
+    readings: [],
   };
 }
 
@@ -265,7 +286,7 @@ export function assertCanHoldBacklog(goal: Goal): void {
 export function buildBacklogItem(
   ctx: RequestContext,
   ids: IIdGenerator,
-  input: { goalId: string; title: string; description: string; links: readonly string[]; fromWeekStart?: string | null; sortKey: string },
+  input: { goalId: string; title: string; description: string; links: readonly string[]; fromPeriodKey?: string | null; sortKey: string },
 ): { item: BacklogItem; links: BacklogLink[] } {
   const item: BacklogItem = {
     id: ids.ulid(),
@@ -274,7 +295,7 @@ export function buildBacklogItem(
     title: input.title,
     description: input.description,
     capturedAt: ctx.now,
-    fromWeekStart: input.fromWeekStart ?? null,
+    fromPeriodKey: input.fromPeriodKey ?? null,
     sortKey: input.sortKey,
     status: 'open',
     convertedToTaskId: null,
@@ -464,7 +485,7 @@ export class BacklogService {
   }
 
   /**
-   * R-backlog-10 / S-backlog-10-1 — move to any other NON-Life goal. `capturedAt` and `fromWeekStart` are
+   * R-backlog-10 / S-backlog-10-1 — move to any other NON-Life goal. `capturedAt` and `fromPeriodKey` are
    * untouched: the item did not become newer by being re-filed, and "came out of the week of …" is a
    * fact about its history, not about its current goal.
    */
@@ -474,7 +495,7 @@ export class BacklogService {
 
     // ⚠ **A1 (R-backlog-20)** — a FRESH key at the top of the destination. Its old position is not
     // preserved, because a per-goal order has nothing to preserve it against (R-backlog-21) and the
-    // destination's own order is the only one that now applies. `capturedAt` and `fromWeekStart` are
+    // destination's own order is the only one that now applies. `capturedAt` and `fromPeriodKey` are
     // still untouched (S-backlog-10-1): the item did not become newer by being re-filed, and "came out of
     // the week of …" is a fact about its history, not about its current goal.
     const top = await this.mintTop(ctx, input.goalId);
@@ -652,11 +673,22 @@ export class BacklogService {
       });
     }
 
-    // R-backlog-26 — the conversion names a TARGET WEEK, and the receiving goal is the Weekly goal at or
-    // under the item's goal whose `periodKey` is that week. `week` may not be in the past (the schema
-    // pins `>= 0`, and R-goal-36 is the reason).
-    const weekStart = weekStartFromOffset(ctx.currentWeekStart, input.week);
-    const resolved = await this.resolveConversionTarget(ctx, item, weekStart, input.goalId, input.newWeeklyGoal);
+    /**
+     * ⚠ **A8 (R-backlog-31) — `period` names ONE of two destinations, and the key's FORMAT says which.**
+     *
+     * Absent means the current week, which is the `+` drawer's meaning and every pre-A8 caller's
+     * (R-backlog-27). A Monday is `Add to this week`, unchanged in every particular. A month key is
+     * **`Add to this month`**: the item becomes a month task **on the goal it is already attached to**,
+     * with no resolution, no candidate list, no ambiguity, no `NO_WEEKLY_GOAL` and no implicitly created
+     * goal — the target is the goal the item is already on (S-backlog-31-1).
+     *
+     * **The month path is the one that removes a dead end.** `NO_WEEKLY_GOAL` was reachable from every
+     * backlog item on a Monthly goal in a week nobody had planned yet; from A8 it is reachable only when
+     * the owner has explicitly asked for a *week*.
+     */
+    const period = input.period ?? ctx.currentWeekStart;
+    const today = dateInTimezone(ctx.now, ctx.tz);
+    const resolved = await this.resolveConversionTarget(ctx, item, period, today, input.goalId, input.newWeeklyGoal);
     const itemLinks = await this.links.listByItems(ctx.userId, [item.id]);
 
     const built = buildTaskWrites(
@@ -669,8 +701,9 @@ export class BacklogService {
         description: item.description,
         links: itemLinks.map((l) => l.url),
         source: 'backlog',
-        // R-task-40 — from the receiving Weekly goal's own week, never from "today".
-        originWeekStart: resolved.goal.periodKey,
+        // R-task-52 — from the receiving goal's own period and horizon, never from "today".
+        scope: resolved.goal.horizon === 'Monthly' ? 'Monthly' : 'Weekly',
+        originPeriodKey: resolved.goal.periodKey,
         detail: { backlogItemId: item.id },
       },
     );
@@ -705,7 +738,7 @@ export class BacklogService {
     ]);
 
     return {
-      task: toNewTaskDetailView(built, ctx.currentWeekStart),
+      task: toNewTaskDetailView(built, currentPeriodOf(ctx, built.task.scope)),
       item: await this.viewOf(ctx, converted, itemLinks),
       goal: resolved.created ? toGoalView(resolved.created) : null,
       serverNow: ctx.now,
@@ -735,88 +768,69 @@ export class BacklogService {
   private async resolveConversionTarget(
     ctx: RequestContext,
     item: BacklogItem,
-    weekStart: string,
+    period: string,
+    today: string,
     requested?: string,
     inline?: { parentId: string; title: string },
   ): Promise<{ goal: Goal; created: Goal | null }> {
-    const candidates = await this.goals.weeklyUnderForWeek(ctx.userId, item.goalId, weekStart);
+    /**
+     * ⚠ **A8 (R-backlog-31) — `Add to this month`, and it has no resolution step at all.**
+     *
+     * The target is the goal the item is already attached to, so there is nothing to look up, nothing to
+     * disambiguate and nothing to create. It must be that goal's own month, because a task's period is
+     * seeded from its goal's (R-task-52); an item on a Yearly or Quarterly goal has no month path at all,
+     * because those horizons hold no tasks (S-backlog-31-2).
+     */
+    if (isPeriodKeyFor('Monthly', period)) {
+      const goal = await this.requireGoal(ctx, item.goalId);
+      if (goal.horizon !== 'Monthly') {
+        throw new DomainError('NOT_A_TASK_GOAL', 'only a monthly goal holds a month task; add this to a week instead', {
+          itemId: item.id,
+          goalId: goal.id,
+          horizon: goal.horizon,
+        });
+      }
+      if (goal.periodKey !== period) {
+        throw new DomainError('VALIDATION_FAILED', "that is not this item's own month, and a task takes its month from its goal", {
+          itemId: item.id,
+          period,
+          goalPeriodKey: goal.periodKey,
+        });
+      }
+      if (isPastPeriod('Monthly', period, today)) {
+        throw new DomainError('PERIOD_IN_PAST', 'work cannot be added to a month that has passed', { period });
+      }
+      if (requested !== undefined || inline !== undefined) {
+        throw new DomainError('VALIDATION_FAILED', 'the month path resolves no weekly goal: the item lands on the goal it is on', {
+          itemId: item.id,
+        });
+      }
+      return { goal, created: null };
+    }
 
-    if (requested !== undefined) {
-      const chosen = candidates.find((g) => g.id === requested);
-      if (chosen) return { goal: chosen, created: null };
-      // R-auth-3 — a goal that is not the caller's is indistinguishable from one that does not exist.
-      const goal = await this.goals.findById(ctx.userId, requested);
-      if (!goal) throw notFound('goal');
-      throw new DomainError('NO_WEEKLY_GOAL', 'that goal is not a weekly goal at or under this item for that week', {
+    if (!isPeriodKeyFor('Weekly', period)) {
+      throw new DomainError('VALIDATION_FAILED', 'a backlog item becomes work in a week or in a month, and in nothing else', {
         itemId: item.id,
-        goalId: requested,
-        weekStart,
-        candidates: candidates.map((g) => ({ id: g.id, title: g.title })),
+        period,
       });
     }
-
-    if (candidates.length === 1) return { goal: candidates[0]!, created: null };
-    if (candidates.length > 1) {
-      // Not a validation failure: the input was fine, the product has no single answer. Its own code so
-      // the client can branch on `error.code` and render a chooser rather than a field error.
-      throw new DomainError('AMBIGUOUS_CONVERSION_TARGET', 'more than one weekly goal can receive this item — choose one', {
-        itemId: item.id,
-        weekStart,
-        candidates: candidates.map((g) => ({ id: g.id, title: g.title })),
-      });
+    if (isPastPeriod('Weekly', period, today)) {
+      throw new DomainError('PERIOD_IN_PAST', 'work cannot be added to a week that has passed', { period });
     }
-
-    if (!inline) {
-      throw new DomainError('NO_WEEKLY_GOAL', `"${item.title}" becomes a task under a weekly goal, and there is none for that week`, {
-        itemId: item.id,
-        goalId: item.goalId,
-        weekStart,
-      });
-    }
-    // Minted ONCE: `goal` and `created` are the same row. It is returned twice so the caller can both
-    // hang the task off it and tell the owner it was created — nothing may be created invisibly
-    // (R-task-49) — without minting a second id.
-    const created = await this.mintWeeklyGoal(ctx, inline, weekStart);
-    return { goal: created, created };
-  }
-
-  /**
-   * R-task-48 — the inline `New weekly goal` the refusal sheet offers instead of sending the owner away.
-   *
-   * The parent must be able to hold a Weekly child (R-goal-31/32) and the week must not be past
-   * (R-goal-36): this path may not be a way around a rule the ordinary create enforces.
-   */
-  private async mintWeeklyGoal(
-    ctx: RequestContext,
-    input: { parentId: string; title: string },
-    weekStart: string,
-  ): Promise<Goal> {
-    const parent = await this.goals.findById(ctx.userId, input.parentId);
-    if (!parent) throw notFound('goal');
-    if (parent.horizon === 'Weekly') {
-      throw new DomainError('HORIZON_CONFLICT', 'a weekly goal cannot sit under a weekly goal', {
-        parentHorizon: parent.horizon,
-        childHorizon: 'Weekly',
-      });
-    }
-    if (isPastPeriod('Weekly', weekStart, dateInTimezone(ctx.now, ctx.tz))) {
-      throw new DomainError('PERIOD_IN_PAST', 'a weekly goal cannot be created into a week that has passed', { weekStart });
-    }
-    const now = this.clock.nowIso();
-    return {
-      id: this.ids.ulid(),
-      userId: ctx.userId,
-      parentId: parent.id,
-      horizon: 'Weekly',
-      title: input.title,
-      why: '',
-      pulse: 'On track',
-      periodKey: weekStart,
-      period: labelOf('Weekly', weekStart),
-      createdAt: now,
-      updatedAt: now,
-      version: 1,
-    };
+    // The week path, delegated to the ONE resolver so this refusal, `+ Task`'s and Park's are the same
+    // refusal (`weekly-target.ts`, R-rm-6's reason for extracting it).
+    return resolveWeeklyTarget(
+      ctx,
+      { goals: this.goals, ids: this.ids, now: () => this.clock.nowIso() },
+      {
+        underGoalId: item.goalId,
+        weekStart: period,
+        subject: item.title,
+        requested,
+        inline,
+        details: { itemId: item.id },
+      },
+    );
   }
 
   private async requireGoal(ctx: RequestContext, id: string): Promise<Goal> {

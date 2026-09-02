@@ -34,7 +34,7 @@ export class MeService {
    * CSS filter that inverted images and did not survive a reload).
    *
    * A timezone the runtime does not recognise is refused rather than stored: it decides every week
-   * boundary in the product (R-auth-5), so a bad value would quietly corrupt `originWeekStart` on every
+   * boundary in the product (R-auth-5), so a bad value would quietly corrupt `originPeriodKey` on every
    * task created afterwards.
    */
   async patchPreferences(ctx: RequestContext, patch: PatchPreferencesRequest): Promise<PreferencesResponse> {

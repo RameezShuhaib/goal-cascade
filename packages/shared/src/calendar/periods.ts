@@ -1,5 +1,5 @@
 import { isPeriodKeyFor, type Horizon } from '../common';
-import { addWeeks, weekStartOfDate } from './weeks';
+import { addWeeks, weekStartOfDate, weeksBetween } from './weeks';
 
 /**
  * Period arithmetic — **the one place it lives** (R-goal-33, R-goal-34, R-lens-9).
@@ -371,8 +371,65 @@ export function zoomWeekForMonth(monthKey: string, today: string): string {
  * and the first-week fallback only fires for a month the current week is not in.
  */
 export function taskWeekForMonth(monthKey: string, today: string): string {
-  const thisWeek = weekStartOfDate(today);
-  return periodKeyOf('Monthly', thisWeek) === monthKey ? thisWeek : firstMondayIn(monthKey);
+  return taskWeeksInMonth(monthKey, today)[0] ?? firstMondayIn(monthKey);
+}
+
+/**
+ * ⚠ **A11 (`32-week-selection` §4.2/§4.3) — the weeks `+ Task` and Park may offer for `monthKey`.**
+ *
+ * **Every Monday whose own month is `monthKey`, dropping the ones before the current week**, oldest
+ * first. `Sep 2026` is Mon 7, 14, 21 and 28 Sep and never the week of Mon 31 Aug, because a week belongs
+ * to its Monday's month (R-goal-33) and the weeks of a month therefore partition it — there is no spill
+ * and no seam option to decide about.
+ *
+ * **`taskWeekForMonth` is defined as this list's head, not beside it.** A9 introduced the clamp as its own
+ * predicate; A11 turns it into a default the owner can change, and the only way "the default is the first
+ * option" can stay true is if it *is* the first option. `periods.test.ts` proves the two agree rather than
+ * a comment claiming they do — which is the shape of the drift `weekForMonth` already produced once.
+ *
+ * **Past weeks are omitted, never offered-and-disabled** (R-goal-36, R-task-41): the picker must not offer
+ * what the server would refuse (D-5), and there is nothing to explain because nothing on screen implies
+ * the missing weeks were ever there.
+ *
+ * **The list is empty only for a past month**, whose last Monday is behind the current one — and `+ Task`
+ * does not render on a past month at all (R-goal-36, R-task-57). Callers that need a total function use
+ * `taskWeekForMonth`, which falls back to the month's first week.
+ */
+export function taskWeeksInMonth(monthKey: string, today: string): string[] {
+  const currentWeek = weekStartOfDate(today);
+  const weeks: string[] = [];
+  const last = lastMondayIn(monthKey);
+  for (let w = firstMondayIn(monthKey); w <= last; w = addWeeks(w, 1)) {
+    if (w >= currentWeek) weeks.push(w);
+  }
+  return weeks;
+}
+
+/**
+ * ⚠ **A8 (R-task-54) — whole periods from `from` to `to`, at ONE horizon**, positive when `to` is later.
+ *
+ * `weeksBetween`'s generalisation, and the only arithmetic A8 adds to the calendar. A month task's carry
+ * age is counted in **months** and a week task's in **weeks** (R-task-54), both within one scope, so the
+ * one thing the caller must supply is which scale it is counting in — the keys' formats are not compared
+ * across horizons and never should be.
+ *
+ * Both keys must be canonical for `horizon`; a malformed one answers `0` rather than a guess, because a
+ * carry age is a number that renders and `NaN` weeks is worse than no chip.
+ */
+export function periodsBetween(horizon: Horizon, from: string, to: string): number {
+  if (!isPeriodKeyFor(horizon, from) || !isPeriodKeyFor(horizon, to)) return 0;
+  if (horizon === 'Weekly') return weeksBetween(from, to);
+  if (horizon === 'Life') return 0;
+  if (horizon === 'Yearly') return Number(to) - Number(from);
+  const ordinal = (key: string): number => {
+    if (horizon === 'Quarterly') {
+      const q = QUARTER_RE.exec(key)!;
+      return Number(q[1]) * 4 + (Number(q[2]) - 1);
+    }
+    const m = MONTH_RE.exec(key)!;
+    return Number(m[1]) * 12 + (Number(m[2]) - 1);
+  };
+  return ordinal(to) - ordinal(from);
 }
 
 /**

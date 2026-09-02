@@ -2,7 +2,7 @@ import type { MoveTaskToBacklogResponse, TaskResponse } from '@goal-cascade/shar
 import { beforeEach, describe, expect, it } from 'vitest';
 import { IBacklogLinkRepo, IBacklogRepo, ITaskRepo } from '../../src/application/ports';
 import { createTestApp, signedInOwner } from '../helpers/app';
-import { codeOf, command, detail, kinds, listWeek, makeLine, seedTask, texts } from './helpers';
+import { codeOf, command, detail, kinds, listWeek, makeLine, seedTask, texts, thisWeek, weekAt } from './helpers';
 
 /**
  * The three exits and the uncheck — R-task-13..21, D-15.
@@ -34,13 +34,13 @@ async function openTask(originWeek: string = MON.aug31, body: Record<string, unk
 describe('R-task-14 — exit 1 of 3: complete', () => {
   it('S-task-14-1 — completing in a PAST week stamps that week, logs Completed, and leaves week 0', async () => {
     const { cookie, task } = await openTask(MON.aug17);
-    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: -1 });
+    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: weekAt(t, -1) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as TaskResponse;
 
     expect(body.task.status).toBe('done');
     expect(body.task.done).toBe(true);
-    expect(body.task.doneWeekStart).toBe(MON.aug24);
+    expect(body.task.donePeriodKey).toBe(MON.aug24);
     // D-4 — `doneAt` is the instant of completion; the "Done Fri 28 Aug" label is derived, never stored.
     expect(body.task.doneAt).toBe('2026-08-31T10:00:00.000Z');
     expect(texts(await detail(t, cookie, task.id))).toContain('Completed');
@@ -51,15 +51,21 @@ describe('R-task-14 — exit 1 of 3: complete', () => {
 
   it('S-task-14-2 — completing in a week EARLIER than the origin is refused', async () => {
     const { cookie, task } = await openTask(MON.aug24);
-    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: -2 });
+    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: weekAt(t, -2) });
     expect(res.status).toBe(422);
     expect(await codeOf(res)).toBe('WEEK_OUT_OF_RANGE');
   });
 
-  it('S-task-14-2 — a future week is refused by the contract itself', async () => {
+  /**
+   * ⚠ **A8 (R-task-55) — retitled, not weakened.** The bound used to live on `CompleteTaskRequest.week`'s
+   * `.max(0)`; with an explicit period there is no offset to bound, so the service re-states it against
+   * the resolved key. Same refusal, same status, same code — one layer down.
+   */
+  it('S-task-14-2 / S-task-55-1 — a future period is refused, now by the service', async () => {
     const { cookie, task } = await openTask();
-    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: 1 });
+    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: weekAt(t, 1) });
     expect(res.status).toBe(422);
+    expect(await codeOf(res)).toBe('WEEK_OUT_OF_RANGE');
   });
 });
 
@@ -80,7 +86,7 @@ describe('R-task-15 — exit 2 of 3: move to backlog', () => {
       links: ['https://www.github.com/acme/pr/1'],
     });
 
-    const res = await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, { week: -1, reason: 'not this month' });
+    const res = await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, { period: weekAt(t, -1), reason: 'not this month' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as MoveTaskToBacklogResponse;
 
@@ -90,7 +96,7 @@ describe('R-task-15 — exit 2 of 3: move to backlog', () => {
     expect(body.item.description).toBe('the long version');
     expect(body.item.links.map((l) => l.url)).toEqual(['https://www.github.com/acme/pr/1']);
     // D-12 — the week the task was LIVE in, as a date. Not "this week", and not a display string.
-    expect(body.item.fromWeekStart).toBe(MON.aug24);
+    expect(body.item.fromPeriodKey).toBe(MON.aug24);
 
     const c = t.container();
     const items = await c.resolve<IBacklogRepo>(IBacklogRepo).listOpen(userId);
@@ -104,7 +110,7 @@ describe('R-task-15 — exit 2 of 3: move to backlog', () => {
 
   it('S-task-15-1 / D-15 — the record and its timeline survive the exit, reason and all', async () => {
     const { cookie, userId, task } = await openTask();
-    await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, { reason: 'waiting on design' });
+    await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, { period: thisWeek(t), reason: 'waiting on design' });
 
     const stored = await t.container().resolve<ITaskRepo>(ITaskRepo).findById(userId, task.id);
     expect(stored?.status).toBe('movedToBacklog');
@@ -119,7 +125,7 @@ describe('R-task-15 — exit 2 of 3: move to backlog', () => {
 
   it('S-task-15-2 — a blank reason still succeeds and logs the bare line', async () => {
     const { cookie, task } = await openTask();
-    const res = await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, {});
+    const res = await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, { period: thisWeek(t) });
     expect(res.status).toBe(200);
     expect(texts(await detail(t, cookie, task.id))).toContain('Moved to Backlog');
   });
@@ -149,10 +155,12 @@ describe('R-task-16 — exit 3 of 3: cancel', () => {
 describe('R-task-13/17 — exactly three exits, on open tasks only', () => {
   it('S-task-17-1 — move and cancel are refused on a DONE task', async () => {
     const { cookie, task } = await openTask();
-    expect((await command(t, cookie, `/api/tasks/${task.id}/complete`, {})).status).toBe(200);
+    expect((await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) })).status).toBe(200);
 
     for (const exit of ['move-to-backlog', 'cancel']) {
-      const res = await command(t, cookie, `/api/tasks/${task.id}/${exit}`, {});
+      // ⚠ **A8** — `move-to-backlog` names its period and `cancel` has none to name (it leaves every
+      // period at once), so the two bodies differ. The refusal under test is the same for both.
+      const res = await command(t, cookie, `/api/tasks/${task.id}/${exit}`, exit === 'cancel' ? {} : { period: thisWeek(t) });
       expect(res.status).toBe(409);
       expect(await codeOf(res)).toBe('TASK_ALREADY_EXITED');
     }
@@ -161,7 +169,7 @@ describe('R-task-13/17 — exactly three exits, on open tasks only', () => {
   it('S-task-17-1 — a second exit on an already-exited task is refused', async () => {
     const { cookie, task } = await openTask();
     expect((await command(t, cookie, `/api/tasks/${task.id}/cancel`, {})).status).toBe(200);
-    const again = await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, {});
+    const again = await command(t, cookie, `/api/tasks/${task.id}/move-to-backlog`, { period: thisWeek(t) });
     expect(again.status).toBe(409);
     expect(await codeOf(again)).toBe('TASK_ALREADY_EXITED');
   });
@@ -169,7 +177,7 @@ describe('R-task-13/17 — exactly three exits, on open tasks only', () => {
   it('S-task-13-1 — there is no fourth exit: defer / snooze / reschedule / move-to-week do not exist', async () => {
     const { cookie, task } = await openTask();
     for (const path of ['defer', 'snooze', 'reschedule', 'move-to-week']) {
-      const res = await command(t, cookie, `/api/tasks/${task.id}/${path}`, { week: -1 });
+      const res = await command(t, cookie, `/api/tasks/${task.id}/${path}`, { period: weekAt(t, -1) });
       expect(res.status).toBe(404);
     }
   });
@@ -183,18 +191,18 @@ describe('R-task-19/20/21 — uncheck', () => {
     const { weekly: leaf } = await makeLine(t, userId, MON.aug10);
     const task = await seedTask(t, cookie, { goalId: leaf.id, title: 'four weeks old' });
     at(MON.aug17);
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: 0 });
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
     at(MON.aug31);
 
     const res = await command(t, cookie, `/api/tasks/${task.id}/uncheck`, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as TaskResponse;
     expect(body.task.done).toBe(false);
-    expect(body.task.doneWeekStart).toBeNull();
+    expect(body.task.donePeriodKey).toBeNull();
     expect(body.task.doneAt).toBeNull();
     // The whole point: the origin is NOT reset to today, so the age it earned is the age it shows.
-    expect(body.task.originWeekStart).toBe(MON.aug10);
-    expect(body.task.carryWeeks).toBe(3);
+    expect(body.task.originPeriodKey).toBe(MON.aug10);
+    expect(body.task.carryAge).toBe(3);
 
     // Open again in every week from its origin forward.
     for (const [week, age] of [
@@ -205,13 +213,13 @@ describe('R-task-19/20/21 — uncheck', () => {
     ] as const) {
       const list = await listWeek(t, cookie, week);
       expect(list.tasks.map((x) => x.id)).toEqual([task.id]);
-      expect(list.tasks[0]?.carryWeeks).toBe(age);
+      expect(list.tasks[0]?.carryAge).toBe(age);
     }
   });
 
   it('S-task-19-2 — no second task is created and the history is intact, newest first', async () => {
     const { cookie, userId, task } = await openTask();
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, {});
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
     await command(t, cookie, `/api/tasks/${task.id}/uncheck`, {});
 
     const all = await t.container().resolve<ITaskRepo>(ITaskRepo).listOpenByGoals(userId, [task.goalId]);
@@ -222,7 +230,7 @@ describe('R-task-19/20/21 — uncheck', () => {
   it('S-task-20-1 — unchecking works on a dormant leaf and does not re-parent the task', async () => {
     // Active in week −1 only; the leaf is dormant in week 0 when the uncheck happens.
     const { cookie, leaf, task } = await openTask(MON.aug24);
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: -1 });
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: weekAt(t, -1) });
     const res = await command(t, cookie, `/api/tasks/${task.id}/uncheck`, {});
     expect(res.status).toBe(200);
     expect(((await res.json()) as TaskResponse).task.goalId).toBe(leaf.id);
@@ -230,12 +238,12 @@ describe('R-task-19/20/21 — uncheck', () => {
 
   it('S-task-21-1 / S-task-21-3 — a skipped, blank or unchanged condition writes and logs nothing', async () => {
     const { cookie, task } = await openTask(MON.aug31, { cond: 'the PR is merged' });
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, {});
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
 
     await command(t, cookie, `/api/tasks/${task.id}/uncheck`, {}); // Skip
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, {});
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
     await command(t, cookie, `/api/tasks/${task.id}/uncheck`, { cond: '   ' }); // whitespace only
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, {});
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
     await command(t, cookie, `/api/tasks/${task.id}/uncheck`, { cond: 'the PR is merged' }); // unchanged
 
     const d = await detail(t, cookie, task.id);
@@ -245,7 +253,7 @@ describe('R-task-19/20/21 — uncheck', () => {
 
   it('S-task-21-2 — a changed condition saved from the prompt logs one truncated cond_edited event', async () => {
     const { cookie, task } = await openTask(MON.aug31, { cond: 'the PR is merged' });
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, {});
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
     await command(t, cookie, `/api/tasks/${task.id}/uncheck`, { cond: 'the PR is merged AND deployed to production' });
 
     const d = await detail(t, cookie, task.id);

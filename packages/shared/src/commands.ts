@@ -2,6 +2,9 @@ import { z } from 'zod';
 import {
   BacklogItemView,
   CaptureText,
+  MeasureKind,
+  MeasureNumber,
+  MeasureUnit,
   GoalView,
   Horizon,
   IanaTimezone,
@@ -53,6 +56,8 @@ import {
 export const IdParams = z.object({ id: Ulid }).strict();
 /** Path params for `/tasks/:id/links/:linkId`. */
 export const TaskLinkParams = z.object({ id: Ulid, linkId: Ulid }).strict();
+/** ⚠ **A8** — path params for `DELETE /tasks/:id/readings/:readingId` (R-measure-5). */
+export const TaskReadingParams = z.object({ id: Ulid, readingId: Ulid }).strict();
 
 /**
  * `?week=` on every week-scoped read. Absent = the current week.
@@ -380,31 +385,92 @@ export const GoalResponse = z.object({ goal: GoalView, ...ServerNow });
 export const NewWeeklyGoalInput = z.object({ parentId: Ulid, title: Title }).strict();
 
 /**
- * R-task-3/39/40/41/48 — a task is created **under a Weekly goal**, and under nothing else.
+ * ⚠ **A8, new (R-measure-1, R-measure-2, Q-E)** — the measure half of a create, and the whole body of
+ * `PUT /tasks/:id/measure`.
  *
- * ⚠ **A2 — there is NO week field on this request, at all.** `originWeekStart` is seeded once from the
- * Weekly parent's `periodKey` and is immutable thereafter (R-task-40); a request carrying `week`,
- * `weekOffset` or `originWeek` is refused as an unknown key by `.strict()` (S-task-40-3). Nothing derives
- * a task's week by reading its goal at read time either — deleting the goal row from a query result must
- * not change any task's week.
+ * `current` is **absent by construction**: it is derived from the readings (R-measure-3) and there is no
+ * field here to supply it in, which is what makes S-measure-3-3's "any request supplying `current` is
+ * refused" true through `.strict()` rather than through a handler remembering to drop it.
  *
- * Exactly ONE of `goalId` (an existing Weekly goal) or `newWeeklyGoal` must be given; both, or neither,
- * is refused (S-task-48-3). There is no goal-less task, no implicit inbox and no nullable `goalId`.
+ * `target` is **optional and nullable, and the two mean the same thing** — no target, the AMRAP case
+ * (R-measure-4).
  *
- * A `goalId` naming any non-Weekly goal — including a **Monthly goal with no children**, which is a leaf
- * by the structural definition and is precisely the trap — is refused with `NOT_A_WEEKLY_GOAL`
- * (R-goal-39, S-goal-37-1). A Weekly goal whose week is in the PAST is refused with `PERIOD_IN_PAST`
- * (R-task-41): there is no back-dating. Creating forward is unbounded.
+ * ⚠ **`target === start` is refused by the SERVICE, not by a refinement here, and that is deliberate.**
+ * A `.refine()` guards `/api/*` and nothing else: the MCP tools declare their own input schemas, so
+ * `set_task_measure` handed `start === target` straight through to a service that never checked — it
+ * wrote a `5 / 5` measure with no progress and logged `Measure added: counter, 5 → 5`. Worse, every Zod
+ * failure is flattened to `VALIDATION_FAILED` by `api/validate.ts`, so the refusal could never carry its
+ * own code: `MEASURE_TARGET_EQUALS_START` sat in `ERROR_STATUS` with an MCP recovery line and was never
+ * emitted, while the web rendered the constant's NAME to the owner as a toast.
+ *
+ * The rule now has **one enforcement point**, `TaskService.assertMeasure`, reachable from every front
+ * door — the same shape `assertTaskGoal` has for R-task-51 (S-measure-4-3).
+ *
+ * There is **no direction field** and there must never be one: `target > start` counts up, `target <
+ * start` counts down, and a flag would restate what the two numbers already say (R-measure-2,
+ * S-measure-2-1).
+ */
+export const MeasureInput = z
+  .object({
+    kind: MeasureKind,
+    start: MeasureNumber.default(0),
+    target: MeasureNumber.nullable().default(null),
+    unit: MeasureUnit.default(''),
+  })
+  .strict();
+
+/**
+ * R-task-3/41/48 / **R-task-51/52/57** — a task is created under a **Monthly or a Weekly goal**, and
+ * under nothing else.
+ *
+ * ⚠ **A2/A8 — there is still no `week`, `weekOffset`, `originWeek`, `originPeriodKey` or `scope` field on
+ * this request** (S-task-52-2): every one of them is refused as an unknown key by `.strict()`. `scope` and
+ * `originPeriodKey` are seeded server-side and are immutable except through Park (R-task-52, R-task-56).
+ * Nothing derives a task's period by reading its goal at read time either — deleting the goal row from a
+ * query result must not change any task's period or scope.
+ *
+ * ⚠ **A8 + A11 (`32-week-selection` §8.3) — `period` is the ONE field that names the destination, and it
+ * is a `periodKey` at either scope.** The month key and a week key are the same field, not two, and the
+ * key's **format is the discriminator** — which is R-task-52's model exactly. The resolution table, in
+ * full:
+ *
+ * | `goalId`'s horizon | `period` | Result |
+ * |---|---|---|
+ * | Weekly | absent, or `= goal.periodKey` | a **week** task on that goal — today's behaviour, unchanged |
+ * | Monthly | absent, or `= goal.periodKey` (a month) | a **month** task on that goal. One row, no inference, no created goal, and the lens does not move (R-task-57) |
+ * | Monthly | a Monday | the `Add to this week` path for a fresh task: the Weekly goal at or under that Monthly goal for that week. Exactly one → used; ≥ 2 → `AMBIGUOUS_CONVERSION_TARGET`; none → `NO_WEEKLY_GOAL`, and the client re-sends with `newWeeklyGoal` (R-backlog-31, R-task-48) |
+ * | — (`newWeeklyGoal`) | a Monday | the Weekly goal is minted **for that week** under `parentId`, atomically with the task |
+ * | — (`newWeeklyGoal`) | absent | minted for the CURRENT week — the `+` drawer's `Add to this week instead` (R-backlog-27), unchanged |
+ * | Life / Yearly / Quarterly | any | `NOT_A_TASK_GOAL` (409) |
+ *
+ * Any other combination — a month key against a Weekly goal, a month key that is not the goal's own, a
+ * year or quarter key, a month key with `newWeeklyGoal` — is `VALIDATION_FAILED` (422). A period that is
+ * **past** at its own scope is `PERIOD_IN_PAST` (R-goal-36, R-task-41, R-task-57): there is no
+ * back-dating at either scope, and creating forward is unbounded at both.
+ *
+ * **A control the owner drives is not an inference.** R-task-57's "nothing is inferred" holds because the
+ * zero-decision path — `period` omitted on a Monthly goal — is the zero-inference one: one row, on the
+ * goal you tapped, in the month you are looking at. A week is an explicit narrowing the owner asked for.
+ *
+ * Exactly ONE of `goalId` or `newWeeklyGoal` (S-task-48-3). There is no goal-less task, no implicit inbox
+ * and no nullable `goalId`.
  */
 export const CreateTaskRequest = z
   .object({
     goalId: Ulid.optional(),
     newWeeklyGoal: NewWeeklyGoalInput.optional(),
+    /** ⚠ **A8/A11, new** — the destination period. See the table above. */
+    period: PeriodKeyParam.optional(),
     title: Title,
     cond: OneLiner.default(''),
     description: LongText.default(''),
     links: z.array(Url).max(MAX_LINKS).default([]),
     source: TaskSource.default('goal'),
+    /**
+     * ⚠ **A8, new (Q-E)** — a measure may be attached AT CREATE, in one command. A separate second step
+     * for "reach 15 leads" is the two-step friction this amendment exists to remove, one layer down.
+     */
+    measure: MeasureInput.optional(),
   })
   .strict()
   .refine(
@@ -423,22 +489,25 @@ export const PatchTaskRequest = z
   .strict();
 
 /**
- * R-task-14/44 — exit 1 of 3. Any week that has BEGUN is completable, including past ones (past weeks
- * stay fully interactive), so the week is explicit.
+ * R-task-14/44 — exit 1 of 3. Any period that has BEGUN is completable, including past ones (past periods
+ * stay fully interactive), so the period is explicit.
  *
- * ⚠ **A2 (R-rm-3, R-task-44) — the `.max(0)` on this line is NEW and load-bearing.** It used to be
- * inherited from `WeekOffset`, which no longer carries one; widening that schema would have removed this
- * guard **with no diff on this line at all**. You cannot finish work in a week that has not happened, and
- * the bound is now reachable at any distance because there is no forward cap anywhere else.
+ * ⚠ **A8 (R-task-55) — `week: WeekOffset.max(0)` became `period`, an explicit canonical key.** An offset
+ * cannot express *"the period I am standing in"* once a task may be scoped to a month: on Wed 2 Sep 2026
+ * the current week belongs to **August** while the current month is September, so "offset 0" has two
+ * different answers and the client is the only one that knows which surface it is on (S-task-55-2). The
+ * `.max(0)` it used to carry becomes `period <= currentPeriod(scope)`, re-stated in the service against
+ * the resolved key — the same bound, moved to where the scope is known.
  *
- * A week before the task's own origin is refused with `422 WEEK_OUT_OF_RANGE` (S-task-14-2). A task under
- * a FUTURE Weekly goal therefore cannot be completed at all until that week arrives — no week satisfies
- * both bounds — and its row renders no checkbox (S-task-44-1).
+ * A period before the task's own origin is refused with `422 WEEK_OUT_OF_RANGE` (S-task-14-2, the code is
+ * unchanged and is now scope-agnostic). A task under a FUTURE goal therefore cannot be completed at all
+ * until that period arrives — no period satisfies both bounds — and its row renders no checkbox
+ * (S-task-44-1, S-task-55-1).
  */
-export const CompleteTaskRequest = z.object({ week: WeekOffset.max(0).default(0), version: OptionalVersion }).strict();
+export const CompleteTaskRequest = z.object({ period: PeriodKeyParam, version: OptionalVersion }).strict();
 
 /**
- * R-task-19/21 — unchecking clears `doneWeekStart` and `doneAt`, keeps `originWeekStart`, logs
+ * R-task-19/21 — unchecking clears `donePeriodKey` and `doneAt`, keeps `originPeriodKey`, logs
  * `Unchecked`, and the task carries into the current week under its ORIGINAL origin with the carry label
  * its real age earns. `cond` is the skippable inline "Update the done-condition?" edit; omitted, blank,
  * or unchanged is a no-op that logs nothing (S-task-21-1, S-task-21-3).
@@ -447,7 +516,7 @@ export const UncheckTaskRequest = z.object({ cond: OneLiner.optional(), version:
 
 /**
  * R-task-15/36 / R-backlog-29 — exit 2 of 3. The task keeps its row with `status: 'movedToBacklog'`
- * (D-15) and becomes a backlog item carrying title, description and links, with `fromWeekStart` = the
+ * (D-15) and becomes a backlog item carrying title, description and links, with `fromPeriodKey` = the
  * week it was live in (D-12). The reason is optional (R-task-18) and is retained on the record.
  *
  * ⚠ **A2 (R-backlog-29) — the item does NOT land on the task's own goal any more.** That goal is now a
@@ -456,14 +525,111 @@ export const UncheckTaskRequest = z.object({ cond: OneLiner.optional(), version:
  * ancestor**, normally the Monthly parent. A Weekly goal whose only ancestor is a Life goal has no legal
  * target and the exit is refused with `LIFE_GOAL_NO_BACKLOG` (S-backlog-29-2).
  *
- * The week may be a future one (R-task-36): changing your mind about next week is not a fourth exit.
+ * The period may be a future one (R-task-36): changing your mind about next week is not a fourth exit.
+ *
+ * ⚠ **A8 (R-task-55)** — `week: WeekOffset` became `period`, for the same reason `CompleteTaskRequest`'s
+ * did: the client names the period it is standing in, because an offset cannot say which scope it means.
  */
 export const MoveTaskToBacklogRequest = z
-  .object({ week: WeekOffset.default(0), reason: Reason.optional(), version: OptionalVersion })
+  .object({ period: PeriodKeyParam, reason: Reason.optional(), version: OptionalVersion })
   .strict();
 
 /** R-task-16 — exit 3 of 3. The reason is optional and is retained on the record (D-15). */
 export const CancelTaskRequest = z.object({ reason: Reason.optional(), version: OptionalVersion }).strict();
+
+/**
+ * ⚠ **A8, new (R-task-56)** — **Park in a week / Move to the month: the ONE operation that rewrites a
+ * task's scope, and it is NOT a fourth exit.**
+ *
+ * An exit takes work *out* of a period (R-task-13, unchanged, still exactly three). Parking moves it
+ * between two periods it was already committed to: the task is still open, still visible and still yours
+ * to finish. No route, tool or screen anywhere is named `defer`, `snooze`, `reschedule` or
+ * `move to another week` (S-task-56-4).
+ *
+ * **It sets `goalId`, `originPeriodKey` and `scope` together**, because a task's period is always its
+ * goal's period *at creation* and this is a re-creation of that fact by an explicit write. **Nothing else
+ * changes** — title, done-condition, description, links, the timeline and **every reading** are untouched
+ * (R-measure-5, S-task-56-1). It is **reversible on purpose**: a one-way narrowing makes a mis-tap
+ * unfixable and pushes people to cancel-and-retype, which loses the readings, the links and the history.
+ *
+ * ⚠ **A11 (`32-week-selection` §5.4)** — Park's target shares `CreateTaskRequest.period`'s shape exactly:
+ * **one field, a `periodKey`, whose format is the discriminator.** The web control is the same component,
+ * over the same option list, and there is not a second week chooser.
+ *
+ * | Task's scope | `period` | Result |
+ * |---|---|---|
+ * | Monthly | a Monday | **park**: the Weekly goal at or under the task's own Monthly goal for that week. One → used; ≥ 2 → `AMBIGUOUS_CONVERSION_TARGET` with its candidate list; none → `NO_WEEKLY_GOAL`, and the client re-sends with `newWeeklyGoal` (R-task-48, which is why it survives A8) |
+ * | Weekly | a month key | **un-park**: the Weekly goal's **nearest Monthly ancestor**, at that goal's month. The key must equal it. A Weekly goal with no Monthly ancestor (R-goal-32 permits it) has no target: `HORIZON_CONFLICT`, and the action is not rendered |
+ * | either | the period it is already in | an idempotent **no-op** that writes no event |
+ * | Weekly | a different Monday | refused — that would be the reschedule R-task-13 does not have |
+ * | Monthly | a different month | refused, same reason |
+ *
+ * **Bounds.** The target may not be in the past (`PERIOD_IN_PAST`) — parking is planning. Parking a
+ * **done** or **exited** task is refused (`TASK_ALREADY_EXITED`).
+ *
+ * `originPeriodKey` is therefore immutable against everything except this one named operation, which is
+ * the narrowest possible weakening of R-task-40: D-1's failure mode is a period that changes *without a
+ * write*, and this is a write — confirmed, logged and reversible.
+ */
+export const RetargetTaskRequest = z
+  .object({
+    /** The destination period. A Monday parks; a month key un-parks. */
+    period: PeriodKeyParam,
+    /** Disambiguates when two or more Weekly goals qualify. Park only. */
+    goalId: Ulid.optional(),
+    /** R-task-48's inline create, when none qualifies. Park only. */
+    newWeeklyGoal: NewWeeklyGoalInput.optional(),
+    version: OptionalVersion,
+  })
+  .strict()
+  .refine(
+    (v) => !(v.goalId !== undefined && v.newWeeklyGoal !== undefined),
+    'goalId and newWeeklyGoal are mutually exclusive',
+  );
+
+/**
+ * ⚠ **A8, new (R-measure-1)** — `PUT /tasks/:id/measure`: attach a measure, or replace the one that is
+ * there.
+ *
+ * It is **its own command and not a field on `PatchTaskRequest`**, so its events are unambiguous: a
+ * measure's shape is timeline material (`Measure added` / `Measure edited`) and a title edit is not the
+ * place to decide which one happened. `PatchTaskRequest` is deliberately unchanged.
+ *
+ * Editing a measure never touches its readings. `DELETE /tasks/:id/measure` removes the measure **and all
+ * of its readings** in one transaction, which is why the client confirms it naming the count
+ * (`This deletes 14 recorded values.` — R-measure-1, Q-5's discipline).
+ */
+export const SetMeasureRequest = z.object({ measure: MeasureInput, version: OptionalVersion }).strict();
+
+/**
+ * ⚠ **A8, new (R-measure-3)** — `POST /tasks/:id/readings`: record one value.
+ *
+ * **Exactly one of `value` or `delta`**, and the asymmetry between them is deliberate:
+ *
+ *  - a `delta` against a **gauge** is refused with `MEASURE_KIND_MISMATCH` (422) — a gauge is set, not
+ *    added to;
+ *  - an absolute `value` against a **counter** is **accepted**, because correcting a counter to where it
+ *    actually is ("I'm at 12") is legitimate, and a counter is a gauge you usually bump (S-measure-3-3).
+ *
+ * Either way **what is STORED is the absolute value** of the measure after this reading (R-measure-3):
+ * `delta` is resolved against `current` by the server before it is written. That is what makes deletion
+ * correct with one rule instead of two — had a counter stored deltas and a gauge absolutes, `current`
+ * would be computed two ways and the owner's own mistyped-240 example would resolve differently depending
+ * on which kind it was typed into.
+ *
+ * A reading against a task with **no measure** is `NO_MEASURE` (409). A task at `MAX_READINGS` is
+ * `VALIDATION_FAILED` naming the cap (Q-26). **No timeline entry is written, ever** (R-measure-7).
+ */
+export const RecordReadingRequest = z
+  .object({
+    value: MeasureNumber.optional(),
+    delta: MeasureNumber.optional(),
+    /** When it was recorded. Defaults to the server's `now`; back-dating a reading is legitimate. */
+    at: Iso.optional(),
+    version: OptionalVersion,
+  })
+  .strict()
+  .refine((v) => (v.value === undefined) !== (v.delta === undefined), 'exactly one of value or delta is required');
 
 /** R-task-24 — logs `Link added: <host>`, host = hostname minus a leading `www.`. */
 export const AddTaskLinkRequest = z.object({ url: Url }).strict();
@@ -477,6 +643,14 @@ export const TaskResponse = z.object({ task: TaskDetailView, ...ServerNow });
 export const CreateTaskResponse = z.object({ task: TaskDetailView, goal: GoalView.nullable(), ...ServerNow });
 /** The task's terminal state plus the backlog item it became, so the client can patch both caches. */
 export const MoveTaskToBacklogResponse = z.object({ task: TaskDetailView, item: BacklogItemView, ...ServerNow });
+/**
+ * ⚠ **A8, new (R-task-56)** — the retargeted task, plus the Weekly goal a park minted, when it minted
+ * one (R-task-48). `goal` is null on every other path, including every un-park.
+ *
+ * The task's new `goalId`, `scope` and `originPeriodKey` are on `task`; the client patches its caches from
+ * that and does not re-derive where the row moved to.
+ */
+export const RetargetTaskResponse = z.object({ task: TaskDetailView, goal: GoalView.nullable(), ...ServerNow });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Backlog
@@ -506,7 +680,7 @@ export const PatchBacklogItemRequest = z
   .strict();
 
 /**
- * R-backlog-10 — move to any other non-Life, non-Weekly goal. `capturedAt`/`fromWeekStart` unchanged.
+ * R-backlog-10 — move to any other non-Life, non-Weekly goal. `capturedAt`/`fromPeriodKey` unchanged.
  *
  * ⚠ **A1 (R-backlog-20)** — the item also gets a **fresh `sortKey` at the top of the destination's list**.
  * Its old position is not preserved and there is no field here to preserve it with: manual order is per
@@ -549,20 +723,35 @@ export const ReorderBacklogItemRequest = z
  * duplicated — D-19), and the task logs `Created — pulled from Backlog`.
  *
  * ⚠ **A2 (R-backlog-26)** — the receiving goal is the **Weekly goal at or under the item's goal whose
- * `periodKey` is the target week**, not an "active leaf". `week` names that target and may not be in the
- * past (R-goal-36); it defaults to the current week.
+ * `periodKey` is the target week**, not an "active leaf".
  *
  * Exactly one candidate → used silently. Two or more → `AMBIGUOUS_CONVERSION_TARGET` with
  * `details.candidates`, and the owner chooses: the server refuses to pick, because that id decides which
  * week the task belongs to for the rest of its life and array order is not a decision. **None** →
  * `NO_WEEKLY_GOAL`, and the client offers `newWeeklyGoal` rather than sending the owner away (R-task-48).
  * A second conversion of the same item is refused with `ALREADY_CONVERTED`.
+ *
+ * ⚠ **A8 (R-backlog-31) — `week: WeekOffset` became `period`, and it now names TWO destinations.** One
+ * field, a `periodKey`, the format the discriminator — the same shape `CreateTaskRequest` and
+ * `RetargetTaskRequest` use, so there is one answer in this product to "which period does this land in".
+ *
+ * | `period` | Path |
+ * |---|---|
+ * | absent | **`Add to this week`**, the current week. The `+` drawer's meaning, unchanged (R-backlog-27) |
+ * | a Monday | **`Add to this week`**, that week. Ambiguity, the inline create and every other particular unchanged (S-backlog-26-2, S-backlog-26-3 still pass verbatim) |
+ * | a month key | **`Add to this month`** — available on a **Monthly** goal only, and it must be that goal's own month. The item becomes a **month task on the goal it is already attached to**: no resolution, no candidate list, no ambiguity, no `NO_WEEKLY_GOAL` and no implicitly created goal, because the target is the goal the item is already on (S-backlog-31-1) |
+ * | a month key, item on a Yearly/Quarterly goal | `NOT_A_TASK_GOAL` — only a Monthly goal holds a month task (S-backlog-31-2) |
+ *
+ * **The month path is the one that removes a dead end.** `NO_WEEKLY_GOAL` was reachable from every
+ * backlog item on a Monthly goal in a week nobody had planned yet; from A8 it is reachable only when the
+ * owner has explicitly asked for a *week*. A past period is `PERIOD_IN_PAST` at either scope.
  */
 export const ConvertBacklogItemRequest = z
   .object({
     goalId: Ulid.optional(),
     newWeeklyGoal: NewWeeklyGoalInput.optional(),
-    week: WeekOffset.min(0).default(0),
+    /** ⚠ **A8** — the destination period; absent means the current week. See the table above. */
+    period: PeriodKeyParam.optional(),
     title: Title.optional(),
     cond: OneLiner.default(''),
     version: OptionalVersion,
@@ -631,6 +820,12 @@ export type CompleteTaskRequest = z.infer<typeof CompleteTaskRequest>;
 export type UncheckTaskRequest = z.infer<typeof UncheckTaskRequest>;
 export type MoveTaskToBacklogRequest = z.infer<typeof MoveTaskToBacklogRequest>;
 export type CancelTaskRequest = z.infer<typeof CancelTaskRequest>;
+export type MeasureInput = z.infer<typeof MeasureInput>;
+export type RetargetTaskRequest = z.infer<typeof RetargetTaskRequest>;
+export type RetargetTaskResponse = z.infer<typeof RetargetTaskResponse>;
+export type SetMeasureRequest = z.infer<typeof SetMeasureRequest>;
+export type RecordReadingRequest = z.infer<typeof RecordReadingRequest>;
+export type TaskReadingParams = z.infer<typeof TaskReadingParams>;
 export type AddTaskLinkRequest = z.infer<typeof AddTaskLinkRequest>;
 export type TaskResponse = z.infer<typeof TaskResponse>;
 export type CreateTaskResponse = z.infer<typeof CreateTaskResponse>;

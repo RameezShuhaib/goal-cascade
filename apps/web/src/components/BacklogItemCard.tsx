@@ -6,7 +6,7 @@ import { useDeleteBacklogItem, useMoveBacklogItem } from '../api/queries';
 import { GoalPicker } from './GoalPicker';
 import { useWeekClock } from '../lib/weekClock';
 import { useSkin } from '../skin';
-import { capturedLabel, shortDate } from '../utils/dates';
+import { capturedLabel, periodFromLabel } from '../utils/dates';
 import { plural } from '../utils/tree';
 
 /**
@@ -70,8 +70,17 @@ export function BacklogItemCard({
         </div>
         {item.description && <div style={{ fontSize: 13, color: S.body, marginTop: 4 }}>{item.description}</div>}
         {item.links.length > 0 && <div style={{ fontSize: 12, fontWeight: 700, color: S.T.accentLink, marginTop: 3 }}>{plural(item.links.length, 'link')}</div>}
-        {/* R-task-15 / D-12 — the week the task was LIVE in, an absolute Monday, not "this week". */}
-        {item.fromWeekStart && <div style={{ fontSize: 11.5, color: S.T.mut, marginTop: 2 }}>from week of {shortDate(item.fromWeekStart)}</div>}
+        {/*
+         * R-task-15 / D-12 — the period the task was LIVE in, absolute, not "this week".
+         *
+         * ⚠ **A8 (R-task-59)** — at the task's OWN scope: `from week of 24 Aug` for a week task and
+         * `from Aug 2026` for a month task, off the key's format. `shortDate` read the day segment of a
+         * `YYYY-MM-DD`, so a month key rendered `from week of NaN Aug` — reachable the moment a month
+         * task is moved to the backlog, which is the flow S-task-59-1 is about.
+         */}
+        {item.fromPeriodKey && (
+          <div style={{ fontSize: 11.5, color: S.T.mut, marginTop: 2 }}>from {periodFromLabel(item.fromPeriodKey)}</div>
+        )}
       </button>
       {/*
        * ⚠ **R-nav-31** — this was an inline `chipBtn` row **with no selected state at all**, and it is

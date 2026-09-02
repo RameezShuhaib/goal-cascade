@@ -44,8 +44,15 @@ describe('the surface an agent connects to', () => {
      * ⚠ **A1** — 36 → 37. **Added (1)**: `reorder_backlog_item` (R-backlog-19), the relative move behind
      * the manual per-goal backlog order. It is the only tool that writes a position, and there is
      * deliberately no second one that writes an index.
+     *
+     * ⚠ **A8** — 37 → 43. **Added (6)**: `retarget_task` (R-task-56) and the five measure tools
+     * (`set_task_measure`, `clear_task_measure`, `record_reading`, `list_readings`, `delete_reading` —
+     * R-measure-1/3/5). It is ONE tool for Park rather than a `park_task`/`unpark_task` pair (Q-A): two
+     * would be one operation under two names, and the direction is already decided by the task's scope
+     * and the key's format. Nothing was deleted, because A8's one removal (R-rm-6) is a web flow and an
+     * error code, not a tool.
      */
-    expect(tools).toHaveLength(37);
+    expect(tools).toHaveLength(43);
     expect(resources.length + templates.length).toBe(9);
     expect(prompts).toHaveLength(4);
 
@@ -101,12 +108,19 @@ describe('the surface an agent connects to', () => {
     const instructions: string = discover.result?.instructions ?? '';
     for (const anchor of [
       'Life › Yearly › Quarterly › Monthly › Weekly',
-      'ONLY WEEKLY GOALS HOLD TASKS',
+      // ⚠ **A8 (R-task-51)** — the heading changed, and the change is the amendment.
+      'MONTHLY AND WEEKLY GOALS HOLD TASKS',
+      "A TASK'S PERIOD, AND ITS SCOPE",
       'PERIODS',
       'LENSES',
       'THE WEEK',
       'CARRYING',
+      // ⚠ **A8 (R-task-54, S-lens-31-2)** — the paragraph that stops an agent reading a month task's
+      // carry age off the wire and telling the owner it is three weeks overdue.
+      'A MONTH TASK IS NEVER LATE IN A WEEK',
       'THE THREE EXITS',
+      'PARKING IS NOT AN EXIT',
+      'MEASURES',
       'NO REPORTS',
       'HOW TO WORK',
     ]) {
@@ -118,11 +132,31 @@ describe('the surface an agent connects to', () => {
      * A connecting agent that believed any of those would keep acting on a product that no longer
      * exists — routing work at leaves, asking to set a focus, refusing to plan a future week.
      */
-    for (const stale of ['LEAF, ACTIVE, DORMANT', 'exactly four horizons', 'set_goal_focus', 'save_weekly_plan']) {
+    for (const stale of [
+      'LEAF, ACTIVE, DORMANT',
+      'exactly four horizons',
+      'set_goal_focus',
+      'save_weekly_plan',
+      // ⚠ **A8 (R-task-51, R-rm-6)** — the old heading taught a rule that is now false about the product.
+      'ONLY WEEKLY GOALS HOLD TASKS',
+      'NOT_A_WEEKLY_GOAL',
+    ]) {
       expect(instructions, `the instructions block still says "${stale}"`).not.toContain(stale);
     }
-    // The trap, stated in the one place every connecting agent reads it.
-    expect(instructions).toMatch(/monthly goal that\s+happens to have no weekly children/);
+    // The trap, stated in the one place every connecting agent reads it. ⚠ **A8** — one horizon up.
+    expect(instructions).toMatch(/quarterly goal\s+that happens to have no monthly children/);
+    /**
+     * ⚠ **A8 (R-measure-8, R-measure-9) — the refusals an agent is most likely to helpfully violate.**
+     *
+     * "You're behind on this" is the single most natural thing for a model to say about a number with a
+     * target, and it is the one thing this product does not have. It has to be refused in the briefing,
+     * because by the time a tool description could say it the agent has already decided what to report.
+     */
+    // Whitespace-tolerant, because the block is hard-wrapped at 100 columns and a phrase may straddle a
+    // line break — the same reason the trap assertion above uses `\s+`.
+    for (const refusal of [/no\s+pace/, /no\s+projection/, /no\s+forecast/, /no\s+trend\s+line/, /no\s+streak/]) {
+      expect(instructions, `the instructions block does not refuse ${refusal}`).toMatch(refusal);
+    }
   });
 
   it('.refine() rules are dropped from the advertised schema, so they are stated in the description', async () => {
@@ -303,7 +337,7 @@ describe('tasks', () => {
     expect(created.goal_path).toContain('Three gym sessions');
     expect(created.status).toBe('open');
     // R-task-40 — the week came from the PARENT, and no request field named one.
-    expect(created.origin_week_start).toBe(THIS_WEEK);
+    expect(created.origin_period_key).toBe(THIS_WEEK);
 
     await ok(t, token, 'update_task', { task_id: created.id, title: 'Book the physio properly' });
     const linked = (await ok(t, token, 'add_task_link', { task_id: created.id, url: 'https://example.com/booking' })).task;
@@ -315,7 +349,7 @@ describe('tasks', () => {
     const reopened = (await ok(t, token, 'uncheck_task', { task_id: created.id })).task;
     expect(reopened.status).toBe('open');
     // R-task-19/21 — it comes back with the age it really has, not a fresh one.
-    expect(reopened.origin_week_start).toBe(created.origin_week_start);
+    expect(reopened.origin_period_key).toBe(created.origin_period_key);
 
     const detail = (await ok(t, token, 'get_task', { task_id: created.id })).task;
     expect(detail.events.map((e: any) => e.kind)).toEqual(
@@ -324,24 +358,157 @@ describe('tasks', () => {
   });
 
   /**
-   * SUPERSEDED — `BRANCH_NOT_ACTIVE` forbade "route the work to a goal that IS active", which was the
-   * one substitution the old product refused. R-backlog-26 replaces the code, and **A2 splits that
-   * refusal in two**, each with its own forbidden workaround:
+   * SUPERSEDED TWICE — `BRANCH_NOT_ACTIVE` forbade "route the work to a goal that IS active", which was
+   * the one substitution the old product refused. R-backlog-26 replaced the code, A2 split that refusal
+   * in two, and ⚠ **A8 (R-task-51, R-rm-6) moves the trap one horizon up**: `NOT_A_WEEKLY_GOAL` is
+   * retired, `NOT_A_TASK_GOAL` takes its slot, and the goal that looks like the end of a branch and still
+   * holds no work is now a childless **Quarterly** one. The two forbidden workarounds are unchanged:
    *
-   *  - `NOT_A_WEEKLY_GOAL` — never "use a leaf instead". The condition is the HORIZON (R-goal-39).
-   *  - `NO_WEEKLY_GOAL` — never "use a different goal that has one". Create the week's goal inline.
+   *  - `NOT_A_TASK_GOAL` — never "use a leaf instead". The condition is the HORIZON, now naming two.
+   *  - `NO_WEEKLY_GOAL` — never "use a different goal that has one". Create the week's goal inline, or
+   *    put the work on the month, which needs nothing created at all.
    */
-  it('S-goal-37-1 — NOT_A_WEEKLY_GOAL names the trap and forbids the substitution', async () => {
-    const { month } = await tree();
-    // A childless Monthly goal: a leaf by the structural definition, and never a task parent.
-    const childless = (await ok(t, token, 'create_goal', { title: 'nothing planned yet', horizon: 'Monthly', parent_id: (await tree()).year.id })).goal;
-    const err = await refused(t, token, 'create_task', { goal_id: childless.id, title: 'nope' }, 'NOT_A_WEEKLY_GOAL');
+  it('S-task-51-2 — NOT_A_TASK_GOAL names the trap and forbids the substitution', async () => {
+    const { year } = await tree();
+    // A childless Quarterly goal: a leaf by the structural definition, and never a task parent.
+    const childless = (await ok(t, token, 'create_goal', { title: 'nothing planned yet', horizon: 'Quarterly', parent_id: year.id })).goal;
+    const err = await refused(t, token, 'create_task', { goal_id: childless.id, title: 'nope' }, 'NOT_A_TASK_GOAL');
     expect(err.retryable).toBe(false);
     expect(err.recovery).toMatch(/horizon/i);
-    expect(err.recovery).toMatch(/monthly goal with no weekly children/i);
-    expect(err.recovery).toMatch(/new_weekly_goal/);
+    expect(err.recovery).toMatch(/quarterly goal with no monthly children/i);
+    // ⚠ **A8** — the recovery now names the MONTH path first, because it is the one that needs nothing
+    // created. An agent told only about `new_weekly_goal` would invent a weekly goal for work the owner
+    // asked to put on a month (R-rm-6's whole complaint about the flow it deletes).
+    expect(err.recovery).toMatch(/monthly goal/i);
+    expect(err.recovery).toMatch(/no `period`/);
     expect(err.recovery).toMatch(/Never route the work to some other goal/);
-    void month;
+  });
+
+  /**
+   * ⚠ **A8, new (R-task-51/52/57) — the owner's ask, over MCP, and the one row it writes.**
+   *
+   * The default path on a Monthly goal must create exactly one task and no goal. `created_weekly_goal`
+   * being null is the assertion that matters: R-rm-6 exists because a flow that minted one silently lost
+   * the owner three tasks, and an agent driving this surface is the one caller least able to notice.
+   */
+  it('S-task-51-1 / S-task-57-1 — create_task on a MONTHLY goal makes a month task and no goal', async () => {
+    const { month } = await tree();
+    const res = await ok(t, token, 'create_task', { goal_id: month.id, title: 'sign two clients' });
+    expect(res.task.scope).toBe('Monthly');
+    expect(res.task.origin_period_key).toBe(month.period_key);
+    expect(res.task.carry_unit).toBe('months');
+    expect(res.created_weekly_goal).toBeNull();
+    // It is visible as a month task and NOT as one of the week's own tasks (R-lens-31).
+    const listed = await ok(t, token, 'list_tasks', { scope: 'month' });
+    expect(listed.tasks.map((x: { id: string }) => x.id)).toContain(res.task.id);
+    expect((await ok(t, token, 'list_tasks', { scope: 'week' })).tasks.map((x: { id: string }) => x.id)).not.toContain(res.task.id);
+  });
+
+  /**
+   * ⚠ **A8 (R-task-55, R-task-59) — a month task must be FINISHABLE over MCP, not merely creatable.**
+   *
+   * `create_task` steers an agent into making month tasks and every exit typed its `period` as a Monday,
+   * so `'2026-09'` failed the input schema and the default (a Monday) was refused with
+   * `WEEK_OUT_OF_RANGE` by the scope check — **no reachable value worked**. A surface that can only ever
+   * create is worse than one that cannot: it accumulates work the agent can then never close.
+   */
+  it('S-task-55-2 — a MONTH task can be completed over MCP, at its own scope', async () => {
+    const { month } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: month.id, title: 'sign two clients' })).task;
+    expect(task.scope).toBe('Monthly');
+
+    // The default: the agent names no period and gets the current one AT THE TASK'S SCOPE.
+    const done = (await ok(t, token, 'complete_task', { task_id: task.id })).task;
+    expect(done.status).toBe('done');
+    expect(done.done_period_key).toBe(month.period_key);
+
+    // …and naming the month explicitly is the same write (S-task-55-2's seam, said by an agent).
+    await ok(t, token, 'uncheck_task', { task_id: task.id });
+    const again = (await ok(t, token, 'complete_task', { task_id: task.id, period: month.period_key })).task;
+    expect(again.done_period_key).toBe(month.period_key);
+  });
+
+  it('S-task-59-1 — a MONTH task can be moved to the backlog over MCP, landing on the goal it is on', async () => {
+    const { month } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: month.id, title: 'maybe after all' })).task;
+    const res = await ok(t, token, 'move_task_to_backlog', { task_id: task.id });
+    expect(res.task.status).toBe('movedToBacklog');
+    // R-task-59 — the walk terminates immediately: a monthly goal holds both a backlog and tasks.
+    expect(res.item.goalId).toBe(month.id);
+    expect(res.item.fromPeriodKey).toBe(month.period_key);
+  });
+
+  it('R-task-56 — and it can be parked into a week and moved back, over MCP', async () => {
+    const { month, week } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: month.id, title: 'this week actually' })).task;
+
+    const parked = (await ok(t, token, 'retarget_task', { task_id: task.id, period: week.period_key })).task;
+    expect(parked.scope).toBe('Weekly');
+    expect(parked.goal_id).toBe(week.id);
+
+    const back = (await ok(t, token, 'retarget_task', { task_id: task.id, period: month.period_key })).task;
+    expect(back.scope).toBe('Monthly');
+    expect(back.goal_id).toBe(month.id);
+  });
+
+  /**
+   * ⚠ **A8 (R-task-54, S-lens-31-2) — `list_tasks` is the surface, so `list_tasks` does the suppressing.**
+   *
+   * `shapes.ts` states the rule that a month task says nothing at all inside a week and that the
+   * suppression belongs to the surface rendering it. `list_tasks(scope="month")` IS that surface, and the
+   * instructions block promises A MONTH TASK IS NEVER LATE IN A WEEK — while the payload handed the agent
+   * `"2 months · since Jun"` to read out loud.
+   */
+  it('S-lens-31-2 — a month task in a WEEK listing carries no carry label, though its age is still honest', async () => {
+    const { year } = await tree();
+    // A month task that has genuinely aged: created in June, read from a week in August. The clamp means
+    // a task created NOW can never have a positive age, so the clock has to move for this to be real.
+    t.clock.set('2026-06-10T10:00:00.000Z');
+    const june = (await ok(t, token, 'create_goal', { title: 'Jun 2026', horizon: 'Monthly', parent_id: year.id })).goal;
+    const task = (await ok(t, token, 'create_task', { goal_id: june.id, title: 'since a while ago' })).task;
+    t.clock.set('2026-08-31T10:00:00.000Z');
+
+    const listed = (await ok(t, token, 'list_tasks', { scope: 'month' })).tasks.find((x: { id: string }) => x.id === task.id);
+    expect(listed, 'the carried month task was not in the band at all').toBeTruthy();
+    // The AGE is honest — the same task in the Monthly lens must still earn its chip (R-task-54)…
+    expect(listed.carry_age).toBe(2);
+    expect(listed.carry_unit).toBe('months');
+    // …and the SENTENCE is suppressed, because this listing is a week's.
+    expect(listed.carry_label, 'the week listing handed the agent a late-sounding sentence').toBe('');
+  });
+
+  /**
+   * ⚠ **A8 (R-measure-4) — the refusal must be the SERVICE's, because MCP is a second front door.**
+   *
+   * A guard that lives in a Zod refinement on `MeasureInput` protects `/api/*` and nothing else: the MCP
+   * tools declare their own input schemas, so `set_task_measure` would hand `start === target` straight
+   * through to a service that never checked. The rule has one enforcement point for the same reason
+   * `assertTaskGoal` does.
+   */
+  it('S-measure-4-3 — target === start is refused over MCP too, with its own code and its own recovery', async () => {
+    const { week } = await tree();
+    const task = (await ok(t, token, 'create_task', { goal_id: week.id, title: 'no movement' })).task;
+    const err = await refused(
+      t,
+      token,
+      'set_task_measure',
+      { task_id: task.id, measure: { kind: 'counter', start: 5, target: 5 } },
+      'MEASURE_TARGET_EQUALS_START',
+    );
+    expect(err.retryable).toBe(false);
+    // The recovery must name the honest alternative rather than inviting a fabricated target.
+    expect(err.recovery).toMatch(/target: null/);
+  });
+
+  it('S-measure-4-3 — and on create_task’s inline measure, which is the same rule one call earlier', async () => {
+    const { week } = await tree();
+    await refused(
+      t,
+      token,
+      'create_task',
+      { goal_id: week.id, title: 'no movement', measure: { kind: 'counter', start: 5, target: 5 } },
+      'MEASURE_TARGET_EQUALS_START',
+    );
   });
 
   it('S-task-48-1 — create_task’s inline `new_weekly_goal` makes both rows, and NAMES the one it made', async () => {
@@ -356,7 +523,7 @@ describe('tasks', () => {
     expect(res.created_weekly_goal.horizon).toBe('Weekly');
     expect(res.created_weekly_goal.period_key).toBe(THIS_WEEK);
     expect(res.task.goal_id).toBe(res.created_weekly_goal.id);
-    expect(res.task.origin_week_start).toBe(THIS_WEEK);
+    expect(res.task.origin_period_key).toBe(THIS_WEEK);
     void month;
   });
 
@@ -379,7 +546,7 @@ describe('tasks', () => {
     // R-task-43 — and its age is NEGATIVE, so the only escalation in the product cannot fire at it.
     const week = await ok(t, token, 'list_tasks', { week_offset: 1 });
     const row = week.tasks.find((x: any) => x.id === task.id);
-    expect(row.carry_weeks).toBeLessThan(0);
+    expect(row.carry_age).toBeLessThan(0);
     expect(row.carry_label).toBe('');
 
     const err = await refused(t, token, 'complete_task', { task_id: task.id }, 'WEEK_OUT_OF_RANGE');
@@ -596,7 +763,7 @@ describe('resources', () => {
     expect(weekModel).not.toContain('save_weekly_plan');
     expect(weekModel).toMatch(/Positive\noffsets are \*\*ordinary\*\*/);
     const errors = JSON.parse(await read('goalcascade://rules/errors'));
-    expect(errors.NOT_A_WEEKLY_GOAL.retryable).toBe(false);
+    expect(errors.NOT_A_TASK_GOAL.retryable).toBe(false);
     expect(errors.PERIOD_IN_PAST.retryable).toBe(false);
     expect(errors.RATE_LIMITED.retryable).toBe(true);
     expect(errors.HORIZON_CONFLICT.recovery.length).toBeGreaterThan(40);

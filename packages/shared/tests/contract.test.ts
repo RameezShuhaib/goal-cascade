@@ -9,6 +9,12 @@ import {
   CompleteTaskRequest,
   CreateGoalRequest,
   CreateTaskRequest,
+  MAX_READINGS,
+  MeasureInput,
+  MeasureView,
+  RecordReadingRequest,
+  RetargetTaskRequest,
+  TaskView,
   DeleteGoalQuery,
   ENDPOINTS,
   ERROR_CODES,
@@ -59,9 +65,18 @@ describe('error codes', () => {
   });
 
   it('S-goal-37-1 / S-backlog-26-2 / S-goal-36-1: A2 adds three codes, each 409', () => {
-    expect(ERROR_STATUS.NOT_A_WEEKLY_GOAL).toBe(409); // R-goal-39
+    // ⚠ **A8 (R-task-51)** — `NOT_A_WEEKLY_GOAL` became `NOT_A_TASK_GOAL`, taking its slot and its
+    // status. The condition is still the horizon and never leaf-ness; it now names two horizons.
+    expect(ERROR_STATUS.NOT_A_TASK_GOAL).toBe(409); // R-task-51, superseding R-goal-39
     expect(ERROR_STATUS.NO_WEEKLY_GOAL).toBe(409); // R-backlog-26
     expect(ERROR_STATUS.PERIOD_IN_PAST).toBe(409); // R-goal-36
+  });
+
+  it('S-measure-2-2 / S-measure-3-3 / S-measure-4-3: A8 adds three codes, and NO_MEASURE is the 409', () => {
+    expect(ERROR_STATUS.MEASURE_TARGET_EQUALS_START).toBe(422); // R-measure-4 — it names no movement
+    expect(ERROR_STATUS.MEASURE_KIND_MISMATCH).toBe(422); // R-measure-3 — a delta against a gauge
+    // A 409 and not a 422: the request was well formed, the task is simply not that kind of thing yet.
+    expect(ERROR_STATUS.NO_MEASURE).toBe(409); // R-measure-3
   });
 
   /**
@@ -74,8 +89,10 @@ describe('error codes', () => {
    *                            Weekly goals hold tasks and a Weekly goal can never gain a child)
    * The assertions are INVERTED rather than deleted, so a re-introduction fails here (S-rm-2-1).
    */
-  it('S-rm-2-1: the four codes A2 retired do not exist', () => {
-    for (const gone of ['NOT_A_LEAF', 'BRANCH_NOT_ACTIVE', 'WEEK_NOT_CURRENT', 'GOAL_HAS_OPEN_TASKS']) {
+  it('S-rm-2-1 / S-task-51-2: the codes A2 and A8 retired do not exist', () => {
+    // ⚠ **A8 (R-rm-6)** — `NOT_A_WEEKLY_GOAL` joins the list. R-task-49's inference is deleted rather
+    // than left dormant, and the STRING must survive in no catalogue, recovery line, copy or test.
+    for (const gone of ['NOT_A_LEAF', 'BRANCH_NOT_ACTIVE', 'WEEK_NOT_CURRENT', 'GOAL_HAS_OPEN_TASKS', 'NOT_A_WEEKLY_GOAL']) {
       expect(ERROR_CODES as readonly string[], gone).not.toContain(gone);
     }
   });
@@ -123,12 +140,21 @@ describe('scalars normalise in the schema, not in handlers', () => {
     expect(WeekOffsetParam.safeParse('soon').success).toBe(false);
   });
 
-  it('S-rm-3-1 / R-task-44: CompleteTaskRequest.week carries its OWN future guard', () => {
-    // THE silent break of this amendment. You cannot finish work in a week that has not happened, and
-    // that guard used to come free from `WeekOffset`'s `.max(0)`.
-    expect(CompleteTaskRequest.parse({}).week).toBe(0);
-    expect(CompleteTaskRequest.parse({ week: -3 }).week).toBe(-3);
-    expect(CompleteTaskRequest.safeParse({ week: 1 }).success).toBe(false);
+  /**
+   * ⚠ **A8 (R-task-55) — rewritten, not deleted.** A2's version of this test asserted that
+   * `CompleteTaskRequest.week` carried its own `.max(0)`, because that guard used to come free from
+   * `WeekOffset`. A8 removes the offset entirely: an offset cannot express *"the period I am standing
+   * in"* once a task may be scoped to a month (S-task-55-2), so the request names a canonical period and
+   * the future bound moves to the service, where the scope is known. The property being protected is
+   * unchanged — you cannot finish work in a period that has not happened — and it is asserted at its new
+   * home in `apps/api/tests/tasks/*`.
+   */
+  it('S-task-55-2 / R-task-55: CompleteTaskRequest names an explicit period, never an offset', () => {
+    expect(CompleteTaskRequest.parse({ period: '2026-09-07' }).period).toBe('2026-09-07');
+    // No default and no offset: the client must say which period it is standing in.
+    expect(CompleteTaskRequest.safeParse({}).success).toBe(false);
+    expect(CompleteTaskRequest.safeParse({ week: 0 }).success).toBe(false);
+    expect(CompleteTaskRequest.safeParse({ week_offset: 0 }).success).toBe(false);
   });
 
   it('S-rm-3-1: no forward-week bound constant survives anywhere in the contract', () => {
@@ -167,11 +193,11 @@ describe('request schemas are strict', () => {
   });
 
   it('S-task-40-3: a task create carries NO week key of any kind', () => {
-    // `originWeekStart` is seeded once from the Weekly parent's `periodKey` and is immutable thereafter
+    // `originPeriodKey` is seeded once from the Weekly parent's `periodKey` and is immutable thereafter
     // (R-task-40). There is no target-week parameter that could disagree with the parent, so `.strict()`
     // is the whole guard: every spelling of "week" is an unknown key.
     const base = { goalId: '01J9ZQ8V2M7K3PQRSTVWXY0123', title: 'Run' };
-    for (const key of ['week', 'weekOffset', 'originWeek', 'originWeekStart']) {
+    for (const key of ['week', 'weekOffset', 'originWeek', 'originPeriodKey']) {
       expect(CreateTaskRequest.safeParse({ ...base, [key]: 0 }).success, key).toBe(false);
     }
   });
@@ -425,5 +451,118 @@ describe('the agent-access token contract', () => {
     expect(DeleteGoalQuery.safeParse({ dryRun: 'maybe' }).success).toBe(false);
     // …and, like every other query schema here, an unknown key is refused rather than ignored.
     expect(DeleteGoalQuery.safeParse({ dryrun: 'true' }).success).toBe(false);
+  });
+});
+
+/**
+ * ⚠ **A8 — the contract the web agent consumes, asserted at the shapes rather than over HTTP.**
+ *
+ * Every one of these is a decision that would be silently reversible in a handler and is not reversible
+ * here: `.strict()` refuses a field that does not exist, and a field that does not exist cannot be
+ * written by a client that thinks it can.
+ */
+describe('A8 — measurable tasks and month tasks, on the wire', () => {
+  it('S-measure-1-1 — the kind union is exactly counter and gauge; there is no `binary` anywhere', () => {
+    expect(MeasureInput.safeParse({ kind: 'counter', start: 0, target: 15 }).success).toBe(true);
+    expect(MeasureInput.safeParse({ kind: 'gauge', start: 80, target: 75 }).success).toBe(true);
+    for (const kind of ['binary', 'checkbox', 'boolean', 'BINARY']) {
+      expect(MeasureInput.safeParse({ kind, start: 0, target: 1 }).success, kind).toBe(false);
+    }
+  });
+
+  it('S-measure-3-3 — `current` is server-owned BY CONSTRUCTION: there is no field to send it in', () => {
+    expect(MeasureInput.safeParse({ kind: 'counter', start: 0, current: 9, target: 15 }).success).toBe(false);
+    // ...and `MeasureView` DOES carry it, because it is derived and answered.
+    expect(Object.keys(MeasureView.shape).sort()).toEqual(['current', 'kind', 'progress', 'start', 'target', 'unit']);
+  });
+
+  it('S-measure-2-1 / S-measure-8-3 — no direction flag, no ratio pair, no checklist, no recurrence', () => {
+    for (const extra of [
+      { direction: 'up' },
+      { countsUp: true },
+      { numerator: 3, denominator: 5 },
+      { items: ['a'] },
+      { repeat: 'daily' },
+      { seriesId: 'x' },
+      { pace: 1 },
+    ]) {
+      expect(MeasureInput.safeParse({ kind: 'counter', start: 0, target: 15, ...extra }).success, JSON.stringify(extra)).toBe(false);
+    }
+  });
+
+  /**
+   * ⚠ **A8 (R-measure-4) — REWRITTEN, not weakened.** The first version asserted the refusal from a
+   * `.refine()` on this schema. That guard protected `/api/*` and nothing else — the MCP tools declare
+   * their own input schemas, so `set_task_measure` wrote a `5 / 5` measure straight past it — and it
+   * could never carry its own code, because `api/validate.ts` flattens every schema failure to
+   * `VALIDATION_FAILED`. The rule moved to `TaskService.assertMeasure`, its one enforcement point, and
+   * the property is asserted there, by CODE, in `apps/api/tests/tasks/measures.test.ts` and
+   * `tests/mcp/tools.test.ts`. What is left here is the half the schema really does own.
+   */
+  it('R-measure-4 — the schema owns the SHAPE of a target; the service owns whether it names movement', () => {
+    // `target: null` and an omitted `target` are the same thing: a tracked number with no finish line.
+    expect(MeasureInput.safeParse({ kind: 'gauge', start: 0, target: null }).success).toBe(true);
+    expect(MeasureInput.parse({ kind: 'gauge', start: 0 }).target).toBeNull();
+    // …and the pair the service refuses parses here, which is exactly why the service must refuse it.
+    expect(MeasureInput.safeParse({ kind: 'counter', start: 5, target: 5 }).success).toBe(true);
+  });
+
+  it('S-measure-2-2 — the numeric floor is on the schema, so both sides enforce the same bound', () => {
+    for (const start of [Number.NaN, Number.POSITIVE_INFINITY, 1e10, -1e10]) {
+      expect(MeasureInput.safeParse({ kind: 'gauge', start, target: 1 }).success, String(start)).toBe(false);
+    }
+    expect(MeasureInput.safeParse({ kind: 'gauge', start: 1e9, target: 0 }).success).toBe(true);
+  });
+
+  it('S-measure-3-3 — a reading is exactly one of `value` or `delta`, never both and never neither', () => {
+    expect(RecordReadingRequest.safeParse({ value: 12 }).success).toBe(true);
+    expect(RecordReadingRequest.safeParse({ delta: 3 }).success).toBe(true);
+    expect(RecordReadingRequest.safeParse({}).success).toBe(false);
+    expect(RecordReadingRequest.safeParse({ value: 12, delta: 3 }).success).toBe(false);
+  });
+
+  it('Q-26 — the reading cap is a shared constant, so the client can name it before the server refuses', () => {
+    expect(MAX_READINGS).toBe(2000);
+  });
+
+  /**
+   * ⚠ **R-task-52 — one field, two scopes, the FORMAT the discriminator.** The same shape serves create,
+   * Park and a backlog conversion, which is what stops the product growing three answers to "where does
+   * this land".
+   */
+  it('R-task-52 / R-task-56 — `period` takes a month key and a Monday, and nothing else', () => {
+    for (const period of ['2026-09', '2026-09-07']) {
+      expect(RetargetTaskRequest.safeParse({ period }).success, period).toBe(true);
+      expect(CreateTaskRequest.safeParse({ goalId: 'A'.repeat(26), title: 'x', period }).success, period).toBe(true);
+    }
+    for (const period of ['2026-09-08', '2026-13', 'next month', '']) {
+      expect(RetargetTaskRequest.safeParse({ period }).success, period).toBe(false);
+    }
+  });
+
+  it('S-task-52-2 — no request may name a task’s scope or period directly', () => {
+    const base = { goalId: 'A'.repeat(26), title: 'x' };
+    for (const bad of [{ scope: 'Monthly' }, { originPeriodKey: '2026-09' }, { originWeek: 1 }, { week: 0 }, { weekOffset: 0 }]) {
+      expect(CreateTaskRequest.safeParse({ ...base, ...bad }).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('R-task-56 — Park’s goalId and newWeeklyGoal are mutually exclusive, like every other resolution', () => {
+    const period = '2026-09-07';
+    const id = 'A'.repeat(26);
+    expect(RetargetTaskRequest.safeParse({ period, goalId: id }).success).toBe(true);
+    expect(RetargetTaskRequest.safeParse({ period, newWeeklyGoal: { parentId: id, title: 'x' } }).success).toBe(true);
+    expect(RetargetTaskRequest.safeParse({ period, goalId: id, newWeeklyGoal: { parentId: id, title: 'x' } }).success).toBe(false);
+  });
+
+  it('R-task-52 / R-task-54 — TaskView carries scope, carryUnit and measure, all required', () => {
+    const shape = Object.keys(TaskView.shape);
+    for (const field of ['scope', 'carryAge', 'carryUnit', 'measure', 'originPeriodKey', 'donePeriodKey', 'completable']) {
+      expect(shape, field).toContain(field);
+    }
+    // ...and the names A8 retired are gone from the wire, not merely unused.
+    for (const gone of ['originWeekStart', 'doneWeekStart', 'carryWeeks']) {
+      expect(shape, gone).not.toContain(gone);
+    }
   });
 });

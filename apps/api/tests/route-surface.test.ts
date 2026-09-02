@@ -73,12 +73,23 @@ const ROUTES: Row[] = [
   { method: 'POST', path: ENDPOINTS.tasks, json: { goalId: ULID, title: 'Do the thing' }, command: true },
   { method: 'GET', path: ENDPOINTS.task(ULID) },
   { method: 'PATCH', path: ENDPOINTS.task(ULID), json: { title: 'Renamed' } },
-  { method: 'POST', path: ENDPOINTS.taskComplete(ULID), json: {}, command: true },
+  { method: 'POST', path: ENDPOINTS.taskComplete(ULID), json: { period: '2026-08-31' }, command: true },
   { method: 'POST', path: ENDPOINTS.taskUncheck(ULID), json: {}, command: true },
-  { method: 'POST', path: ENDPOINTS.taskMoveToBacklog(ULID), json: {}, command: true },
+  { method: 'POST', path: ENDPOINTS.taskMoveToBacklog(ULID), json: { period: '2026-08-31' }, command: true },
   { method: 'POST', path: ENDPOINTS.taskCancel(ULID), json: {}, command: true },
   { method: 'POST', path: ENDPOINTS.taskLinks(ULID), json: { url: 'https://example.com/x' }, command: true },
   { method: 'DELETE', path: ENDPOINTS.taskLink(ULID, ULID) },
+
+  /**
+   * ⚠ **A8, new.** `retarget` is deliberately listed among the tasks routes and NOT beside the exits:
+   * it is not a fourth one (R-task-56, S-task-56-4). The census below is what stops a `/defer`,
+   * `/snooze` or `/reschedule` from appearing next to it unnoticed.
+   */
+  { method: 'POST', path: ENDPOINTS.taskRetarget(ULID), json: { period: '2026-08-31' }, command: true },
+  { method: 'PUT', path: ENDPOINTS.taskMeasure(ULID), json: { measure: { kind: 'counter', start: 0, target: 15 } }, command: true },
+  { method: 'DELETE', path: ENDPOINTS.taskMeasure(ULID) },
+  { method: 'POST', path: ENDPOINTS.taskReadings(ULID), json: { value: 12 }, command: true },
+  { method: 'DELETE', path: ENDPOINTS.taskReading(ULID, ULID) },
 
   { method: 'GET', path: ENDPOINTS.backlog },
   { method: 'POST', path: ENDPOINTS.backlog, json: { goalId: ULID, title: 'Later' }, command: true },

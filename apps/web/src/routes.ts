@@ -1,4 +1,4 @@
-import { HORIZONS, type Horizon } from '@goal-cascade/shared';
+import { HORIZONS, type Horizon, type TaskScope } from '@goal-cascade/shared';
 
 /**
  * R-nav-24 — the URL shapes, in one module.
@@ -35,6 +35,21 @@ export function lensPath(lens: Horizon, periodKey?: string | null): string {
   if (lens === 'Life' || !periodKey) return `/${seg}`;
   return `/${seg}/${encodeURIComponent(periodKey)}`;
 }
+
+/**
+ * ⚠ **A8, new (R-task-52) — the lens a TASK belongs to, which is its scope's.**
+ *
+ * A week task belongs to the Weekly lens at its week; a **month task belongs to the Monthly lens at its
+ * month**. Both call sites used to hardcode `lensPath('Weekly', task.originPeriodKey)`, which for a month
+ * key produces `/week/2026-08` — a path `validKeyFor` drops as non-canonical for that lens, landing the
+ * owner on the current week instead. After A8 fixed the back control's LABEL, that made the control name
+ * one place and go to another, which is worse than the state before it, where both halves were visibly
+ * broken and neither could be trusted.
+ *
+ * It takes the scope rather than the whole task so `routes.ts` keeps depending on no view type.
+ */
+export const lensPathForScope = (scope: TaskScope, periodKey?: string | null): string =>
+  lensPath(scope === 'Monthly' ? 'Monthly' : 'Weekly', periodKey);
 
 export const goalPath = (goalId: string) => `/goal/${encodeURIComponent(goalId)}`;
 export const taskPath = (taskId: string) => `/task/${encodeURIComponent(taskId)}`;

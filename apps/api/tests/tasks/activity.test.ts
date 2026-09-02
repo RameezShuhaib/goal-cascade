@@ -1,7 +1,7 @@
 import { TaskDetailResponse, TaskResponse, TasksResponse } from '@goal-cascade/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, signedInOwner } from '../helpers/app';
-import { codeOf, command, createTask, detail, key, kinds, listWeek, makeLine, seedTask, texts } from './helpers';
+import { codeOf, command, createTask, detail, key, kinds, listWeek, makeLine, seedTask, texts, thisWeek, weekAt } from './helpers';
 
 /**
  * The activity timeline — R-task-22..31, D-13, D-14.
@@ -66,7 +66,7 @@ describe('R-task-29 / D-14 / Q-17 — the carry log is produced lazily and canno
     await listWeek(t, cookie, 0);
     expect(kinds(await detail(t, cookie, task.id))).toEqual(['created']);
 
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, {});
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
     t.clock.advanceWeeks(2);
     await listWeek(t, cookie, 0);
     await listWeek(t, cookie, -2);
@@ -165,7 +165,7 @@ describe('R-task-23/26/27 — editing the task', () => {
 
   it('S-task-26-1 — a DONE task stays editable; only the exits are withdrawn', async () => {
     const { cookie, task } = await openTask();
-    await command(t, cookie, `/api/tasks/${task.id}/complete`, {});
+    await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: thisWeek(t) });
     const res = await t.fetch(`/api/tasks/${task.id}`, { method: 'PATCH', cookie, json: { title: 'renamed while done' } });
     expect(res.status).toBe(200);
     expect(((await res.json()) as TaskResponse).task.title).toBe('renamed while done');
@@ -235,7 +235,7 @@ describe('R-task-30/31 — the timeline is server-authored and read-only', () =>
 
   it('S-task-30-1 — a client cannot smuggle event or status fields through a task write', async () => {
     const { cookie, task } = await openTask();
-    for (const json of [{ events: [] }, { status: 'done' }, { originWeekStart: '2026-08-24' }]) {
+    for (const json of [{ events: [] }, { status: 'done' }, { originPeriodKey: '2026-08-24' }]) {
       const res = await t.fetch(`/api/tasks/${task.id}`, { method: 'PATCH', cookie, json });
       expect(res.status).toBe(422);
     }
@@ -252,7 +252,7 @@ describe('R-task-30/31 — the timeline is server-authored and read-only', () =>
     const { cookie, task } = await openTask(MON.aug17, { links: ['https://example.com/a'], cond: 'merged' });
     TasksResponse.parse(await listWeek(t, cookie, 0));
     TaskDetailResponse.parse(await detail(t, cookie, task.id));
-    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { week: -1 });
+    const res = await command(t, cookie, `/api/tasks/${task.id}/complete`, { period: weekAt(t, -1) });
     TaskResponse.parse(await res.json());
   });
 });

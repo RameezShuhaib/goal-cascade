@@ -1,4 +1,4 @@
-import type { BacklogStatus, Horizon, Pulse, TaskEventKind, TaskStatus, Theme } from './enums';
+import type { BacklogStatus, Horizon, MeasureKind, Pulse, TaskEventKind, TaskScope, TaskStatus, Theme } from './enums';
 
 /**
  * Persistence-shaped domain records. Column names are camelCase here and snake_case in D1; the Drizzle
@@ -83,7 +83,7 @@ export type Goal = {
  * ⚠ **A2 (R-task-39)** — a task under a **Weekly goal**, and under nothing else. The condition is the
  * horizon, never leaf-ness (R-goal-37).
  *
- * `originWeekStart` / `doneWeekStart` are absolute Monday dates (D-1). Carrying is DERIVED, not written:
+ * `originPeriodKey` / `donePeriodKey` are absolute Monday dates (D-1). Carrying is DERIVED, not written:
  * an open task is visible in every week >= its origin with no job and no row change (R-task-7), which is
  * why this product has no cron.
  *
@@ -95,6 +95,19 @@ export type Task = {
   id: string;
   userId: string;
   goalId: string;
+  /**
+   * ⚠ **A8, new (R-task-52)** — **the task's own horizon**, seeded from its goal's at creation and
+   * rewritten by exactly one operation, Park (R-task-56).
+   *
+   * It is what every visibility, carry and completion comparison is made *within*, and it is the format
+   * `originPeriodKey` must be in. **It is not a second horizon system**: it may only ever be `Monthly` or
+   * `Weekly`, because only those two horizons hold tasks (R-task-51).
+   *
+   * The invariant `scope === 'Weekly'` ⇔ `originPeriodKey` is a Monday, and `scope === 'Monthly'` ⇔ it
+   * matches `YYYY-MM`, is an APPLICATION invariant with one test: this schema carries no SQL `CHECK`
+   * (only `_guard`), exactly as the Weekly-only rule it replaces did not.
+   */
+  scope: TaskScope;
   title: string;
   /** R-task-3 — done-condition. Optional by design; `''` when unset. */
   cond: string;
@@ -115,8 +128,28 @@ export type Task = {
    * The Weekly goal says what the work is FOR; this says when it was LIVE. What legitimately diverges is
    * exactly one thing — **the task carried** — and that divergence is the product working (R-lens-12).
    */
-  originWeekStart: string;
-  doneWeekStart: string | null;
+  originPeriodKey: string;
+  donePeriodKey: string | null;
+  /**
+   * ⚠ **A8, new (R-measure-1)** — the measure, flattened into five nullable columns.
+   *
+   * **The invariant is total**: `measureKind === null` ⇔ all five are null. There is no half-measure and
+   * no `binary` kind — a checkbox is the ABSENCE of a measure (S-measure-1-1).
+   *
+   * `measureCurrent` is **derived** (R-measure-3) — the value of the latest surviving reading, or
+   * `measureStart` when there are none — and is maintained in the same transaction as every reading write
+   * and delete. It is never client-supplied and never patchable. It is denormalised onto the task so a
+   * lens row can render `12 / 15 leads` without a per-task subquery, which is the same argument
+   * R-task-52 makes for `scope`.
+   *
+   * `measureTarget === null` is a **legitimate no-target measure** (R-measure-4), told apart from "no
+   * measure" by `measureKind IS NULL` and by nothing else.
+   */
+  measureKind: MeasureKind | null;
+  measureStart: number | null;
+  measureCurrent: number | null;
+  measureTarget: number | null;
+  measureUnit: string | null;
   /** D-4 — the instant Completed was logged. The "Done Fri 28 Aug" label is DERIVED from it, never stored. */
   doneAt: string | null;
   exitReason: string | null;
@@ -126,6 +159,33 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   version: number;
+};
+
+/**
+ * ⚠ **A8, new (R-measure-5)** — one recorded value on a task.
+ *
+ * **There is no week, month, period or scope field here, and there must never be one** (S-measure-5-2).
+ * A reading is keyed by `taskId` and by nothing else, so it survives carrying, parking, un-parking,
+ * re-parenting, completion and unchecking without exception. A history that reset at any boundary would
+ * be worthless — the sparkline of a workout that resets every Monday shows nothing — and that is the whole
+ * reason the feature exists.
+ *
+ * `value` is the **absolute** value of the measure after this reading; a counter's `+3` is resolved to an
+ * absolute by the server before storage, which is what makes deletion correct with one rule for both
+ * kinds (R-measure-3). Append-only and individually deletable: never edited in place, because correcting
+ * a mistyped 240 is deleting it and recording 24.
+ *
+ * `taskId` carries no FK, matching `taskLinks` / `taskEvents`; deletion is by the same subtree-cascade
+ * batch (Q-5).
+ */
+export type Reading = {
+  id: string;
+  userId: string;
+  taskId: string;
+  value: number;
+  /** When it was recorded. The sparkline's x-axis order, and the tie-break for "latest" is `id` desc. */
+  at: string;
+  createdAt: string;
 };
 
 export type TaskLink = {
@@ -143,9 +203,13 @@ export type TaskLink = {
  * `text` and `glyph` are rendered when the event is APPENDED, so the log reads the same forever even if
  * the copy changes later. `detail` is the structured form (old/new values, reason, source) as JSON.
  *
- * `weekStart` is set ONLY on a `carried` event and is the week the task was carried INTO. It exists to
- * make the lazy carry-log producer idempotent: a unique index on `(userId, taskId, weekStart)` for
- * `kind = 'carried'` means re-reading a week can never duplicate an entry (Q-17, R-task-29).
+ * `periodKey` is set ONLY on a `carried` event and is the period the task was carried INTO. It exists to
+ * make the lazy carry-log producer idempotent: a unique index on `(userId, taskId, periodKey)` for
+ * `kind = 'carried'` means re-reading a period can never duplicate an entry (Q-17, R-task-29).
+ *
+ * ⚠ **A8 (R-task-53)** — it is a PERIOD and not a week: a month task carries between months and earns the
+ * same line at the month scale, so the uniqueness key had to widen with it. The two scopes cannot collide,
+ * because a month key and a Monday are never the same string.
  */
 export type TaskEvent = {
   id: string;
@@ -155,14 +219,19 @@ export type TaskEvent = {
   text: string;
   glyph: string;
   detail: string | null;
-  weekStart: string | null;
+  periodKey: string | null;
   at: string;
 };
 
 /**
- * R-backlog-1/2/3 — deferred future work under a Yearly/Quarterly/Monthly goal. Never a Life goal, never
- * a week. `fromWeekStart` is the Monday of the week a task was LIVE in when it was moved out (D-12), or
- * null when captured directly.
+ * R-backlog-1/2/3 — deferred future work under a Yearly/Quarterly/Monthly goal. Never a Life goal, and
+ * ⚠ **A8 (R-backlog-30)** never a PERIOD: a backlog item is the only work object in this product with no
+ * period key, and a period key is exactly what makes something appear in a lens. That single absence is
+ * the whole enforceable difference between it and a month task on the same Monthly goal.
+ *
+ * `fromPeriodKey` is the period a task was LIVE in when it was moved out, **at that task's own scope** —
+ * a Monday for a week task (D-12, unchanged) or a month key for a month task (R-task-59) — or null when
+ * the item was captured directly. It is provenance on a row that has no period of its own, not a period.
  *
  * D-19 — a converted item keeps its row with `status: 'converted'` and a pointer to the task it became,
  * so "converted, never duplicated" is enforced by a uniqueness constraint rather than by hope.
@@ -174,7 +243,7 @@ export type BacklogItem = {
   title: string;
   description: string;
   capturedAt: string;
-  fromWeekStart: string | null;
+  fromPeriodKey: string | null;
   /**
    * ⚠ **A1 (R-backlog-17)** — the manual position within this item's own goal's list: an opaque,
    * lexicographically ordered string minted by the server (`domain/sort-keys.ts`) and never by a client.

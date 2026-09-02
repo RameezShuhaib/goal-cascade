@@ -19,7 +19,7 @@ const withBacklog = (items = [F.backlogItem()]) => server.use(http.get('/api/bac
 
 describe('The Backlog page (R-backlog-13)', () => {
   it('lists items under their owning goal, with the from-week note the exit left behind', async () => {
-    withBacklog([F.backlogItem({ goalId: F.M, fromWeekStart: F.LAST_MONDAY })]);
+    withBacklog([F.backlogItem({ goalId: F.M, fromPeriodKey: F.LAST_MONDAY })]);
     renderApp(<AppShell />, { route: '/backlog' });
 
     expect(await screen.findByText('Find a squat rack that is free at 7am')).toBeInTheDocument();
@@ -29,6 +29,27 @@ describe('The Backlog page (R-backlog-13)', () => {
     // D-12 — the week the task was LIVE in, an absolute Monday, not "this week".
     // R-nav-24 — one spelling of a week, and it is the server's.
     expect(screen.getByText('from week of 24 Aug')).toBeInTheDocument();
+  });
+
+  /**
+   * ⚠ **A8 (R-task-59) — the note a MONTH task's exit leaves behind.**
+   *
+   * `BacklogItemView.fromPeriodKey` is a key at the task's own scope from A8, and every renderer on this
+   * card split a `YYYY-MM-DD` to get its day. Handed `'2026-08'` the day segment is `undefined`, so the
+   * owner read **`from week of NaN Aug`** — for data the product creates the moment a month task is moved
+   * to the backlog, which is the flow S-task-59-1 is entirely about. `common.ts` promised
+   * `from Sep 2026` for this case and nothing rendered it.
+   */
+  it('S-task-59-1: a month task’s exit reads `from Aug 2026`, never `from week of NaN Aug`', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M, fromPeriodKey: '2026-08' })]);
+    renderApp(<AppShell />, { route: '/backlog' });
+
+    expect(await screen.findByText('Find a squat rack that is free at 7am')).toBeInTheDocument();
+    expect(screen.getByText('from Aug 2026')).toBeInTheDocument();
+    // The word `week` has no business here: a month is not a week, and saying so was the same category
+    // error the NaN was.
+    expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(screen.queryByText(/from week of/)).toBeNull();
   });
 
   it('S-backlog-13-1 (retired D-27 `Elsewhere`): an item on a goal in ANY period gets its own exact header', async () => {
@@ -107,7 +128,7 @@ describe('Backlog → work: the one conversion (R-backlog-26, D-19)', () => {
     await waitFor(async () => {
       const body = await bodyOf(lastRequest('POST', '/convert-to-task'));
       // R-backlog-26 — the conversion names a target week and may not be in the past (R-goal-36).
-      expect(body).toMatchObject({ week: 0, title: 'Find a squat rack that is free at 7am' });
+      expect(body).toMatchObject({ period: F.THIS_MONDAY, title: 'Find a squat rack that is free at 7am' });
     });
     // D-19 — CONVERTED, never duplicated: the item is not deleted and no second task is made.
     expect(requests('POST', '/api/tasks')).toHaveLength(0);

@@ -1,10 +1,12 @@
 import { relations, sql } from 'drizzle-orm';
-import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import {
   BACKLOG_STATUSES,
   HORIZONS,
+  MEASURE_KINDS,
   PULSES,
   TASK_EVENT_KINDS,
+  TASK_SCOPES,
   TASK_STATUSES,
   THEMES,
 } from '../../domain/enums';
@@ -105,7 +107,8 @@ export const accountRelations = relations(account, ({ one }) => ({
 //
 // EVERY week is `TEXT` holding the ISO date of that week's MONDAY (SPEC D-1). Never
 // an offset: an offset means something different every Monday, with no write. The
-// columns are named `*_week_start` so a relative value cannot be slipped in unnoticed.
+// columns are named `*_period_key` so a relative value cannot be slipped in unnoticed (A8 widened them
+// from `*_week_start`; every stored value was a Monday and none of them changed).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** R-auth-6 / R-nav-12 — the only row provisioned at sign-up. A new account's tree is EMPTY. */
@@ -206,14 +209,25 @@ export const goals = sqliteTable(
  */
 
 /**
- * ⚠ **A2 (R-task-39)** — a task under a **Weekly goal**, and under nothing else.
+ * ⚠ **A8 (R-task-51/52)** — a task under a **Monthly or a Weekly goal**, and under nothing else.
  *
  * `status` is what makes D-15 work: Move-to-Backlog and Cancel set a terminal status and keep the row,
  * because the `Moved to Backlog` / `Canceled` timeline entries the ruleset requires — and the optional
- * reason — cannot live on a deleted row. Exited tasks are excluded from every week view and count.
+ * reason — cannot live on a deleted row. Exited tasks are excluded from every period view and count.
  *
- * Carrying (R-task-7) needs NO column and NO job: an open task is visible in every week whose Monday is
- * >= `origin_week_start`. That single fact is why this product has no cron (Q-17).
+ * Carrying (R-task-53) needs NO column and NO job at either scope: an open task is visible in every period
+ * `>= origin_period_key`, within its own `scope`. That single fact is why this product has no cron (Q-17),
+ * and A8 does not give it one.
+ *
+ * **One column, two scopes, and the format is the discriminator.** `2026-09-07` is a week and `2026-09` is
+ * a month; the key says which without a flag, exactly as R-goal-33 already requires of every goal. `scope`
+ * is stored anyway, and admitted as a denormalisation of `goal.horizon`: no index can key on the length of
+ * a string, and `scope` leading `origin_period_key` is what stops a week read and a month read from
+ * scanning each other's rows.
+ *
+ * **The five measure columns are all-or-nothing**: `measure_kind IS NULL` ⇔ all five are null
+ * (R-measure-1). There is no SQL `CHECK` in this schema — only `_guard` — so that, like the Weekly-only
+ * rule it replaces, is an application invariant with one test.
  */
 export const tasks = sqliteTable(
   'tasks',
@@ -229,32 +243,105 @@ export const tasks = sqliteTable(
     description: text('description').notNull().default(''),
     status: text('status', { enum: TASK_STATUSES }).notNull().default('open'),
     /**
-     * ⚠ **A2 (R-task-40)** — the task's OWN week, seeded once from its Weekly parent's `period_key` and
-     * immutable for the life of the task. It is never re-derived from the parent: a week that is looked
-     * up rather than recorded changes meaning without a write (D-1). No join to `goals` is needed by any
-     * week-scoped read, which is why `ix_tasks_open_week` still serves them all.
+     * ⚠ **A8, new (R-task-52)** — the task's own horizon, seeded from its goal's at creation and rewritten
+     * by exactly one operation, Park (R-task-56). `'Monthly' | 'Weekly'` and nothing else.
+     *
+     * `DEFAULT 'Weekly'` is what backfills every existing row in the migration without a data statement:
+     * every task that existed before A8 hangs off a Weekly goal, so the default IS the backfill and
+     * nothing has to be read or guessed.
      */
-    originWeekStart: text('origin_week_start').notNull(),
+    scope: text('scope', { enum: TASK_SCOPES }).notNull().default('Weekly'),
+    /**
+     * ⚠ **A2 (R-task-40), generalised by A8 (R-task-52)** — the task's OWN period, seeded once from its
+     * goal's `period_key` and immutable for the life of the task except through Park. It is never
+     * re-derived from the parent: a period that is looked up rather than recorded changes meaning without
+     * a write (D-1). No join to `goals` is needed by any period-scoped read, which is why
+     * `ix_tasks_open_period` serves them all.
+     *
+     * **Every value that existed before A8 is a Monday and is unchanged by the migration**; only the
+     * column name and the format's domain widen.
+     */
+    originPeriodKey: text('origin_period_key').notNull(),
     /** R-task-14/19 — set on complete, cleared on uncheck. `done` is derived from it, never stored. */
-    doneWeekStart: text('done_week_start'),
+    donePeriodKey: text('done_period_key'),
     /** D-4 — the instant of completion. The "Done Fri 28 Aug" label is rendered from this. */
     doneAt: text('done_at'),
     /** D-15 — the optional reason from the Move/Cancel confirm sheet, retained on the record. */
     exitReason: text('exit_reason'),
     exitedAt: text('exited_at'),
     movedToBacklogItemId: text('moved_to_backlog_item_id'),
+    /**
+     * ⚠ **A8, new (R-measure-1/2/3/4)** — the measure, flattened. **All five or none of the five.**
+     *
+     * `measure_current` is DERIVED (R-measure-3) — the value of the latest surviving reading ordered
+     * `(at desc, id desc)`, or `measure_start` when there are none — and is maintained in the SAME
+     * transaction as every reading write and delete. It is never client-supplied and never patchable. It
+     * is denormalised here so a lens row can render `12 / 15 leads` without a per-task subquery, which is
+     * the same argument R-task-52 makes for `scope`.
+     *
+     * `measure_target IS NULL` is a **legitimate no-target measure** (R-measure-4) and is told apart from
+     * "no measure" by `measure_kind IS NULL`, which is the only discriminator there is.
+     *
+     * REAL and not INTEGER: `78.5 kg` is the owner's own example, and a measure is a number they wrote.
+     */
+    measureKind: text('measure_kind', { enum: MEASURE_KINDS }),
+    measureStart: real('measure_start'),
+    measureCurrent: real('measure_current'),
+    measureTarget: real('measure_target'),
+    measureUnit: text('measure_unit'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
     version: integer('version').notNull().default(1),
   },
   (t) => [
-    // R-task-7 — the open-task week scan: `status='open' AND origin_week_start <= :week`.
-    index('ix_tasks_open_week').on(t.userId, t.status, t.originWeekStart),
-    // R-task-8 — the done-task week lookup: `status='done' AND done_week_start = :week`.
-    index('ix_tasks_done_week').on(t.userId, t.status, t.doneWeekStart),
+    /**
+     * ⚠ **A8 (R-task-52/53)** — the open-task period scan:
+     * `status='open' AND scope=:scope AND origin_period_key <= :key`.
+     *
+     * **`scope` sits between `status` and the key, and that position is the whole reason the column is
+     * stored.** A week read and a month read must not scan each other's rows, and no index can key on the
+     * length of a string — so without it, `origin_period_key <= '2026-09-07'` would sweep every month key
+     * from `1000-01` to `2026-09` on the way.
+     */
+    index('ix_tasks_open_period').on(t.userId, t.status, t.scope, t.originPeriodKey),
+    // R-task-8 / R-task-53 — the done-task period lookup: `status='done' AND scope=? AND done_period_key=?`.
+    index('ix_tasks_done_period').on(t.userId, t.status, t.scope, t.donePeriodKey),
     // R-goal-24 / R-nav-7 — per-goal counts and the carry signal.
     index('ix_tasks_goal').on(t.userId, t.goalId, t.status),
   ],
+);
+
+/**
+ * ⚠ **A8, new (R-measure-3, R-measure-5)** — the append-only reading history of a measurable task.
+ *
+ * **There is NO week, month, period or scope column here, and there must never be one** (S-measure-5-2).
+ * A reading is keyed by `task_id` and by nothing else, so it survives carrying, parking, un-parking,
+ * re-parenting, completion and unchecking without exception. A task carries across weeks and months and
+ * may be parked between them; if its readings reset at any boundary the history is worthless, which is the
+ * whole reason the feature exists — the sparkline of a workout that resets every Monday shows nothing.
+ *
+ * `value` is the **absolute** value of the measure after this reading. A counter's `+3` is resolved to an
+ * absolute by the server before it is stored, which is what makes deletion correct with one rule for both
+ * kinds: deleting the latest falls back to the one before it, deleting a middle one changes nothing, and
+ * deleting the only one returns `current` to `start` (R-measure-3).
+ *
+ * `task_id` carries no FK, matching `task_links` and `task_events`; deletion is by the same Q-5
+ * subtree-cascade batch. The index is `(user, task, at, id)` — the sparkline's order, and the `id` desc
+ * tail is what makes "the latest surviving reading" total when two land in the same millisecond.
+ */
+export const taskReadings = sqliteTable(
+  'task_readings',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    taskId: text('task_id').notNull(),
+    value: real('value').notNull(),
+    at: text('at').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('ix_task_readings_task').on(t.userId, t.taskId, t.at, t.id)],
 );
 
 /** R-task-24/25 — insertion-ordered external links. Max 20 per task (Q-12), enforced in the schema. */
@@ -277,10 +364,14 @@ export const taskLinks = sqliteTable(
  * the Q-5 subtree cascade), and never authored by the client. `text` and `glyph` are rendered by the
  * server at append time so the log reads the same forever even if the copy changes later.
  *
- * `week_start` is set ONLY on a `carried` event, and the unique index below is what makes the LAZY carry
- * producer safe (Q-17, R-task-29): the entry is generated on first read of a week, and a re-read — or
- * two devices reading the same new week at once — inserts nothing, because `(user, task, week)` is
- * already taken. No cron, no per-week write amplification, and no possibility of a duplicate line.
+ * `period_key` is set ONLY on a `carried` event, and the unique index below is what makes the LAZY carry
+ * producer safe (Q-17, R-task-29): the entry is generated on first read of a period, and a re-read — or
+ * two devices reading the same new period at once — inserts nothing, because `(user, task, period)` is
+ * already taken. No cron, no per-period write amplification, and no possibility of a duplicate line.
+ *
+ * ⚠ **A8 (R-task-53)** — it is a PERIOD and not a week, because a month task carries between months and
+ * earns the same line at the month scale. The two scopes cannot collide on this key: a month key and a
+ * Monday are never the same string.
  */
 export const taskEvents = sqliteTable(
   'task_events',
@@ -295,14 +386,14 @@ export const taskEvents = sqliteTable(
     glyph: text('glyph').notNull(),
     /** Structured form of the event (old/new values, reason, source) as JSON. */
     detail: text('detail'),
-    weekStart: text('week_start'),
+    periodKey: text('period_key'),
     at: text('at').notNull(),
   },
   (t) => [
     // Q-7 — newest first: `at` desc, then insertion sequence (`id`, a ULID) desc.
     index('ix_task_events_task').on(t.userId, t.taskId, t.at, t.id),
     uniqueIndex('ux_task_events_carried')
-      .on(t.userId, t.taskId, t.weekStart)
+      .on(t.userId, t.taskId, t.periodKey)
       .where(sql`kind = 'carried'`),
   ],
 );
@@ -327,8 +418,16 @@ export const backlogItems = sqliteTable(
     description: text('description').notNull().default(''),
     /** Q-7 / D-17 — a real timestamp, never a display string like `'Today'`. */
     capturedAt: text('captured_at').notNull(),
-    /** D-12 — the Monday of the week the task was LIVE in when it was moved out. */
-    fromWeekStart: text('from_week_start'),
+    /**
+     * D-12 — the period the task was LIVE in when it was moved out.
+     *
+     * ⚠ **A8 (R-task-59)** — at the task's OWN scope: a Monday for a week task (unchanged in value and
+     * meaning) or a month key for a month task, which renders `from Sep 2026` rather than
+     * `from week of …`. It is **provenance on a row that has no period of its own** — a backlog item is
+     * the only work object with no period key (R-backlog-30), and this column does not give it one:
+     * nothing filters, sorts, ages or lenses on it.
+     */
+    fromPeriodKey: text('from_period_key'),
     /**
      * ⚠ **A1, new (R-backlog-17)** — the manual position within this item's OWN goal's list.
      *

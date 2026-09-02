@@ -13,7 +13,7 @@ import { createTestApp, ids, signedInOwner } from '../helpers/app';
  * leaves — which are exactly the childless Monthly goals R-goal-37 warns must never hold work.
  *
  * Option A of three, and the only one that leaves ONE shape in the database: mint one Weekly goal per
- * distinct `(goal_id, origin_week_start)` and re-point. Every task keeps its week, its carry age, its
+ * distinct `(goal_id, origin_period_key)` and re-point. Every task keeps its week, its carry age, its
  * activity and its place in the Weekly lens.
  *
  * ── How this test works, and why it has to work this way ──────────────────────────────────────────
@@ -28,7 +28,27 @@ import { createTestApp, ids, signedInOwner } from '../helpers/app';
  * The two DDL statements are skipped (the column and the index are already present from the real run)
  * and the final `DROP TABLE` is executed last, once. The DATA steps are run TWICE, which is the
  * idempotency proof the guards exist for.
+ *
+ * ⚠ **A8 — the statements are read THROUGH one rename, and this is the only concession made to it.**
+ * `0005_month_tasks_and_measures` renamed `tasks.origin_week_start` → `origin_period_key` and
+ * `done_week_start` → `done_period_key` (R-task-52). 0003's own text names the old columns, because that
+ * is what they were called when it ran; the live table no longer has them, so the replay cannot execute
+ * verbatim. `RENAMED_BY_A8` is applied to the statement text, and to this file's own fixture SQL, so the
+ * SEMANTICS being asserted are unchanged and a change to 0003's SQL is still a change to what this
+ * asserts. Nothing else about the test is adjusted, and the two names are pinned by the map itself.
  */
+
+/**
+ * The one thing A8 changed under this test's feet: two column names on `tasks`. A rename is not a
+ * behaviour change, and reading a historical migration through it is what the database itself does —
+ * SQLite rewrote every index that referenced them in the same statement.
+ */
+const RENAMED_BY_A8: readonly (readonly [RegExp, string])[] = [
+  [/\borigin_week_start\b/g, 'origin_period_key'],
+  [/\bdone_week_start\b/g, 'done_period_key'],
+];
+const throughA8 = (statement: string): string =>
+  RENAMED_BY_A8.reduce((out, [from, to]) => out.replace(from, to), statement);
 const t = createTestApp({ now: '2026-08-31T10:00:00.000Z' });
 const NOW = '2026-08-31T10:00:00.000Z';
 
@@ -36,11 +56,13 @@ const NOW = '2026-08-31T10:00:00.000Z';
 const STATEMENTS = migrationSql
   .split('--> statement-breakpoint')
   .map((s) =>
-    s
-      .split('\n')
-      .filter((line) => !line.trimStart().startsWith('--'))
-      .join('\n')
-      .trim(),
+    throughA8(
+      s
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n')
+        .trim(),
+    ),
   )
   .filter((s) => s.length > 0);
 
@@ -111,7 +133,7 @@ beforeAll(async () => {
 
   const task = (id: string, goalId: string, week: string, status = 'open', doneWeek: string | null = null) =>
     sql.raw(
-      `INSERT INTO tasks (id, user_id, goal_id, title, cond, description, status, origin_week_start, done_week_start, done_at, exit_reason, exited_at, moved_to_backlog_item_id, created_at, updated_at, version)
+      `INSERT INTO tasks (id, user_id, goal_id, title, cond, description, status, origin_period_key, done_period_key, done_at, exit_reason, exited_at, moved_to_backlog_item_id, created_at, updated_at, version)
        VALUES ('${id}', '${userId}', '${goalId}', 'task ${id.slice(-4)}', '', '', '${status}', '${week}', ${doneWeek === null ? 'NULL' : `'${doneWeek}'`}, NULL, NULL, NULL, NULL, '${NOW}', '${NOW}', 1)`,
     );
 
@@ -133,7 +155,7 @@ beforeAll(async () => {
 });
 
 type GoalRow = { id: string; parent_id: string | null; horizon: string; title: string; period_key: string; period: string; created_at: string };
-type TaskRow = { id: string; goal_id: string; origin_week_start: string; status: string; done_week_start: string | null };
+type TaskRow = { id: string; goal_id: string; origin_period_key: string; status: string; done_period_key: string | null };
 
 const goalsOf = () => db.all<GoalRow>(sql`SELECT * FROM goals WHERE user_id = ${userId} ORDER BY id`);
 const tasksOf = () => db.all<TaskRow>(sql`SELECT * FROM tasks WHERE user_id = ${userId} ORDER BY id`);
@@ -229,10 +251,10 @@ describe('migration 0003 — the Weekly horizon, on real pre-A2 data', () => {
     for (const task of tasks) {
       const owner = weekly.get(task.goal_id);
       expect(owner, `${task.id} was not re-pointed`).toBeTruthy();
-      // R-task-40 — `origin_week_start` is the task's OWN field and is NOT touched. At the moment of
+      // R-task-40 — `origin_period_key` (`origin_week_start` when 0003 ran) is the task's OWN field and is NOT touched. At the moment of
       // migration it equals its new parent's week by construction, which is the same invariant a
       // create establishes.
-      expect(owner!.period_key, `${task.id} landed in the wrong week`).toBe(task.origin_week_start);
+      expect(owner!.period_key, `${task.id} landed in the wrong week`).toBe(task.origin_period_key);
     }
 
     // The two tasks that shared a `(goal, week)` pair share the ONE goal minted for it.
@@ -240,7 +262,7 @@ describe('migration 0003 — the Weekly horizon, on real pre-A2 data', () => {
 
     // DONE and EXITED tasks are re-pointed the same way, deliberately: leaving them on a non-Weekly
     // parent as inert history would make every query that touches the past special-case them, forever.
-    expect(tasks.find((x) => x.id === F.t4)).toMatchObject({ status: 'done', done_week_start: WEEK_B, origin_week_start: WEEK_B });
+    expect(tasks.find((x) => x.id === F.t4)).toMatchObject({ status: 'done', done_period_key: WEEK_B, origin_period_key: WEEK_B });
     expect(tasks.find((x) => x.id === F.t5)!.status).toBe('canceled');
   });
 
@@ -288,7 +310,7 @@ describe('migration 0003 — the Weekly horizon, on real pre-A2 data', () => {
     const week = (await (await t.fetch(`/api/goals?lens=Weekly&period=${WEEK_C}`, { cookie: ownerCookie })).json()) as {
       items: { id: string; title: string; periodKey: string }[];
       carried: { id: string; title: string; periodKey: string }[];
-      tasks: { id: string; goalId: string; carryWeeks: number }[];
+      tasks: { id: string; goalId: string; carryAge: number }[];
       groups: { id: string | null; title: string; openTasks: number }[];
     };
 
@@ -307,7 +329,7 @@ describe('migration 0003 — the Weekly horizon, on real pre-A2 data', () => {
     // WEEK_A tasks are two weeks old in WEEK_C, which is the red chip.
     const carriedTasks = week.tasks.filter((x) => week.carried.some((g) => g.id === x.goalId));
     expect(carriedTasks).toHaveLength(2);
-    expect(carriedTasks.every((x) => x.carryWeeks === 2)).toBe(true);
+    expect(carriedTasks.every((x) => x.carryAge === 2)).toBe(true);
 
     // R-lens-3 — and the whole thing groups under the one Life goal, resolved by the server.
     expect(week.groups.map((g) => g.id)).toEqual([F.life]);
