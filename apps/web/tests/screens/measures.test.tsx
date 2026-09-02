@@ -255,8 +255,39 @@ describe('R-measure-3 — recording: one eyebrow, one field, one button', () => 
     counter();
     answersWith(63);
     const { user } = await openTaskPage();
-    await user.click(screen.getByRole('button', { name: 'Add 1 lead' }));
+    await user.click(screen.getByRole('button', { name: 'Add 1 to leads' }));
     await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/readings'))).toEqual({ delta: 1, version: 1 }));
+  });
+
+  /**
+   * ⚠ **The unit is a word, never parsed and never converted** (`docs/BUSINESS-RULES.md`) — and this is the
+   * case that proves the rule rather than the label.
+   *
+   * `33-measurables-ux` §3.5 asked for `Add 1 lead` from the unit `leads`, which needs the owner's own word
+   * singularised. **The owner overruled it**: stripping a trailing `s` is parsing, it is English-only, and
+   * across real units it is a coin flip — `status → statu`, `press → pres`, and anything typed in another
+   * language. A label that mangles the owner's word is worse than one that omits it, and nothing is lost,
+   * because the unit already appears verbatim in the value line beside the chip.
+   *
+   * `status` is chosen deliberately: it is the unit a trailing-`s` strip gets *wrong* rather than merely
+   * awkward, so this fails loudly the moment any code transforms a unit string again.
+   */
+  it('no code transforms the unit: a unit of `status` is spoken whole, never as `statu`', async () => {
+    withTask({
+      id: TASK,
+      measure: F.measure({ kind: 'counter', start: 0, current: 3, target: 10, unit: 'status', progress: 0.3 }),
+      readings: [F.reading({ id: F.ulid(71), value: 3 })],
+    });
+    await openTaskPage();
+
+    const chip = screen.getByRole('button', { name: 'Add 1 to status' });
+    expect(chip).toHaveTextContent('+1');
+    // `statu` not followed by an `s` — i.e. the mangled form, anywhere in the accessible name.
+    expect(chip.getAttribute('aria-label')).not.toMatch(/statu(?!s)/);
+    // And the same rule at every other site that interpolates the unit.
+    expect(screen.getByLabelText('How many status to add')).toBeInTheDocument();
+    expect(screen.getAllByTestId('measure-line')[0]).toHaveTextContent('3 / 10 status');
+    expect(document.body.textContent).not.toMatch(/statu(?!s)/);
   });
 
   /**
@@ -341,7 +372,7 @@ describe('R-measure-3 — recording: one eyebrow, one field, one button', () => 
       ),
     );
     const { user } = await openTaskPage();
-    await user.click(screen.getByRole('button', { name: 'Add 1 lead' }));
+    await user.click(screen.getByRole('button', { name: 'Add 1 to leads' }));
 
     await waitFor(() => expect(screen.getAllByTestId('measure-line')[0]).toHaveTextContent('300 / 300 leads'));
     expect(screen.getAllByTestId('measure-bar')[0]).toHaveAttribute('data-fill', '100');

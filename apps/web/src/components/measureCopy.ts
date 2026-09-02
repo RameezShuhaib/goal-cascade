@@ -91,21 +91,22 @@ export const RECORD_EYEBROW = 'RECORD';
 export const RECORD = 'Record';
 export const PLUS_ONE = '+1';
 /**
- * ⚠ **`Add 1 lead`, from the unit `leads`** — `33-measurables-ux` §3.5 spells this one out, because `+1`
- * alone is a glyph and a digit and says nothing about what is being added.
+ * ⚠ **`Add 1 to leads`, and NOT `33-measurables-ux` §3.5's `Add 1 lead`** — the owner's overrule, and the
+ * standing rule wins.
  *
- * It is the **only** place in this product that touches a unit's letters, and it is a naive trailing-`s`
- * strip guarded against `ss` and against very short words: `leads → lead`, `reps → rep`, `lbs → lb`,
- * `kg → kg`, `press → press`. It is confined to ONE accessible name and never to anything rendered,
- * stored or sent.
+ * `+1` alone is a glyph and a digit, so the accessible name has to name what is being added — but
+ * `Add 1 lead` from the unit `leads` requires **singularising the owner's own word**, and
+ * `docs/BUSINESS-RULES.md` is explicit that *"the unit is a word, never parsed and never converted"*.
+ * Stripping a trailing `s` **is** parsing: it is English-only, and it is a coin flip across real units —
+ * `status → statu`, `press → pres`, `mins`, `lbs`, `kg`, and anything the owner types in another
+ * language. **A label that mangles the owner's own word is worse than a label that omits it.**
  *
- * ⚠ **This is in tension with a standing rule** — *"the unit is a word, never parsed and never
- * converted"* (`docs/BUSINESS-RULES.md`) — and a unit like `status` would be spoken `statu`. The UX plan
- * is explicit and is followed here; `build.md` §Divergences records the objection so the owner can
- * overrule it in one line.
+ * Nothing is lost by interpolating the unit whole: it already appears verbatim in the value line
+ * immediately beside the chip (`62 / 300 leads`), so the name adds the verb and the direction and nothing
+ * else. **No code anywhere transforms a unit string** — every function in this file interpolates it as
+ * given, and `measures.test.tsx` pins the rule with `status`, the case that proves it.
  */
-export const plusOneName = (unit: string): string => (unit ? `Add 1 ${singular(unit)}` : 'Add 1');
-const singular = (unit: string): string => (unit.length > 2 && unit.endsWith('s') && !unit.endsWith('ss') ? unit.slice(0, -1) : unit);
+export const plusOneName = (unit: string): string => (unit ? `Add 1 to ${unit}` : 'Add 1');
 export const DELTA_PLACEHOLDER = '+';
 export const deltaFieldName = (unit: string): string => (unit ? `How many ${unit} to add` : 'How much to add');
 export const gaugeFieldName = (unit: string): string => (unit ? `New value in ${unit}` : 'New value');

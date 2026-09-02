@@ -6,7 +6,7 @@ because 33 depends on it and it had not shipped: `docs/work/32-week-selection/UX
 its §9.2).
 Contract consumed, not designed: `docs/work/31-measurables-api/build.md` §2. Nothing on the wire changed.
 
-Green at the end: **655 api / 480 web / 132 shared**, typecheck clean across all three workspaces,
+Green at the end: **655 api / 481 web / 132 shared**, typecheck clean across all three workspaces,
 `npm run build -w @goal-cascade/web` emitting `dist/sw.js` with a 13-entry precache manifest. Floors were
 655 / 439 / 132. Nothing deployed, nothing merged.
 
@@ -32,7 +32,7 @@ Green at the end: **655 api / 480 web / 132 shared**, typecheck clean across all
 | `apps/web/src/components/Measure.tsx` | `MeasureLine`, `MeasureBar`, `MeasureFields`, `MeasureBlock`, the record control, the readings list |
 | `apps/web/src/components/Sparkline.tsx` | one `<svg>`, one `<path>`, and a list of what it refuses to be |
 | `apps/web/tests/screens/monthBand.test.tsx` | the band, the seam, the trap, the Monthly lens's lists — 11 tests |
-| `apps/web/tests/screens/measures.test.tsx` | every measure state, the record control, the sparkline, keyboard — 23 tests |
+| `apps/web/tests/screens/measures.test.tsx` | every measure state, the record control, the sparkline, keyboard, the unit rule — 24 tests |
 | `apps/web/tests/screens/park.test.tsx` | Park, un-park, the withdrawals, R-task-59's landing goal — 6 tests |
 
 ---
@@ -141,13 +141,24 @@ appeared.
    under the exact key the Monthly tab itself uses, so switching to that tab afterwards is free. The
    alternative was one `GET /goals/:id` per goal in the band (N requests for two fields). The band waits
    for that read rather than drawing a title-less card; it is the last section on the screen.
-   *If the reviewer prefers it, the honest fix is on the API side: put the band's goals on the payload.*
+   **See §11 — it is written up there as its own change.**
 
-2. **`Add 1 lead` from the unit `leads` — a singularisation this product's own rules forbid.**
-   §3.5's copy table is explicit. It is implemented (a guarded trailing-`s` strip, confined to one
-   accessible name), and it is the one call in the plan I think is wrong: `docs/BUSINESS-RULES.md` says
-   *"The unit is a word, never parsed and never converted"*, and `status` would be spoken `statu`.
-   **Recommend overruling to `Add 1 leads`** — one line in `measureCopy.plusOneName`.
+2. **`Add 1 lead` from the unit `leads` — ⚠ RAISED, AND OVERRULED BY THE OWNER. The chip's accessible
+   name is `Add 1 to leads`, and no code anywhere transforms a unit string.**
+   §3.5's copy table asked for `Add 1 lead`, which needs the owner's own word singularised. It was built
+   that way, flagged, and overruled in the same pass. The owner's reasoning, kept because it is the rule
+   and not a preference: `docs/BUSINESS-RULES.md` says *"The unit is a word, never parsed and never
+   converted"*; stripping a trailing `s` **is** parsing; it is English-only; and across real units it is a
+   coin flip — `status → statu`, `press → pres`, plus `kg`, `reps`, `lbs`, `mins` and anything typed in
+   another language. **A label that mangles the owner's own word is worse than one that omits it**, and
+   nothing is lost, because the unit already appears verbatim in the value line immediately beside the chip
+   (`62 / 300 leads`). The name carries the verb and the direction instead: `Add 1 to leads`, or `Add 1`
+   with no unit.
+   The `singular()` helper is **deleted, not disabled** — there is no unit-transforming code left in the
+   web to be reached for again — and `measures.test.tsx` pins the rule rather than the label with the case
+   that proves it: a measure whose unit is **`status`** must render `Add 1 to status`, and no string
+   anywhere on the page may match `/statu(?!s)/`. `status` is chosen because it is the unit a trailing-`s`
+   strip gets *wrong* rather than merely awkward.
 
 3. **`R-goal-47`'s position: the plan wins over A8's own SPEC note.** §4.4 lists the planned-ness line at
    position 3, *above* the nested list, and §2.3's mockup draws it there; `R-goal-47`'s A8 note says it
@@ -163,9 +174,9 @@ appeared.
    shows `Added to Aug 2026` (`labelOf('Monthly', …)`, no new date spelling), the twin of the existing
    `Added to week of 31 Aug`.
 
-6. **`R-backlog-31`'s `Add to this month` on the Backlog page is not built.** It is an A8 rule, it is not in
-   `33-measurables-ux`, and the brief did not name it. `BacklogItemCard`'s `Add to this week` is untouched
-   and still works. Flagged for a later pass.
+6. **`R-backlog-31`'s `Add to this month` on the Backlog page is not built — a KNOWN GAP, confirmed out of
+   scope by the owner. See §12.** It is an A8 rule, it is not designed in `33-measurables-ux`, and the brief
+   did not name it. `BacklogItemCard`'s `Add to this week` is untouched and still works.
 
 7. **The measure block's polite region is its own.** §F says "the existing polite region"; the task page has
    none (the lens's is on `LensScreen`). One visually-hidden `aria-live="polite"` div lives in
@@ -182,11 +193,13 @@ appeared.
 
 ## 7. Tests: what was added, and the two verdicts
 
-**Added: 41 tests** (439 → 480). Every state the UX plan's mockups draw has one, plus the seven the brief
+**Added: 42 tests** (439 → 481). Every state the UX plan's mockups draw has one, plus the seven the brief
 named by name: the past-month band at the pinned clock of 2 Sep 2026; a month task in a week with no carry
 label of any kind; reaching a target rendering and announcing nothing; deleting a reading updating the
 sparkline and the current value; the sparkline absent below two readings and carrying a text equivalent
-when present; and full keyboard operation of setting and updating a measure.
+when present; and full keyboard operation of setting and updating a measure. The forty-second was added on
+the owner's overrule (§6.2): a unit of `status` must be spoken whole, which pins *the unit is never parsed*
+rather than pinning a label.
 
 **Retired: none. Weakened: none. Restated with a verdict: 4**, all in one place and all for one reason —
 `R-task-49` is **retired in full by A8**, and `R-task-57` as amended by A11 (plus the owner's ruling on
@@ -249,3 +262,89 @@ section — and A11 §8.6's month-default sentence landed with the API half. So
 its pixels. The 360 px layout, the band's position on a real screen, the sparkline's line weight at two
 widths, and the create sheet's scroll in its open state (§2.9 predicts ≈ 628 px against an 88 vh sheet, so
 it *should* scroll) are all unverified by eye and are the E2E pass's first four items.
+
+---
+
+## 11. Hand-off: put the band's goals on the wire (API-side, not done here)
+
+**The problem, precisely.** `LensResponse.monthTasks` carries `TaskView`s and nothing else. The band has to
+draw one card per Monthly goal — `Title` (title + pulse dot) and `LifeLine` (`under <life goal>`, plus the
+Life goal's id so the line is a link) — and **none of that is on a Weekly payload**:
+
+| field on a Weekly `LensResponse` | what it is about | usable by the band? |
+|---|---|---|
+| `items` | the week's **Weekly** goals | no |
+| `carried` | earlier weeks' **Weekly** goals | no |
+| `groups` | the Life roots of `items` + `carried` | no — a band goal's line may not be among them |
+| `parents` | `parentsOf(interior, rendered)` — the parents of `items` + `carried` | **incidentally often**, never reliably |
+
+`parents` is the near miss worth naming: the band's Monthly goal is *usually* also the parent of one of the
+week's Weekly goals, so a build that used it would pass on the fixture account and fail the first time the
+owner has a month task on a goal with no weekly plan — which is exactly the case A8 exists to serve.
+
+**What the fix would be.** `GoalService.lens` already holds every one of these values while it builds the
+response: `monthTaskRows` gives the goal ids, `byId`/`interior` hold the goals, and `this.toView(g, view)`
+is the same projection `items` uses. The smallest honest change is one new field beside the two A8 added:
+
+```ts
+/** R-lens-31 — the Monthly goals `monthTasks` hang on, so the band needs no second read. Weekly lens only. */
+monthGoals: GoalView[]
+```
+
+built from `[...new Set(monthTaskRows.map(t => t.goalId))]` in first-appearance order, projected through
+`toView`, with `groupsOf` widened to include them so their Life lines resolve from the same payload. It is
+one `listByIds` on ids already in hand, inside a `Promise.all` that already makes five reads.
+
+**What the extra read costs today** (measured against the code as committed, not estimated):
+
+- **One `GET /goals?lens=Monthly&period=<monthPeriodKey>` per Weekly lens view where the band renders.**
+  It fires only when `monthTasks.length > 0`; a week with no month tasks makes no extra request at all.
+- It is cached under `keys.goals('Monthly', monthPeriodKey)` — **the Monthly tab's own key** — so it is
+  shared both ways: opening the Monthly lens afterwards is a cache hit, and arriving from the Monthly lens
+  makes the band free.
+- **The band's cards therefore arrive one round trip after the rest of the lens.** The band is the last
+  section on the screen and below the fold at 360 px, and it waits rather than drawing a title-less card —
+  a half-drawn card reads as a bug in a way a section arriving a moment later does not. It is still a
+  visible seam on a slow connection and is the honest cost of not changing the contract in this pass.
+- The payload is a whole Monthly lens page (`MAX_PAGE` goals, their `weeklyBreakdown` and `backlogCount`)
+  to render two fields per card — the clearest argument for moving it onto the Weekly payload.
+
+**Where it lives:** `MonthBand` in `apps/web/src/lens/LensScreen.tsx`, the `useLens('Monthly', …)` call and
+the `byId` / `lives` maps built from it. When `monthGoals` lands, that call and both maps are deleted and
+the band reads `data.monthGoals` — no other line of the band changes.
+
+---
+
+## 12. Known gap: `R-backlog-31`'s `Add to this month`
+
+**Not built, and confirmed out of scope by the owner.** Written down here because *the owner's backlog is
+empty right now, which is exactly how a missing backlog affordance stays invisible.*
+
+`R-backlog-31` gives a backlog item **two** promotions: `Add to this week` (which ships, unchanged) and
+`Add to this month`, which lands the item on the Monthly goal it is **already attached to** — no
+resolution, no candidate list, no ambiguity, no `NO_WEEKLY_GOAL` and no implicitly created Weekly goal.
+
+**The server half is built and reachable.** `ConvertBacklogItemRequest.period` accepts a month key and takes
+that path (`docs/work/31-measurables-api/build.md` §2), and this pass **already wired the client to send
+it**: `useConvertBacklogItem` gained a `period` passthrough, and `TaskCreateSheet` posts a month key when the
+month chip is chosen — which is the path a Monthly card's `Pull from backlog` takes today.
+
+**What is missing is exactly one surface: the Backlog page's own row action.**
+`apps/web/src/components/BacklogItemCard.tsx` offers `Add to this week` and `Move to another goal`, and its
+`Add to this week` still opens the create sheet with `newWeekly` + `weekStart: clock.currentMonday` — a
+**week**-targeted conversion with no `monthKey`, so it renders no `When this lands` control at all. On an
+item attached to a Monthly goal it should offer the month too, which is one more `S.menuBtn` opening the
+same sheet with `{ monthGoal: { id: item.goalId, title: item.goalTitle }, monthKey: <that goal's month> }`
+and letting the existing chips do the rest.
+
+**Two things it needs that this pass did not resolve, and they are why it is not a one-liner:**
+
+1. **The item's goal's *month* is not on `BacklogItemView`.** It carries `goalId` and `goalTitle` but no
+   `periodKey`, and the month is what the chip control is seeded from. Either the view gains it, or the card
+   reads `useGoal(item.goalId)` — the same shape of second read §11 is about, on a different surface.
+2. **The offer must be withdrawn where the server would refuse it** (D-5): a month key against an item on a
+   **Yearly or Quarterly** goal is `NOT_A_TASK_GOAL`, so the button may only render for an item whose goal
+   is Monthly — which needs the same fact as (1).
+
+There is **no UX design for it**: `33-measurables-ux` does not cover the Backlog page, so this needs a UX
+pass before a build one, not a build agent guessing at a second button on a row.
