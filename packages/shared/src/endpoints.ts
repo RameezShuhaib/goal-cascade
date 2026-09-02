@@ -76,6 +76,28 @@ export const ENDPOINTS = {
   taskMoveToBacklog: (id: string) => `/tasks/${id}/move-to-backlog`,
   /** Exit 3 of 3: the task is dropped. */
   taskCancel: (id: string) => `/tasks/${id}/cancel`,
+  /**
+   * ⚠ **A8, new (R-task-56)** — **Park in a week / Move to the month.** The ONE operation that rewrites a
+   * task's `scope`, `goalId` and `originPeriodKey`, together, and it is **not a fourth exit** (R-task-13):
+   * the task is still open, still visible and still yours to finish. Reversible in both directions.
+   *
+   * There is deliberately no `/defer`, `/snooze`, `/reschedule` or `/move-to-week` beside it, and there
+   * must never be (S-task-56-4). `route-surface.test.ts` is the census that says so.
+   */
+  taskRetarget: (id: string) => `/tasks/${id}/retarget`,
+  /**
+   * ⚠ **A8, new (R-measure-1)** — `PUT` attaches or replaces the task's measure; `DELETE` removes it
+   * **and every one of its readings** in one transaction, which is why the client confirms naming the
+   * count. It is its own command rather than a field on `PATCH /tasks/:id` so its events are unambiguous.
+   */
+  taskMeasure: (id: string) => `/tasks/${id}/measure`,
+  /**
+   * ⚠ **A8, new (R-measure-3, R-measure-5)** — `POST` records one reading. Append-only: there is **no
+   * PATCH and no PUT here**, because correcting a mistyped 240 is deleting it and recording 24.
+   */
+  taskReadings: (id: string) => `/tasks/${id}/readings`,
+  /** ⚠ **A8, new** — `DELETE` one reading. The only thing that removes one, besides removing the measure. */
+  taskReading: (id: string, readingId: string) => `/tasks/${id}/readings/${readingId}`,
   taskLinks: (id: string) => `/tasks/${id}/links`,
   taskLink: (id: string, linkId: string) => `/tasks/${id}/links/${linkId}`,
 

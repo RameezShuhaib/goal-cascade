@@ -109,9 +109,10 @@ describe('HttpApiClient', () => {
 
 describe('shouldRetry', () => {
   it('never retries a 4xx — a typed refusal will not heal', () => {
-    // ⚠ **A2** — `NOT_A_LEAF` is deleted (R-goal-39). `NOT_A_WEEKLY_GOAL` replaces it, and it is just as
+    // ⚠ **A8** — `NOT_A_LEAF` (A2) and `NOT_A_WEEKLY_GOAL` (R-rm-6) are both deleted. `NOT_A_TASK_GOAL`
+    // is the surviving code and it is just as
     // unretryable: retrying cannot make a Monthly goal a Weekly one.
-    for (const code of ['NOT_A_WEEKLY_GOAL', 'VALIDATION_FAILED', 'NOT_FOUND', 'UNAUTHENTICATED'] as const) {
+    for (const code of ['NOT_A_TASK_GOAL', 'VALIDATION_FAILED', 'NOT_FOUND', 'UNAUTHENTICATED'] as const) {
       const status = code === 'NOT_FOUND' ? 404 : code === 'UNAUTHENTICATED' ? 401 : code === 'VALIDATION_FAILED' ? 422 : 409;
       expect(shouldRetry(0, new ApiError(status, code, code))).toBe(false);
     }
@@ -134,6 +135,6 @@ describe('isTransient', () => {
     expect(isTransient(new ApiError(409, 'IDEMPOTENCY_IN_PROGRESS', 'x'))).toBe(true);
     expect(isTransient(new ApiError(500, 'INTERNAL', 'x'))).toBe(true);
     // A stored 4xx would just be replayed under the same key.
-    expect(isTransient(new ApiError(409, 'NOT_A_WEEKLY_GOAL', 'x'))).toBe(false);
+    expect(isTransient(new ApiError(409, 'NOT_A_TASK_GOAL', 'x'))).toBe(false);
   });
 });

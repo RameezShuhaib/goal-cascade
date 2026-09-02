@@ -1,4 +1,4 @@
-import { API_TOKEN_PREFIX, dateInTimezone, HORIZONS, isPeriodKeyFor, MCP_PATH, periodViewOf } from '@goal-cascade/shared';
+import { API_TOKEN_PREFIX, dateInTimezone, HORIZONS, isPeriodKeyFor, MCP_PATH, periodKeyOf, periodViewOf } from '@goal-cascade/shared';
 import type {
   BacklogItemView,
   GoalRefView,
@@ -134,6 +134,8 @@ export const task = (over: Partial<TaskView> = {}): TaskView => ({
   links: [],
   status: 'open',
   done: false,
+  /** ⚠ **A8 (R-task-52)** — a week task by default; the month cases pass `scope: 'Monthly'`. */
+  scope: 'Weekly',
   originPeriodKey: THIS_MONDAY,
   donePeriodKey: null,
   doneAt: null,
@@ -141,8 +143,12 @@ export const task = (over: Partial<TaskView> = {}): TaskView => ({
   exitedAt: null,
   /** ⚠ signed (R-task-43): negative means work that is not due yet. */
   carryAge: 0,
+  /** ⚠ **A8 (R-task-54)** — the unit `carryAge` is counted in. Never render an age without it. */
+  carryUnit: 'weeks',
   /** ⚠ new (R-task-44/50): the row renders no checkbox when this is false. */
   completable: true,
+  /** ⚠ **A8 (R-measure-1)** — null is the ordinary checkbox, which is most tasks. */
+  measure: null,
   createdAt: NOW,
   updatedAt: NOW,
   version: 1,
@@ -152,6 +158,7 @@ export const task = (over: Partial<TaskView> = {}): TaskView => ({
 export const taskDetail = (over: Partial<TaskDetailView> = {}): TaskDetailView => ({
   ...task(),
   events: [{ id: ulid(30), kind: 'created', at: NOW, text: 'Created — added to a goal', glyph: '＋', detail: null }],
+  readings: [],
   ...over,
 });
 
@@ -359,6 +366,10 @@ export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensRespo
     items,
     carried: over.carried ?? [],
     tasks: over.tasks ?? [],
+    // ⚠ **A8 (R-lens-31)** — the month band. Empty by default and on every lens but Weekly; a test that
+    // wants it passes both, because the key and the array must agree about which month is on screen.
+    monthTasks: over.monthTasks ?? [],
+    monthPeriodKey: over.monthPeriodKey ?? (over.lens === 'Weekly' ? periodKeyOf('Monthly', THIS_MONDAY) : null),
     // R-lens-23 — one entry per DISTINCT parent, with Life parents left out (the suppression is an
     // absence). Derived here exactly as `GoalService.lens` derives it, from the same fixture tree.
     parents: over.parents ?? parentsOf([...items, ...(over.carried ?? [])]),

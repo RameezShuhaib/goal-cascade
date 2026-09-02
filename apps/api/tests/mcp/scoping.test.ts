@@ -101,6 +101,18 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
     ['cancel_task', { task_id: B.task }],
     ['add_task_link', { task_id: B.task, url: 'https://example.com/x' }],
     ['remove_task_link', { task_id: B.task, link_id: ids.ulid() }],
+    /*
+     * ⚠ **A8, new (R-task-56, R-measure-1/3/5)** — six tools, every one of them owner-scoped by the same
+     * closed-over `ctx.userId` as the rest. `retarget_task` carries B's id in BOTH slots — the task being
+     * parked AND the weekly goal it is being parked onto — because a target lookup that forgot the owner
+     * scope would be a read of another account's tree, exactly as `reorder_backlog_item`'s neighbour is.
+     */
+    ['retarget_task', { task_id: B.task, period: '2026-09-07', goal_id: B.weeklyGoal }],
+    ['set_task_measure', { task_id: B.task, measure: { kind: 'counter', start: 0, target: 15 } }],
+    ['clear_task_measure', { task_id: B.task }],
+    ['record_reading', { task_id: B.task, value: 3 }],
+    ['list_readings', { task_id: B.task }],
+    ['delete_reading', { task_id: B.task, reading_id: ids.ulid() }],
     // backlog
     ['create_backlog_item', { goal_id: B.monthlyGoal, title: 'A item on B goal' }],
     ['update_backlog_item', { item_id: B.item, title: 'renamed by A' }],

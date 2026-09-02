@@ -7,7 +7,11 @@ import {
   IdParams,
   MoveTaskToBacklogRequest,
   PatchTaskRequest,
+  RecordReadingRequest,
+  RetargetTaskRequest,
+  SetMeasureRequest,
   TaskLinkParams,
+  TaskReadingParams,
   TasksQuery,
   UncheckTaskRequest,
   WeekQuery,
@@ -26,6 +30,12 @@ import { resolveWeek } from '../week';
  * There are EXACTLY three exits (R-task-13): complete, move-to-backlog, cancel. There is no defer, no
  * snooze, no reschedule, and no move-to-another-week endpoint — S-task-13-1 requires that no such
  * operation exists, so do not add one here.
+ *
+ * ⚠ **A8 — `/retarget` is NOT a fourth exit** (R-task-56, S-task-56-4). An exit takes work *out* of a
+ * period; Park moves it between two it was already committed to, and the task is still open, still
+ * visible and still yours to finish. It is also why the route is named for what it does to the task's
+ * target rather than for what it feels like: a route called `/defer` would teach the concept the product
+ * refuses to have.
  *
  * ⚠ **A2 (R-rm-5)** — the Tasks SCREEN is gone; this read is not. It is the Weekly lens's data source
  * (R-lens-12), and `POST /tasks` now takes **no week at all**: `originPeriodKey` is seeded from the
@@ -83,6 +93,48 @@ export const tasksRoutes = new Hono<AppBindings>()
   .post(E.taskCancel(':id'), idempotent, zParams(IdParams), zJson(CancelTaskRequest), async (c) =>
     c.json(await c.get('container').resolve(TaskService).cancel(ctx(c), params(c, IdParams).id, body(c, CancelTaskRequest))),
   )
+
+  /**
+   * ⚠ **A8, new (R-task-56)** — Park in a week / Move to the month. **Not an exit** (see the file's doc
+   * block). Idempotency-wrapped like every command, and retargeting to the period the task is already in
+   * is a no-op that writes no event even without it.
+   */
+  .post(E.taskRetarget(':id'), idempotent, zParams(IdParams), zJson(RetargetTaskRequest), async (c) =>
+    c.json(await c.get('container').resolve(TaskService).retarget(ctx(c), params(c, IdParams).id, body(c, RetargetTaskRequest))),
+  )
+
+  /**
+   * ⚠ **A8, new (R-measure-1)** — attach or replace the task's measure.
+   *
+   * `PUT` and not `PATCH`: a measure is one coherent triple plus a unit, and a partial edit that changed
+   * `start` without restating `target` could silently create the `target === start` state the product
+   * refuses (`MEASURE_TARGET_EQUALS_START`). The schema refines the pair together, so it can only refuse
+   * a whole measure.
+   */
+  .put(E.taskMeasure(':id'), idempotent, zParams(IdParams), zJson(SetMeasureRequest), async (c) =>
+    c.json(await c.get('container').resolve(TaskService).setMeasure(ctx(c), params(c, IdParams).id, body(c, SetMeasureRequest))),
+  )
+
+  /** ⚠ **A8, new (R-measure-1)** — removes the measure AND every reading, in one transaction. */
+  .delete(E.taskMeasure(':id'), zParams(IdParams), async (c) =>
+    c.json(await c.get('container').resolve(TaskService).clearMeasure(ctx(c), params(c, IdParams).id)),
+  )
+
+  /**
+   * ⚠ **A8, new (R-measure-3)** — record one value. Append-only: there is deliberately **no PATCH and no
+   * PUT on a reading**, because correcting a mistyped 240 is deleting it and recording 24 (R-measure-5).
+   */
+  .post(E.taskReadings(':id'), idempotent, zParams(IdParams), zJson(RecordReadingRequest), async (c) =>
+    c.json(
+      await c.get('container').resolve(TaskService).recordReading(ctx(c), params(c, IdParams).id, body(c, RecordReadingRequest)),
+    ),
+  )
+
+  /** ⚠ **A8, new (R-measure-5)** — delete one reading. It leaves no trace anywhere (R-measure-7). */
+  .delete(E.taskReading(':id', ':readingId'), zParams(TaskReadingParams), async (c) => {
+    const p = params(c, TaskReadingParams);
+    return c.json(await c.get('container').resolve(TaskService).deleteReading(ctx(c), p.id, p.readingId));
+  })
 
   .post(E.taskLinks(':id'), idempotent, zParams(IdParams), zJson(AddTaskLinkRequest), async (c) =>
     c.json(await c.get('container').resolve(TaskService).addLink(ctx(c), params(c, IdParams).id, body(c, AddTaskLinkRequest))),

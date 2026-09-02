@@ -1,4 +1,4 @@
-import { LongText, MAX_LINKS, OneLiner, Title, Ulid, Url, WeekOffset } from '@goal-cascade/shared';
+import { LongText, MAX_LINKS, OneLiner, PeriodKeyParam, Title, Ulid, Url } from '@goal-cascade/shared';
 import type { BacklogItemView } from '@goal-cascade/shared';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -174,9 +174,9 @@ export function registerBacklogTools(server: McpServer, deps: McpDeps): void {
   server.registerTool(
     'convert_backlog_item_to_task',
     {
-      title: 'Pull a parked item into a week',
+      title: 'Pull a parked item into a month or a week',
       description:
-        'The ONLY way backlog becomes work. The item is CONSUMED and becomes a task in one atomic operation — never duplicated, never left behind. Say so before the first conversion. The task lands on a WEEKLY GOAL at or under the item\'s goal whose week is the target week: if exactly one qualifies it is used; if several do you MUST name one with goal_id, because the server refuses to pick and that id decides which week the task belongs to for the rest of its life; if NONE does, the call is refused with NO_WEEKLY_GOAL and you should offer new_weekly_goal, which creates one in the same transaction rather than sending the user away. week_offset names the target week and may not be negative — nothing is created into a past week. A second conversion of the same item is refused and creates no second task. Conversion leaves a GAP in the goal\'s hand-made order: the surviving items keep their relative positions and nothing is renumbered.',
+        'The ONLY way backlog becomes work. The item is CONSUMED and becomes a task in one atomic operation — never duplicated, never left behind. Say so before the first conversion.\n\n`period` names where it lands, and its FORMAT says which of two paths you get. A MONTH KEY (2026-09) is "add to this month": the item becomes a MONTH TASK on the monthly goal it is already attached to — nothing is resolved, nothing is ambiguous, nothing is created, and it must be that goal\'s own month. Prefer this whenever the item sits on a monthly goal and the user did not name a week; it is one step and it cannot fail the way the week path can. An item on a yearly or quarterly goal has no month path at all (NOT_A_TASK_GOAL) because those horizons hold no tasks.\n\nA MONDAY (2026-09-07), or no period at all (which means this week), is "add to this week": the task lands on a WEEKLY GOAL at or under the item\'s goal for that week — if exactly one qualifies it is used; if several do you MUST name one with goal_id, because the server refuses to pick and that id decides which week the task belongs to for the rest of its life; if NONE does, the call is refused with NO_WEEKLY_GOAL and you should offer new_weekly_goal, which creates one in the same transaction rather than sending the user away.\n\nA past period is refused at either scope — nothing is created into one. A second conversion of the same item is refused and creates no second task. Conversion leaves a GAP in the goal\'s hand-made order: the surviving items keep their relative positions and nothing is renumbered.',
       inputSchema: z
         .object({
           item_id: Ulid,
@@ -186,13 +186,15 @@ export function registerBacklogTools(server: McpServer, deps: McpDeps): void {
             .strict()
             .optional()
             .describe('Creates the weekly goal for the target week, atomically with the task. Mutually exclusive with goal_id.'),
-          week_offset: WeekOffset.min(0).default(0).describe('0 = this week. Negative is refused: no back-dating.'),
+          period: PeriodKeyParam.optional().describe(
+            "A month key (2026-09) for the item's own month, or a Monday for a week. Omit for this week.",
+          ),
           title: Title.optional().describe("Override the item's title on the created task."),
           cond: OneLiner.default(''),
         })
         .strict(),
     },
-    async ({ item_id, goal_id, new_weekly_goal, week_offset, title, cond }) =>
+    async ({ item_id, goal_id, new_weekly_goal, period, title, cond }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
         const res = await dc.resolve(BacklogService).convert(ctx, item_id, {
@@ -200,7 +202,7 @@ export function registerBacklogTools(server: McpServer, deps: McpDeps): void {
           ...(new_weekly_goal !== undefined
             ? { newWeeklyGoal: { parentId: new_weekly_goal.parent_id, title: new_weekly_goal.title } }
             : {}),
-          week: week_offset,
+          ...(period !== undefined ? { period } : {}),
           ...(title !== undefined ? { title } : {}),
           cond,
         });

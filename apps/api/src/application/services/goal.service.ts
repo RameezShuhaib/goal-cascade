@@ -60,6 +60,7 @@ import {
   IGoalRepo,
   IIdGenerator,
   ILearningRepo,
+  IReadingRepo,
   ITaskEventRepo,
   ITaskLinkRepo,
   ITaskRepo,
@@ -67,8 +68,9 @@ import {
 } from '../ports';
 import type { GuardedWrite } from '../ports/statement';
 import { GuardedBatch } from './guarded-batch';
+import { ActivityLog } from './activity-log';
 import { newestFirst } from './backlog.service';
-import { backlogLabelsOf, toBacklogItemView, toTaskView, weekView } from './views';
+import { backlogLabelsOf, periodForScope, toBacklogItemView, toTaskView, weekView } from './views';
 
 /**
  * Goals, and the five lenses (R-lens-1 … R-lens-27).
@@ -104,6 +106,7 @@ export class GoalService {
   constructor(
     @inject(IGoalRepo) private readonly goals: IGoalRepo,
     @inject(ITaskRepo) private readonly tasks: ITaskRepo,
+    @inject(IReadingRepo) private readonly readings: IReadingRepo,
     @inject(ITaskLinkRepo) private readonly taskLinks: ITaskLinkRepo,
     @inject(ITaskEventRepo) private readonly taskEvents: ITaskEventRepo,
     @inject(IBacklogRepo) private readonly backlog: IBacklogRepo,
@@ -112,6 +115,7 @@ export class GoalService {
     @inject(IIdGenerator) private readonly ids: IIdGenerator,
     @inject(IClock) private readonly clock: IClock,
     @inject(GuardedBatch) private readonly batch: GuardedBatch,
+    @inject(ActivityLog) private readonly activity: ActivityLog,
   ) {}
 
   /**
@@ -147,13 +151,39 @@ export class GoalService {
     // visible in the current week and cannot inflate it.
     const anchorWeek = horizon === 'Weekly' ? periodKey : ctx.currentWeekStart;
 
-    const [page, interiorRows, openByGoal, weekTasks] = await Promise.all([
+    /**
+     * ⚠ **A8 (R-lens-31, R-lens-32) — the month a lens read needs, and it is R-goal-33's Monday rule.**
+     *
+     * In the **Weekly** lens it is the month `anchorWeek` belongs to — the band's month, August on
+     * 2 Sep 2026 while the calendar month is September (R-lens-29 already names that seam). In the
+     * **Monthly** lens it is the selected month itself. Everywhere else there is no month read at all.
+     */
+    const monthKey = horizon === 'Weekly' ? periodKeyOf('Monthly', periodKey) : horizon === 'Monthly' ? periodKey : null;
+
+    const [page, interiorRows, openByGoal, weekTasks, monthTaskRows] = await Promise.all([
       this.goals.listByLens(ctx.userId, { horizon, periodKey }, { limit, ...(q.cursor ? { cursor: q.cursor } : {}) }),
       this.goals.listInterior(ctx.userId),
-      this.tasks.countOpenVisibleByGoal(ctx.userId, anchorWeek),
-      horizon === 'Weekly' ? this.tasks.listVisibleInWeek(ctx.userId, periodKey, MAX_PAGE) : Promise.resolve([]),
+      // ⚠ **A8 (S-lens-31-3)** — `'Weekly'` is pinned. R-lens-4's number answers "what is on me THIS
+      // WEEK", and a month task is precisely the work A8 exists to say is not; counting one here would
+      // contradict, in a number, the no-late-styling rule of the band that renders it.
+      this.tasks.countOpenVisibleByGoal(ctx.userId, 'Weekly', anchorWeek),
+      horizon === 'Weekly' ? this.tasks.listVisibleInPeriod(ctx.userId, 'Weekly', periodKey, MAX_PAGE) : Promise.resolve([]),
+      // R-lens-31 / R-lens-32 — the month's tasks. In the Weekly lens they become `monthTasks` (the
+      // band); in the Monthly lens they ARE `tasks`. Q-C — paginated at `MAX_PAGE` like every other lens
+      // read: a Monthly goal with 200 month tasks is a data pathology, but the read must not be the thing
+      // that discovers it.
+      monthKey === null ? Promise.resolve([]) : this.tasks.listVisibleInPeriod(ctx.userId, 'Monthly', monthKey, MAX_PAGE),
     ]);
     const interior = indexTree(interiorRows);
+    /**
+     * R-task-29 / Q-17 — the lazy `Carried to …` producer, run where a period is first READ.
+     *
+     * ⚠ **A8 — the Monthly lens is a second such surface, and it is the only one a month task has.** A
+     * week task's line is produced by `GET /tasks?week=` (`TaskService.list`); a month task is never in
+     * that read, so without this its timeline would silently never gain a `Carried to Sep 2026` at all.
+     * The producer is idempotent by its unique index, so running it from two reads costs nothing.
+     */
+    if (monthKey !== null) await this.activity.ensureCarried(ctx, 'Monthly', monthTaskRows, monthKey);
 
     // R-lens-12 — **the carried band.** A Weekly goal appears in week W iff `periodKey = W` OR it still
     // holds an open task visible in W. The second kind is found from the WEEK'S TASKS, never by scanning
@@ -176,7 +206,12 @@ export class GoalService {
     const [backlogRows, forwardGoals, forwardTasks, everAtHorizon] = await Promise.all([
       this.backlog.listOpenByGoals(ctx.userId, rendered.map((g) => g.id)),
       isLife ? Promise.resolve(false) : this.goals.hasLaterPeriod(ctx.userId, horizon, periodKey),
-      horizon === 'Weekly' ? this.tasks.hasOriginAfter(ctx.userId, periodKey) : Promise.resolve(false),
+      // ⚠ **A8** — the dot is scoped, so the Monthly lens's answers about month tasks and the Weekly
+      // lens's about week tasks. An unscoped probe would light the Weekly chevron for a month task six
+      // months out — a dot pointing at something that lens will never show.
+      horizon === 'Weekly' || horizon === 'Monthly'
+        ? this.tasks.hasOriginAfter(ctx.userId, horizon === 'Monthly' ? 'Monthly' : 'Weekly', periodKey)
+        : Promise.resolve(false),
       this.everAtHorizon(ctx, horizon, interiorRows, rendered.length > 0),
     ]);
 
@@ -204,10 +239,38 @@ export class GoalService {
       groups: this.groupsOf(interior, [...items, ...carriedViews], openByGoal, byId),
       items,
       carried: carriedViews,
-      // R-lens-12 — no task visible in a week is ever hidden from that week's lens, and no open task is
-      // ever without its goal. Hiding carried work the moment its goal's week passed would delete the
-      // carry mechanic and lose work silently.
-      tasks: weekTasks.map((t) => toTaskView(t, [], periodKey, ctx.currentWeekStart)),
+      /**
+       * R-lens-12 — no task visible in a period is ever hidden from that period's lens, and no open task
+       * is ever without its goal. Hiding carried work the moment its goal's period passed would delete
+       * the carry mechanic and lose work silently.
+       *
+       * ⚠ **A8 (R-lens-32)** — in the **Monthly** lens this is the month's tasks, nested under each
+       * Monthly goal's card exactly as a Weekly goal's card nests its week tasks. A carried month task
+       * appears here in the month it has carried into, with R-task-54's chip; there is deliberately **no
+       * carried band in the Monthly lens**, because a month task carries onto the SAME goal and there is
+       * nothing to separate it from.
+       */
+      tasks:
+        horizon === 'Monthly'
+          ? monthTaskRows.map((t) => toTaskView(t, [], periodKey, periodKeyOf('Monthly', ctx.currentWeekStart)))
+          : weekTasks.map((t) => toTaskView(t, [], periodKey, ctx.currentWeekStart)),
+      /**
+       * ⚠ **A8, new (R-lens-31) — the month band, Weekly lens only.**
+       *
+       * The month tasks of the month this WEEK belongs to, projected at MONTH scope: `carryAge` and
+       * `completable` answer about `monthKey`, never about the week, which is what makes S-task-55-2's
+       * seam completion (`donePeriodKey = 2026-08` on 2 Sep) the obvious thing for the client to send.
+       *
+       * ⚠ **The rows carry their honest month-scale `carryAge` and the band renders NO label from it.**
+       * The suppression is the render site's, because the same task in the Monthly lens must show its
+       * chip (R-task-54, S-lens-31-2).
+       */
+      monthTasks:
+        horizon === 'Weekly'
+          ? monthTaskRows.map((t) => toTaskView(t, [], monthKey!, periodKeyOf('Monthly', ctx.currentWeekStart)))
+          : [],
+      /** R-lens-31 — the band's month, so the client never re-derives which month a week belongs to. */
+      monthPeriodKey: horizon === 'Weekly' ? monthKey : null,
       nextCursor: page.nextCursor,
       parents: this.parentsOf(interior, rendered),
       hasForwardContent: forwardGoals || forwardTasks,
@@ -326,6 +389,13 @@ export class GoalService {
 
     const isLife = isLifeHorizon(goal.horizon);
     const isWeekly = goal.horizon === 'Weekly';
+    /**
+     * ⚠ **A8 (R-task-51, R-lens-32)** — a **Monthly** goal's page gains a task list, above its existing
+     * `Backlog (N)` section. The two side by side is where R-backlog-30's distinction is either legible
+     * or lost: both attach to this goal, both wait, and the one with a period is the one that appears in
+     * a lens.
+     */
+    const holdsTasks = isWeekly || goal.horizon === 'Monthly';
     // ⚠ **A2 (R-goal-37)** — `children` is the ONLY source of "has children" on the wire now, so it is
     // read directly rather than derived: one seek on `ix_goals_owner_parent`. A **Weekly** goal is
     // terminal (R-goal-31), so it needs no read at all.
@@ -351,7 +421,7 @@ export class GoalService {
           : this.backlog.listOpenByGoalOrdered(ctx.userId, id),
       isWeekly && pullScope.length > 0 ? this.backlog.listOpenByGoals(ctx.userId, pullScope) : Promise.resolve([]),
       this.lineLearnings(ctx, interior, goal),
-      isWeekly ? this.tasks.listByGoals(ctx.userId, [id]) : Promise.resolve([]),
+      holdsTasks ? this.tasks.listByGoals(ctx.userId, [id]) : Promise.resolve([]),
     ]);
 
     const rendered = [goal, ...children, ...ancestorChain];
@@ -370,9 +440,11 @@ export class GoalService {
       backlog: (isLife ? newestFirst(ownItems) : ownItems).map((i) => toBacklogItemView(i, links, backlogLabelsOf(interior, i.goalId))),
       backlogIsAggregate: isLife,
       pullList: newestFirst(pullItems).map((i) => toBacklogItemView(i, links, backlogLabelsOf(interior, i.goalId))),
+      // ⚠ **A8** — projected at the GOAL'S OWN scope: a Monthly goal's page compares month keys and a
+      // Weekly goal's compares Mondays, so `carryAge` and `completable` never cross a scope.
       tasks: weeklyTasks
         .filter((t) => t.status === 'open' || t.status === 'done')
-        .map((t) => toTaskView(t, taskLinks, goal.periodKey, ctx.currentWeekStart)),
+        .map((t) => toTaskView(t, taskLinks, goal.periodKey, periodForScope(t.scope, ctx.currentWeekStart))),
       learnings: lineLearnings.map(learningView),
       // R-goal-40 / D-3 — derived here, once, from the OWNER's calendar day (R-auth-5). Neither a Life
       // goal nor a Weekly goal is re-plannable, for opposite reasons. The client renders this list rather
@@ -692,10 +764,13 @@ export class GoalService {
 
     const taskIds = taskRows.map((t) => t.id);
     const itemIds = itemRows.map((i) => i.id);
-    const [linkRows, eventRows, itemLinkRows] = await Promise.all([
+    const [linkRows, eventRows, itemLinkRows, readingRows] = await Promise.all([
       this.taskLinks.listByTasks(ctx.userId, taskIds),
       this.taskEvents.listByTasks(ctx.userId, taskIds),
       this.backlogLinks.listByItems(ctx.userId, itemIds),
+      // ⚠ **A8 (R-measure-5)** — the readings go with their tasks. Deleting a task and leaving its
+      // history behind would orphan rows nothing can ever reach again, exactly as an orphaned event would.
+      this.readings.listByTasks(ctx.userId, taskIds),
     ]);
 
     const writes: GuardedWrite[] = [];
@@ -722,6 +797,7 @@ export class GoalService {
     };
 
     removal('taskEvent.deleteByTasks', taskIds, eventRows, (e) => e.taskId, (p) => this.taskEvents.deleteByTasksStmt(ctx.userId, p));
+    removal('reading.deleteByTasks', taskIds, readingRows, (r) => r.taskId, (p) => this.readings.deleteByTasksStmt(ctx.userId, p));
     removal('taskLink.deleteByTasks', taskIds, linkRows, (l) => l.taskId, (p) => this.taskLinks.deleteByTasksStmt(ctx.userId, p));
     removal('task.deleteByGoals', subtree, taskRows, (t) => t.goalId, (p) => this.tasks.deleteByGoalsStmt(ctx.userId, p));
     removal('backlogLink.deleteByItems', itemIds, itemLinkRows, (l) => l.itemId, (p) => this.backlogLinks.deleteByItemsStmt(ctx.userId, p));

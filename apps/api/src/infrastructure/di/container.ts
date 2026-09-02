@@ -13,6 +13,7 @@ import {
   IIdempotencyRepo,
   ILearningRepo,
   IPreferencesRepo,
+  IReadingRepo,
   ITaskEventRepo,
   ITaskLinkRepo,
   ITaskRepo,
@@ -44,6 +45,7 @@ import {
   D1IdempotencyRepo,
   D1LearningRepo,
   D1PreferencesRepo,
+  D1ReadingRepo,
   D1TaskEventRepo,
   D1TaskLinkRepo,
   D1TaskRepo,
@@ -61,7 +63,7 @@ export type ContainerOverrides = (c: DependencyContainer) => void;
 
 /**
  * One child container per request. A Worker has no long-lived process to hang a container off, and `env`
- * only exists per request, so a child container per request is the natural unit — `registerSingleton`
+ * only exists per request, so a child container per request is the natural unit â `registerSingleton`
  * here means "one instance for this request", not one for the process.
  */
 export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrides): DependencyContainer {
@@ -78,6 +80,8 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
   c.registerSingleton(ITaskRepo, D1TaskRepo);
   c.registerSingleton(ITaskLinkRepo, D1TaskLinkRepo);
   c.registerSingleton(ITaskEventRepo, D1TaskEventRepo);
+  // ⚠ **A8 (R-measure-5)** — one registration; the readings are keyed by task and by nothing else.
+  c.registerSingleton(IReadingRepo, D1ReadingRepo);
   c.registerSingleton(IBacklogRepo, D1BacklogRepo);
   c.registerSingleton(IBacklogLinkRepo, D1BacklogLinkRepo);
   c.registerSingleton(ILearningRepo, D1LearningRepo);
@@ -107,12 +111,12 @@ export function createRequestContainer(env: AppEnv, overrides?: ContainerOverrid
 }
 
 /**
- * The email adapter — and there is only one.
+ * The email adapter â and there is only one.
  *
  * It returns `LogEmailSender` with `forward = null` UNCONDITIONALLY. This is a deliberate product
  * decision, not an unfinished integration: the owner's sending domain was previously flagged for a
  * critically high bounce rate caused by this project's own test traffic, and a repeat can get the domain
- * banned. Goal Cascade therefore removes the capability instead of guarding it — there is no
+ * banned. Goal Cascade therefore removes the capability instead of guarding it â there is no
  * `send_email` binding in `wrangler.jsonc`, no Resend or Cloudflare adapter anywhere in this tree, and
  * no branch here that could select one.
  *

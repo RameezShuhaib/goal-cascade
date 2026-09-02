@@ -8,10 +8,12 @@ import type {
   Learning,
   OutboxEmail,
   Preferences,
+  Reading,
   Task,
   TaskEvent,
   TaskLink,
 } from '../../domain/entities';
+import type { TaskScope } from '../../domain/enums';
 import type { WriteStmt } from './statement';
 
 /**
@@ -146,11 +148,16 @@ export const IGoalRepo = Symbol.for('goal-cascade.IGoalRepo');
 export interface ITaskRepo {
   findById(userId: string, id: string): Promise<Task | null>;
   /**
-   * R-task-7/8/32 — every task that could be visible in `weekStart`: OPEN tasks with
-   * `origin_week_start <= weekStart`, plus DONE tasks with `done_week_start = weekStart`. Exited tasks
-   * are excluded here, not filtered by the caller, so no read model can leak one.
+   * R-task-7/8/32 / **R-task-53** — every task that could be visible in one PERIOD, at one SCOPE: OPEN
+   * tasks with `scope = :scope AND origin_period_key <= :key`, plus DONE tasks with
+   * `scope = :scope AND done_period_key = :key`. Exited tasks are excluded here, not filtered by the
+   * caller, so no read model can leak one.
+   *
+   * ⚠ **A8** — `scope` is IN THE PREDICATE and not merely on the row. It is what stops a week read and a
+   * month read from scanning each other's rows: `2026-09` and `2026-09-07` are both strings and would
+   * otherwise compare, and no index can key on the length of one (R-task-52).
    */
-  listVisibleInWeek(userId: string, weekStart: string, limit?: number): Promise<Task[]>;
+  listVisibleInPeriod(userId: string, scope: TaskScope, periodKey: string, limit?: number): Promise<Task[]>;
   /** R-goal-24 — open tasks under a set of goals, for the Life-goal carry signal. **Chunked.** */
   listOpenByGoals(userId: string, goalIds: readonly string[]): Promise<Task[]>;
   /**
@@ -165,15 +172,27 @@ export interface ITaskRepo {
    * a count firing on work whose period has not arrived (R-lens-11 forbids it outright). A rare case where
    * the cheap answer and the honest one are the same.
    */
-  countOpenVisibleByGoal(userId: string, weekStart: string): Promise<{ goalId: string; open: number }[]>;
+  countOpenVisibleByGoal(userId: string, scope: TaskScope, periodKey: string): Promise<{ goalId: string; open: number }[]>;
   /**
    * R-goal-24 — the Life-goal carry signal, as ONE grouped query over open work that originated BEFORE
-   * `beforeWeekStart`: `COUNT(*)` and `MIN(origin_week_start)` per goal. A future origin can never
+   * `beforeWeekStart`: `COUNT(*)` and `MIN(origin_period_key)` per goal. A future origin can never
    * satisfy `<`, so the rule needs no future guard and R-task-38 holds automatically.
+   *
+   * ⚠ **A8 — WEEK-SCOPED, deliberately and permanently, and the scope is pinned in the query rather than
+   * passed.** R-goal-24's line reads `N tasks carrying · oldest W weeks`, in WEEKS, and it is a fact about
+   * a Life LINE this week. A month task's escalation is its own chip at its own scale, in the Monthly
+   * lens (R-task-54); this line is not a second one, and mixing the two would report a month count in
+   * weeks (S-lens-31-3's principle, one lens over).
    */
   carryingByGoal(userId: string, beforeWeekStart: string): Promise<{ goalId: string; open: number; oldestOrigin: string }[]>;
-  /** R-lens-26 — does any task originate in a week after this one? The Weekly lens's forward dot. */
-  hasOriginAfter(userId: string, weekStart: string): Promise<boolean>;
+  /**
+   * R-lens-26 — does any task originate in a period after this one, **at this scope**? The forward dot.
+   *
+   * ⚠ **A8** — scoped, so the Monthly lens's dot answers about month tasks and the Weekly lens's about
+   * week tasks. An unscoped probe would light the Weekly chevron for a month task six months out, which
+   * is a dot pointing at something that lens will never show.
+   */
+  hasOriginAfter(userId: string, scope: TaskScope, periodKey: string): Promise<boolean>;
   /**
    * Q-5 — EVERY task under a set of goals, whatever its status. The subtree delete needs the ids (to
    * remove their links and events, which are keyed by task) and the exact count for `expectedChanges`;
@@ -198,6 +217,31 @@ export interface ITaskRepo {
 }
 export const ITaskRepo = Symbol.for('goal-cascade.ITaskRepo');
 
+/**
+ * ⚠ **A8, new (R-measure-3, R-measure-5)** — the append-only reading history.
+ *
+ * There is deliberately **no update and no `listByPeriod`**: a reading is never edited in place
+ * (correcting a mistyped 240 is deleting it and recording 24), and **no read filters readings by any
+ * period** — a reading is keyed by `taskId` and by nothing else, so that it survives carrying, parking,
+ * un-parking, re-parenting, completion and unchecking (S-measure-5-2).
+ */
+export interface IReadingRepo {
+  /** Oldest first — sparkline order, and the order `TaskDetailView.readings` ships in. */
+  listByTask(userId: string, taskId: string, limit?: number): Promise<Reading[]>;
+  /** **Chunked.** Q-5's cascade and the task-page read for a list of tasks. */
+  listByTasks(userId: string, taskIds: readonly string[]): Promise<Reading[]>;
+  /** How many a task holds, for Q-26's cap and for the `This deletes N recorded values.` confirm. */
+  countByTask(userId: string, taskId: string): Promise<number>;
+  insertStmt(reading: Reading): WriteStmt;
+  /** The ONE single-row delete in the reading model, and the only thing that removes one (R-measure-5). */
+  deleteStmt(userId: string, taskId: string, readingId: string): WriteStmt;
+  /** Removing a measure takes its whole history in the same transaction (R-measure-1). */
+  deleteByTaskStmt(userId: string, taskId: string): WriteStmt;
+  /** Q-5 cascade. **Chunked** by the caller, like every other subtree delete. */
+  deleteByTasksStmt(userId: string, taskIds: readonly string[]): WriteStmt;
+}
+export const IReadingRepo = Symbol.for('goal-cascade.IReadingRepo');
+
 export interface ITaskLinkRepo {
   listByTasks(userId: string, taskIds: readonly string[]): Promise<TaskLink[]>;
   insertStmt(link: TaskLink): WriteStmt;
@@ -214,13 +258,13 @@ export interface ITaskEventRepo {
   /** Append-only (R-task-31): there is deliberately no update and no single-row delete. */
   insertStmt(event: TaskEvent): WriteStmt;
   /**
-   * R-task-29 / Q-17 — the lazy carry-log producer. `carried` rows carry the week they were produced
-   * for, and the table has a UNIQUE index on `(user_id, task_id, week_start)` where `kind = 'carried'`,
-   * so this insert is a no-op on a re-read and a week can never be logged twice. Use
+   * R-task-29 / Q-17 — the lazy carry-log producer. `carried` rows carry the PERIOD they were produced
+   * for, and the table has a UNIQUE index on `(user_id, task_id, period_key)` where `kind = 'carried'`,
+   * so this insert is a no-op on a re-read and a period can never be logged twice. Use
    * `expectedChanges: 'any'` in the guarded batch — a duplicate is the normal case, not a failure, and a
    * numeric `0` would instead ASSERT that the first (real) insert never happens.
    */
-  insertCarriedIgnoreStmt(event: TaskEvent & { weekStart: string }): WriteStmt;
+  insertCarriedIgnoreStmt(event: TaskEvent & { periodKey: string }): WriteStmt;
   deleteByTasksStmt(userId: string, taskIds: readonly string[]): WriteStmt;
 }
 export const ITaskEventRepo = Symbol.for('goal-cascade.ITaskEventRepo');

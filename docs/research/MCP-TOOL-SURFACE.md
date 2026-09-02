@@ -61,15 +61,20 @@ schemas. Every constraint below is the constraint already encoded in `packages/s
 
 ## 2. The tool list
 
-**37 tools: 11 read-only, 26 mutating.**
+**43 tools: 12 read-only, 31 mutating.**
 
 | Category | Read | Mutating |
 |---|---|---|
 | Discovery & goals | 6 | 6 |
-| Tasks | 2 | 8 |
+| Tasks | 3 | 13 |
 | Backlog | 1 | 6 |
 | Learnings | 1 | 4 |
 | Account & preferences | 1 | 2 |
+
+⚠ **A8 adds six task tools and no others**: `retarget_task` (Park in a week / Move to the month),
+`set_task_measure`, `clear_task_measure`, `record_reading`, `list_readings`, `delete_reading`. It is one
+tool for Park rather than a `park_task`/`unpark_task` pair (Q-A): two tools would be one operation under
+two names, and the direction is already decided by the task's scope and the key's format.
 
 *(The pre-A2 design had a `Weekly plan / focus` row of 1 read and 3 mutating tools — `get_weekly_plan`,
 `set_goal_focus`, `clear_goal_focus`, `save_weekly_plan`. All four are **deleted**. A weekly intent is a
@@ -391,20 +396,28 @@ than one intention.
 
 #### `list_tasks` `[READ-ONLY]`
 
-> The tasks visible in one week. Open tasks appear in every week from the one they were created in
-> onwards — they carry automatically. Done tasks appear only in the week they were completed. Cancelled
-> and moved-to-backlog tasks appear in no week at all.
+> The tasks visible in one week, and — ⚠ **A8** — the month tasks of the month that week belongs to.
+> Open tasks appear in every period from the one they were created in onwards, at their own scope: a week
+> task carries into next week, a month task into next month. Done tasks appear only in the period they
+> were completed in. Cancelled and moved-to-backlog tasks appear in none.
 
-Backed by `GET /tasks?week=` (`TasksResponse`).
+Backed by `GET /tasks?week=` (`TasksResponse`) and, for the month half, the Weekly lens's `monthTasks`.
 
 - `week_offset` — `-520 … 520`, default `0`. Carry ages are counted against **today**, not against the
-  week you are viewing, so a plan never ages (R-task-43).
-- `state` — `all` (default) \| `open` \| `done` \| `carrying`. `carrying` = open with `carry_weeks ≥ 1`.
+  period you are viewing, so a plan never ages (R-task-43).
+- `scope` — ⚠ **A8, new.** `week` (default) \| `month` \| `all`. `month` is the month tasks of the month
+  this week belongs to, by the **Monday rule**: the week of Mon 31 Aug shows August's, on 2 September.
+- `state` — `all` (default) \| `open` \| `done` \| `carrying`. `carrying` = open with `carry_age ≥ 1`.
 - `limit` — ≤ 200.
 
-Output: `{ week, tasks[], next_cursor, server_now }`. Each task carries `goal_id`, `goal_path`, `title`,
-`cond`, `description`, `links[]`, `status`, `done`, `origin_week_start`, `done_week_start`, `done_at`,
-`exit_reason`, `exited_at`, `carry_weeks`, `carry_label`, `completable`, `created_at`, `updated_at`.
+Output: `{ week, month_period_key, tasks[], next_cursor, server_now }`. Each task carries `goal_id`,
+`goal_path`, `title`, `cond`, `description`, `links[]`, `status`, `done`, ⚠ **A8** `scope`,
+`origin_period_key`, `done_period_key`, `done_at`, `exit_reason`, `exited_at`, `carry_age`, ⚠ **A8**
+`carry_unit`, `carry_label`, `completable`, ⚠ **A8** `measure`, `created_at`, `updated_at`.
+
+⚠ **A8 — a month task in a week is NOT late.** It carries its honest month-scale `carry_age`, and the
+month band renders no label from it at all (R-task-54, S-lens-31-2). An agent that reports "three weeks
+overdue" off a month task has said the opposite of the rule this amendment exists to state.
 
 There is **no `plan` array** in this response any more. **`carry_weeks` is signed** (R-task-43): a
 negative age means the work is planned for a future week and is early, not late, and no carry label
@@ -431,28 +444,40 @@ Rules: R-task-22/27/29/30/31; there is **no** tool to write, edit or delete a ta
 
 #### `create_task` `[MUTATING]`
 
-> Add a task to a **weekly goal**. Only weekly goals hold tasks — the condition is the horizon and
-> nothing else. If no weekly goal exists for the week you need, pass `new_weekly_goal` and this call
-> creates both in one step; never move the work to some other goal because the right one has no week
-> yet.
+> Add a task to a **monthly or a weekly goal** — the condition is the horizon and nothing else
+> (⚠ **A8**, R-task-51). On a monthly goal, leaving `period` out gives you a **month task on that goal**:
+> one row, nothing inferred, no weekly goal invented, no navigation. That is the normal case.
 
 Backed by `POST /tasks` (`CreateTaskRequest`).
 
-- Exactly one of `goal_id` (a **Weekly** goal) or `new_weekly_goal` `{ parent_id, title }`.
+- Exactly one of `goal_id` (a **Monthly or Weekly** goal) or `new_weekly_goal` `{ parent_id, title }`.
+- `period` — ⚠ **A8/A11, new.** One field, two scopes, the key's **format** the discriminator
+  (R-task-52). Omitted on a monthly goal ⇒ a **month task** in that goal's month. One of that month's
+  **Mondays** ⇒ the `Add to this week` path: the weekly goal under it is resolved, two or more give
+  `AMBIGUOUS_CONVERSION_TARGET`, none gives `NO_WEEKLY_GOAL` and you re-send with `new_weekly_goal`.
+- `measure` — ⚠ **A8, new** (Q-E). Attaches a number in the same call: `{ kind, start, target, unit }`.
+  Omit for an ordinary checkbox, which is what most tasks are.
 - `title` **yes** — trimmed 1–200.
 - `cond` — done-condition, trimmed ≤ 200, default `""`. **Optional by design; do not fabricate one.**
 - `description` — ≤ 4000, default `""`. `links` — ≤ 20 `http(s)` URLs.
 - `source` — `goal` (default) \| `drawer`, recorded once on the `Created —` event. `backlog` is set by
   the conversion tool and must not be passed here.
 
-The task takes its week from its weekly goal and then fixes it for good; there is no week argument.
+The task takes its **scope and period** from the resolved goal and then fixes both for good; the only
+thing that rewrites them afterwards is `retarget_task`.
+
+⚠ **`new_weekly_goal` never fires as a side effect of a default.** The month path creates exactly one
+row. A weekly goal is minted only when the request carries `new_weekly_goal`, which a client sends only
+after the owner named a week and the server refused (R-rm-6: the silent implicit create is deleted, not
+repaired).
 
 Output: `{ task, created_weekly_goal, server_now }`.
-Rules: R-task-1/2/3/4/5/6/48/49, R-goal-37, D-10; refuses with `NOT_A_WEEKLY_GOAL`, `NO_WEEKLY_GOAL`,
-`VALIDATION_FAILED`.
+Rules: R-task-1/2/3/4/5/6/48/51/52/57, R-goal-37, D-10; refuses with `NOT_A_TASK_GOAL`, `NO_WEEKLY_GOAL`,
+`AMBIGUOUS_CONVERSION_TARGET`, `PERIOD_IN_PAST`, `MEASURE_TARGET_EQUALS_START`, `VALIDATION_FAILED`.
 
 `NOT_A_LEAF` and `BRANCH_NOT_ACTIVE` are gone: the first because leaf-ness decides nothing, the second
-because there is no activation to be missing.
+because there is no activation to be missing. `NOT_A_WEEKLY_GOAL` is gone with A8's R-rm-6, replaced by
+`NOT_A_TASK_GOAL`, which names two horizons instead of one.
 
 ---
 
@@ -468,15 +493,24 @@ nothing and logs nothing. Rules: R-task-23/26/27/30.
 
 #### `complete_task` `[MUTATING]` — exit 1 of 3
 
-> Tick a task off. You may complete into any week from the task's origin week onward that has already
-> begun — past weeks stay fully editable. The task then appears only in the week it was completed in.
+> Tick a task off. You may complete into any period from the task's origin onward that has already
+> begun — past periods stay fully editable. The task then appears only in the period it was completed in.
 
-Inputs: `task_id` **yes**, `week_offset` **≤ 0**, default `0`.
+Inputs: `task_id` **yes**, `period` optional (defaults to the current week).
 
-**This is the one week argument that is still capped at zero**, and the cap is explicit in the schema
-rather than inherited: a task cannot be completed in a week that has not started (R-task-14).
+⚠ **A8 (R-task-55) — `week_offset` is REPLACED by `period`, an explicit canonical key.** An offset cannot
+express *"the period I am standing in"* once a task may be scoped to a month: on Wed 2 Sep 2026 the
+current week belongs to **August** while the current month is September, so offset 0 has two answers and
+only the caller knows which surface it is on. Completing a month task from the month band of the week of
+Mon 31 Aug therefore writes `2026-08` — a past month, which R-goal-36 permits without qualification,
+because past periods are closed to *plan* and to nothing else (S-task-55-2). **This is a breaking MCP
+change and there is no compatibility path** (Q-B): keeping both would be two code paths and an ambiguity
+for an agent to get wrong.
 
-Rules: R-task-13/14, S-task-14-1/14-2; refuses with `WEEK_OUT_OF_RANGE`.
+The bound is `origin ≤ period ≤ current`, **at the task's own scope**, and it now lives in the service
+rather than in the schema — the same guard, moved to where the scope is known.
+
+Rules: R-task-13/14/55, S-task-14-1/14-2, S-task-55-1/55-2; refuses with `WEEK_OUT_OF_RANGE`.
 
 ---
 
@@ -497,7 +531,10 @@ Rules: R-task-19/20/21; refuses with `VALIDATION_FAILED` when the task is not do
 > parent — keeping the description and links and noting which week it came from. The reason is optional;
 > pass only what the user actually said. Only open tasks can be moved.
 
-Inputs: `task_id` **yes** (must be `open`), `week_offset` default `0`, `reason` optional ≤ 280.
+Inputs: `task_id` **yes** (must be `open`), `period` optional (defaults to the current week), `reason`
+optional ≤ 280. ⚠ **A8** — `week_offset` became `period` here for `complete_task`'s reason. For a **month
+task** the item lands on the goal it is already on (R-task-59): a monthly goal holds both a backlog and
+tasks, so R-backlog-29's walk terminates immediately, and the item renders `from Sep 2026`.
 
 It has to *leave* the week; that is the point of the exit, and it is why the item lands a horizon up
 rather than on the weekly goal it came from (a backlog item has no week, and a weekly goal would give it
@@ -519,6 +556,73 @@ There is **no** fourth exit. Requests to defer, snooze, reschedule or move a tas
 have no tool and must be refused, not approximated (R-task-13, S-task-13-1, R-nav-14). Note that
 "move it to next week" is not merely unsupported — it is unnecessary: an open task carries into every
 later week by itself, with no write at all.
+
+---
+
+#### `retarget_task` `[MUTATING]`
+
+> Park a month task into a week, or move a week task back to its month. **Not a fourth exit**
+> (R-task-56, S-task-56-4): the task is still open, still visible and still the owner's to finish, and it
+> keeps its title, condition, description, links, timeline and **every recorded value** — only the goal
+> and the period change. Reversible on purpose.
+
+Backed by `POST /tasks/:id/retarget` (`RetargetTaskRequest` → `RetargetTaskResponse`).
+
+- `period` — a **Monday** parks; a **month key** moves back. The task's own scope plus the key's format
+  decide the direction, so there is no `direction` argument and no second tool.
+- `goal_id` — parking only, when two or more weekly goals qualify (`AMBIGUOUS_CONVERSION_TARGET`).
+- `new_weekly_goal` — parking only, when none does (`NO_WEEKLY_GOAL`); creates it in one transaction
+  (R-task-48).
+
+Refused: a week task to a **different week** and a month task to a **different month** — those are the
+reschedule this product does not have. A past period (`PERIOD_IN_PAST`), and a done or exited task
+(`TASK_ALREADY_EXITED`). Retargeting to the period the task is already in is a no-op that writes no
+event. A weekly goal with no monthly ancestor cannot be moved back at all (`HORIZON_CONFLICT`).
+
+---
+
+#### `set_task_measure` / `clear_task_measure` `[MUTATING]`
+
+> Give a task a number, or take it away. Two kinds and **no third**: a `counter` you add to and a
+> `gauge` you set. A checkbox is the ABSENCE of a measure, not a counter that stops at one
+> (R-measure-1).
+
+Backed by `PUT` / `DELETE /tasks/:id/measure` (`SetMeasureRequest` → `TaskResponse`).
+
+- `measure.kind` — `counter` \| `gauge`.
+- `measure.start` — default `0`. `measure.target` — nullable, default `null`. `measure.unit` — ≤ 16.
+- There is **no `current`** and no field to send one: it is derived from the readings (R-measure-3).
+- There is **no direction flag**: `target` above `start` counts up, below it counts down (R-measure-2).
+- `target === start` is refused with `MEASURE_TARGET_EQUALS_START` — it names no movement (R-measure-4).
+- `target: null` is a **first-class** tracked number with a history and no percentage, not a degraded one.
+
+`clear_task_measure` **deletes every recorded value** with the measure, in one transaction. Name the
+count first (`list_readings`) and get an explicit yes — the same discipline the goal cascade uses (Q-5).
+
+---
+
+#### `record_reading` / `list_readings` / `delete_reading` `[MUTATING]` `[READ-ONLY]` `[MUTATING]`
+
+> Record a value, read the history, delete one value. Append-only and individually deletable: there is
+> no edit, because correcting a mistyped 240 is deleting it and recording 24 (R-measure-5).
+
+Backed by `POST /tasks/:id/readings`, the task-page read, and `DELETE /tasks/:id/readings/:readingId`.
+
+- Exactly one of `value` (absolute) or `delta` (add). A `delta` against a **gauge** is refused with
+  `MEASURE_KIND_MISMATCH`; an absolute `value` against a **counter** is accepted, because correcting a
+  counter to where it actually is is legitimate (R-measure-3, S-measure-3-3).
+- What is **stored** is always the absolute value after the reading, which is what makes deletion correct
+  with one rule for both kinds.
+- `at` — optional; back-dating a reading is legitimate and does not make it the current value.
+- Capped at 2,000 per task (Q-26). No compaction, no rollup, no pruning.
+- **Readings follow the TASK and never the week** (R-measure-5): they survive carrying, parking,
+  un-parking, re-parenting, completion and unchecking, and no reading has a week, month or period.
+- **No reading writes a timeline entry**, on record or on delete (R-measure-7).
+- A task with no measure is refused with `NO_MEASURE`.
+
+⚠ **Nothing here may be turned into a verdict** (R-measure-8): no pace, projection, forecast, trend,
+moving average, on-track/behind/ahead state, streak, completion rate, burndown, per-period summary, or
+sum across two tasks. Report what was recorded.
 
 ---
 
@@ -560,7 +664,8 @@ Rules: R-backlog-1/2/3/5/13/17/21, Q-7, Q-12.
 
 Inputs: `goal_id` **yes**, `title` **yes** (1–200), `description` ≤ 4000, `links` ≤ 20.
 The item lands at the **top** of that goal's list. Rules: R-backlog-2/4/16; refuses with
-`LIFE_GOAL_NO_BACKLOG`, `NOT_A_WEEKLY_GOAL`'s converse — a Weekly goal is refused too.
+`LIFE_GOAL_NO_BACKLOG` — a Weekly goal is refused too, for the converse of the reason a Weekly goal is
+the only thing that used to hold a task: an item has no week, and a weekly goal would give it one.
 
 ---
 
@@ -788,13 +893,23 @@ parent and no period, and WEEKLY goals can never have sub-goals. Levels may be s
 usually hangs off a monthly one, but it may hang off any longer horizon, including a life goal
 directly. That is legal, not a mistake to correct.
 
-ONLY WEEKLY GOALS HOLD TASKS. The condition is the horizon and nothing else. A monthly goal that
-happens to have no weekly children yet still cannot hold a task — it looks like the end of a branch
-and it is not a place work goes. If there is no weekly goal for the week you need, create one (or use
-create_task's inline weekly-goal field, which creates both in one step); never move the work to some
-other goal because the right one has no week yet. There is no "active", no "dormant" and no focus
-sentence in this product — a weekly intent IS a goal, and several under one monthly goal is how a week
-holds several intentions.
+MONTHLY AND WEEKLY GOALS HOLD TASKS. The condition is the horizon and nothing else. A quarterly goal
+that happens to have no monthly children yet still cannot hold a task — it looks like the end of a
+branch and it is not a place work goes. The line falls where it does because a month is the longest
+deadline you can put on a piece of work here: the horizons that hold deferred, undated work are
+yearly, quarterly and monthly, the horizons that hold committed, dated work are monthly and weekly,
+and monthly is deliberately the one that holds both. Past a month it is a goal, or it is in the
+backlog. There is no "active", no "dormant" and no focus sentence in this product — a weekly intent
+IS a goal, and several under one monthly goal is how a week holds several intentions.
+
+A TASK'S PERIOD, AND ITS SCOPE. A task belongs to one period at one scope: a task on a weekly goal
+has a WEEK, a task on a monthly goal has a MONTH. It is taken from that goal when the task is created
+and then never changes, except by one named operation (see PARKING). The key's format says which
+scope you are looking at — 2026-09 is a month and 2026-09-07 is a week's Monday — and every
+comparison the product makes is inside one scope, never across two. Creating a task on a monthly goal
+with no period is the normal case and gives you a month task on that goal; naming one of that month's
+Mondays instead asks for that week, which resolves the weekly goal under it and may need one created.
+Do not name a week the user did not ask for.
 
 PERIODS. Every non-life goal sits in exactly one period of its own horizon, named by a canonical key:
 a year (2026), a quarter (2026-Q3), a month (2026-09), or a week (a Monday, 2026-09-07). The key is
@@ -813,52 +928,82 @@ dates. It follows that the current period of a horizon is not always the period 
 progress: on Tue 1 Sep 2026 the current month is Sep 2026 while this week sits in Aug 2026. Where a
 period carries current_week_period, that is where the week in progress actually is, and the period
 you are reading legitimately excludes it — that is not a bug, not an empty plan, and not a reason to
-move anything.
+move anything. It is also which month a week's month tasks come from: the week of Mon 31 Aug shows
+AUGUST's, on 2 September.
 
 LENSES. Reading is by lens, not by tree: one horizon, one period, everything at that horizon across
 the whole account, grouped under the life goal each item belongs to. Use list_lens. There is no
-whole-tree read and no filter — grouping is the answer to "show me just this line".
+whole-tree read and no filter — grouping is the answer to "show me just this line". Two lenses carry
+work: the Weekly lens shows the week's tasks, and the Monthly lens shows each monthly goal's own
+month tasks. The other three show none, because those horizons hold none.
 
 THE WEEK. Weeks start Monday, in the owner's own timezone, computed by the server — never from your
 clock. Tools address a week by OFFSET: 0 is this week, -1 last week, +2 two weeks ahead. Positive
-offsets are ordinary. The one place a future week is refused is COMPLETING a task: you cannot finish
-work in a week that has not happened.
+offsets are ordinary. The one place a future period is refused is COMPLETING a task: you cannot
+finish work in a period that has not happened. A completion names the period it was made in, at the
+task's own scope, so completing a month task from the week of Mon 31 Aug on 2 September writes
+AUGUST — the period you were standing in, not "the current month".
 
-CARRYING. An open task is visible in every week from the one it was created in onward. It carries
-forward by itself — there is no rollover step, no prompt, and nothing to confirm — and its weekly goal
-comes with it, shown as CARRIED and labelled with the week it was written for, so it never reads as
-this week's plan. A task's week is its own: it is taken from its weekly goal when the task is created
-and then never changes. A task that has carried a week shows "since Mon 24 Aug"; two weeks or more
-shows a red "N weeks" chip. That chip is the only escalation in the product, and it never fires on
-work whose week has not arrived — a task planned ahead has a NEGATIVE age. A completed task is
-visible only in the week it was completed.
+CARRYING. An open task is visible in every period from the one it was created in onward, at its own
+scope. It carries forward by itself — there is no rollover step, no prompt, and nothing to confirm —
+and a weekly goal comes with its tasks, shown as CARRIED and labelled with the week it was written
+for, so it never reads as this week's plan. A week task carries into next week; a MONTH TASK CARRIES
+INTO NEXT MONTH, by the same mechanism and with no write. A task that has carried one period shows
+"since Mon 24 Aug" or "since Aug"; two or more shows a red chip, "3 weeks" or "3 months". That chip
+is the only escalation in the product, it is counted in the task's own unit, and it never fires on
+work whose period has not arrived — a task planned ahead has a NEGATIVE age. A completed task is
+visible only in the period it was completed in.
+
+A MONTH TASK IS NEVER LATE IN A WEEK. It appears in the month band of every week of its month, and it
+carries no chip, no "since" line and no badge there of any kind. A month task you have not got to in
+week two is not behind: the deadline is the end of the month, and a week has no standing to say
+otherwise. Do not call one overdue, at risk, or slipping because weeks have passed. Between MONTHS
+the same chip fires normally, in the Monthly lens, where the unit means something.
 
 THE THREE EXITS. A task leaves a week in exactly three ways: COMPLETE, MOVE TO BACKLOG, or CANCEL.
 There is no fourth exit. Do not offer or simulate defer, snooze, reschedule, or move-to-another-week.
-Move to backlog parks the item on the nearest goal ABOVE the week — normally the monthly parent —
-because the point of that exit is to leave the week, and a weekly goal is a week. Unchecking a
-completed task re-opens it under its ORIGINAL creation week, so it comes back with the age it really
-has, and its weekly goal reappears with it.
+Move to backlog parks the item on the nearest goal that can hold one — the monthly parent for a week
+task, and for a month task the goal it is already on — because the point of that exit is to leave the
+period. Unchecking a completed task re-opens it under its ORIGINAL creation period, so it comes back
+with the age it really has.
 
-BACKLOG AND LEARNINGS. Backlog items are deferred work on a Yearly/Quarterly/Monthly goal — never a
-life goal, and never a weekly goal, because an item has no week and a weekly goal would give it one.
-No checkbox, no due date, no status. Converting one is the only way backlog becomes work: it lands on
-a weekly goal for the target week, it consumes the item, and if two weekly goals qualify you must ask
-which, and it leaves a gap in the goal's order rather than renumbering anything. Within one goal the
-order of parked items is the OWNER'S: they arrange it by hand, new items land on top, and
-reorder_backlog_item moves one relative to a neighbour — after it, before it, or to an end. There is
-no position number, and there is no order at all ACROSS goals, so never present the backlog as one
-ranked list. Learnings are insights, tagged to a life goal, and are never converted into work.
+PARKING IS NOT AN EXIT. retarget_task moves a month task into a specific week, and a week task back
+to its month. The task is still open, still visible and still the owner's to finish; it keeps its
+title, condition, description, links, timeline and every recorded value, and only its goal and its
+period change. It is reversible on purpose. It is NOT a defer, a snooze or a reschedule: a week task
+cannot be parked into a different week and a month task cannot be moved to a different month, and
+both are refused.
+
+MEASURES. A task may carry a number, and most do not — a task without one is an ordinary checkbox and
+is unchanged in every way. Two kinds and no third: a COUNTER you add to ("+3") and a GAUGE you set
+("= 78.5"). One triple, start / current / target, plus a unit you were given and which is never
+parsed or converted. DIRECTION IS IMPLIED: target above start counts up, target below start counts
+down, and there is nothing to set. THE TARGET IS OPTIONAL — a measure with no target is a real,
+tracked number with a history and no percentage, not a broken one — and a target equal to the start
+is refused, because it names no movement. CURRENT IS DERIVED from an append-only list of readings,
+each storing the absolute value after it; deleting a reading falls current back to the one before it,
+which is why correcting a mistyped number means deleting it and recording the right one. READINGS
+FOLLOW THE TASK AND NEVER THE WEEK: they survive carrying, parking, un-parking, completion and
+unchecking, and there is no week, month or period on a reading. REACHING A TARGET NEVER COMPLETES A
+TASK and completing a task never records a value: the owner decides both, and a task completed at 12
+of 15 is the truth of it.
 
 NO REPORTS. There is no review wizard, no audit trail, no week report, no completion rate, no streak
 and no progress bar, and a goal has no "done" state at any horizon. Whether a week went well is
-answered by looking at that week. Do not invent any of them, and refuse rather than approximate.
+answered by looking at that week. That refusal extends to every number a measure makes available: no
+pace, no projection, no forecast, no "at this rate", no trend line, no moving average, no on-track,
+behind or ahead verdict in any word, colour or accessible name, no streak, no completion rate, no
+burndown, no per-period summary, and no rolling a month's target up out of its weeks or summing a
+measure across two tasks. The rule that admits the numbers and refuses these: a number the owner
+recorded is data; a number you derived about the owner is a judgement. Report what was recorded. Do
+not invent any of the rest, and refuse rather than approximate.
 
 HOW TO WORK. Start with get_overview. Resolve names to ids with find_goal and ask when it reports
 ambiguity — acting on the wrong goal is the worst thing you can do here. Reasons on exits and re-plans
 are always optional; pass what the user said and nothing more. Deletes cascade and cannot be undone,
 and deleting a monthly goal takes every weekly goal and task under it: preview, quote the numbers, get
-agreement. Refusals carry a code and a recovery step — read it and do that, do not retry.
+agreement. Removing a measure deletes every value recorded on it: name the count first. Refusals carry
+a code and a recovery step — read it and do that, do not retry.
 ```
 
 ---
@@ -889,7 +1034,10 @@ The six codes worth teaching explicitly:
 |---|---|---|
 | `HORIZON_CONFLICT` | The child's horizon is not strictly shorter than the parent's — equal rank, or a Weekly parent (Weekly is terminal, R-goal-5/6/17). | Do not retry with the same pair. On create: pick a horizon of higher rank than the parent, or a different parent. On move: `details` carries both horizons — pick a target with a longer horizon, or tell the user this parent cannot hold this goal. |
 | `WOULD_CREATE_CYCLE` | The move target is the goal itself or one of its descendants. R-goal-18(a,b). This check runs **before** the horizon check, so it is the reason you get when both apply. | Never retry. Re-read the relevant lens (`list_lens`) and choose a target outside the moved goal's subtree. If the user's phrasing pointed at a descendant, say plainly that a goal cannot move under its own child. |
-| `NOT_A_WEEKLY_GOAL` | Tasks live on weekly goals, and this goal is at some other horizon. R-goal-37, R-task-4. `details` carries the goal's horizon. | Do **not** hunt for a different goal that happens to be Weekly. Either name the weekly goal the user means, or create one for the week with `create_task`'s `new_weekly_goal` (or `create_goal(horizon="Weekly")`). A monthly goal with no weekly children looks like the end of a branch and is still not a place work goes. |
+| `NOT_A_TASK_GOAL` | ⚠ **A8** — tasks live on **monthly and weekly** goals, and this goal is at some other horizon. R-task-51, superseding R-goal-39. `details` carries the goal's horizon. | Do **not** hunt for a different goal that happens to be the right horizon. Put the work on the monthly goal for the month you mean — `create_task` with that `goal_id` and **no** `period` makes a month task on it — or on a weekly goal for a week. A quarterly goal with no monthly children looks like the end of a branch and is still not a place work goes. |
+| `MEASURE_TARGET_EQUALS_START` | ⚠ **A8** — the target equals the start, which names no movement. R-measure-4. | Ask what the target actually is; do **not** invent one a unit away. If the user is tracking a number with no finish line, send `target: null` — a real measure with a history and no percentage. |
+| `MEASURE_KIND_MISMATCH` | ⚠ **A8** — a `delta` against a **gauge**. R-measure-3. | Re-send with `value`. The reverse is legitimate and is not a mistake: an absolute `value` against a counter is how you correct one. |
+| `NO_MEASURE` | ⚠ **A8** — the task carries no number; it is an ordinary checkbox. R-measure-1. | Attach a measure with `set_task_measure`, then record. Do **not** complete the task instead, and do not put the number in its description. |
 | `NO_WEEKLY_GOAL` | The week you targeted holds no weekly goal that could receive this work. R-backlog-8, R-task-49. `details` carries the goal and the week. | Pass `new_weekly_goal` and let the call create the goal and the task in one step. This is a one-step flow by design; do not report it to the user as a blocker, and never park the work on some other goal instead. |
 | `PERIOD_IN_PAST` | A write tried to create a goal in, or move one into, a period that has already passed. R-goal-36, R-lens-10. | Never retry with the same period. Past periods stay readable exactly as they were — planning does not rewrite history. Offer the current or a later period. Note this closes the past to **plan only**: completing, unchecking, editing and exiting a task in a past week all still work. |
 | `AMBIGUOUS_CONVERSION_TARGET` | Two or more weekly goals in the target week qualify to receive the item. The server refuses to choose because this id fixes which goal the task belongs to for its whole life. `details.candidates` = `[{id,title}]`. | Ask the user which one, using the candidate titles. Then repeat the call with `goal_id`. Do not pick the first candidate, do not pick by ordering, and do not pick by string similarity. |
@@ -921,7 +1069,7 @@ a reader who remembers them finds the successor rather than assuming a gap:
 
 | Deleted | Why | Successor |
 |---|---|---|
-| `NOT_A_LEAF` | Leaf-ness stopped deciding task ownership (R-goal-37) | `NOT_A_WEEKLY_GOAL` |
+| `NOT_A_LEAF` | Leaf-ness stopped deciding task ownership (R-goal-37) | `NOT_A_TASK_GOAL` (via A2's `NOT_A_WEEKLY_GOAL`, itself retired by A8's R-rm-6) |
 | `BRANCH_NOT_ACTIVE` | There is no activation to be missing (R-rm-2) | `NO_WEEKLY_GOAL` |
 | `WEEK_NOT_CURRENT` | Planning is no longer confined to the current week (R-goal-36, R-lens-7) | `PERIOD_IN_PAST` |
 | `GOAL_HAS_OPEN_TASKS` | It guarded making a leaf a parent; nothing left to guard (R-goal-42) | none, deliberately |

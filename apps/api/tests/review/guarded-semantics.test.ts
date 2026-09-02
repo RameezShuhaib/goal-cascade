@@ -76,7 +76,7 @@ describe('REVIEW / attack 2 — `expectedChanges` means what the port says again
 
     const c = t.container();
     const events = c.resolve<ITaskEventRepo>(ITaskEventRepo);
-    const carried: TaskEvent & { weekStart: string } = {
+    const carried: TaskEvent & { periodKey: string } = {
       id: ids.ulid(),
       userId,
       taskId: task.id,
@@ -84,7 +84,9 @@ describe('REVIEW / attack 2 — `expectedChanges` means what the port says again
       text: 'Carried to week of Mon 31 Aug',
       glyph: '↻',
       detail: null,
-      weekStart: WEEK,
+      // ⚠ **A8 (R-task-53)** — the carry key is a PERIOD, so a month task's `Carried to Sep 2026` is the
+      // same line one scale up and cannot collide with a week's.
+      periodKey: WEEK,
       at: `${WEEK}T00:00:00.000Z`,
     };
     // First insert really writes a row; the re-read writes none. Both are correct, both must pass.
@@ -110,7 +112,7 @@ describe('REVIEW / attack 2 — `expectedChanges` means what the port says again
     expect((await t.fetch('/api/tasks', { cookie })).status).toBe(200);
 
     const rows = await db.select().from(taskEvents).where(eq(taskEvents.taskId, task.id)).all();
-    expect(rows.filter((r) => r.kind === 'carried').map((r) => r.weekStart).sort()).toEqual(['2026-08-24', '2026-08-31']);
+    expect(rows.filter((r) => r.kind === 'carried').map((r) => r.periodKey).sort()).toEqual(['2026-08-24', '2026-08-31']);
   });
 
   it('the empty-id-list statement still passes (its WHERE matches nothing, and 0 is what it expects)', async () => {
@@ -158,6 +160,13 @@ const lateTask = (userId: string, goalId: string): Task => ({
   cond: '',
   description: '',
   status: 'open',
+  // ⚠ **A8 (R-task-52, R-measure-1)** — a WEEK task with no measure, which is what this fixture is about.
+  scope: 'Weekly',
+  measureKind: null,
+  measureStart: null,
+  measureCurrent: null,
+  measureTarget: null,
+  measureUnit: null,
   originPeriodKey: WEEK,
   donePeriodKey: null,
   doneAt: null,

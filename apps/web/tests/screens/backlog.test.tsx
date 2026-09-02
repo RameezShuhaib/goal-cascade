@@ -107,7 +107,7 @@ describe('Backlog → work: the one conversion (R-backlog-26, D-19)', () => {
     await waitFor(async () => {
       const body = await bodyOf(lastRequest('POST', '/convert-to-task'));
       // R-backlog-26 — the conversion names a target week and may not be in the past (R-goal-36).
-      expect(body).toMatchObject({ week: 0, title: 'Find a squat rack that is free at 7am' });
+      expect(body).toMatchObject({ period: F.THIS_MONDAY, title: 'Find a squat rack that is free at 7am' });
     });
     // D-19 — CONVERTED, never duplicated: the item is not deleted and no second task is made.
     expect(requests('POST', '/api/tasks')).toHaveLength(0);

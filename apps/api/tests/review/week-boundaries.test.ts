@@ -124,22 +124,22 @@ describe('REVIEW / attack 5 — a stored week is an absolute Monday and never de
     // The label is a client rendering of `carryAge`, which is `min(viewed, current) − origin` in whole
     // weeks (⚠ A2: signed, R-task-43). These are all past/current views, where the `min` is inert.
     const current = '2026-08-31';
-    expect(carryAge('2026-08-31', '2026-08-31', current)).toBe(0); // R-task-12: no label
-    expect(carryAge('2026-08-24', '2026-08-31', current)).toBe(1); // R-task-10: gray "since …"
-    expect(carryAge('2026-08-17', '2026-08-31', current)).toBe(2); // R-task-11: red chip, at exactly 2
-    expect(carryAge('2026-08-10', '2026-08-31', current)).toBe(3);
+    expect(carryAge('Weekly', '2026-08-31', '2026-08-31', current)).toBe(0); // R-task-12: no label
+    expect(carryAge('Weekly', '2026-08-24', '2026-08-31', current)).toBe(1); // R-task-10: gray "since …"
+    expect(carryAge('Weekly', '2026-08-17', '2026-08-31', current)).toBe(2); // R-task-11: red chip, at exactly 2
+    expect(carryAge('Weekly', '2026-08-10', '2026-08-31', current)).toBe(3);
     // …and across a year end, where naive month/day arithmetic would drift.
-    expect(carryAge('2026-12-28', '2027-01-04', '2027-01-04')).toBe(1);
-    expect(carryAge('2026-12-21', '2027-01-04', '2027-01-04')).toBe(2);
+    expect(carryAge('Weekly', '2026-12-28', '2027-01-04', '2027-01-04')).toBe(1);
+    expect(carryAge('Weekly', '2026-12-21', '2027-01-04', '2027-01-04')).toBe(2);
     // It depends on the VIEWED week, never on today (S-task-11-2).
-    expect(carryAge('2026-08-17', '2026-08-24', current)).toBe(1);
+    expect(carryAge('Weekly', '2026-08-17', '2026-08-24', current)).toBe(1);
     /**
      * SUPERSEDED — the last line used to read "a task can never be 'negative' weeks old", asserting
      * R-task-37's `max(0, …)` clamp. R-task-43 supersedes it: the age is SIGNED, and a negative value is
      * the honest reading of "not due yet". No label fires below 1 either way, which is why this needs an
      * assertion rather than a comment — nothing that renders changed.
      */
-    expect(carryAge('2026-08-31', '2026-08-24', current)).toBe(-1);
+    expect(carryAge('Weekly', '2026-08-31', '2026-08-24', current)).toBe(-1);
     expect(offsetOf('2026-08-24', '2026-08-31')).toBe(-1);
   });
 

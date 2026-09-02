@@ -172,7 +172,7 @@ describe('R-backlog-17/19 — the relative move', () => {
     const b = await capture(M, 'B');
     const c = await capture(M, 'C');
 
-    const convert = await post(E.backlogItemConvert(b.id), { week: 0, goalId: week });
+    const convert = await post(E.backlogItemConvert(b.id), { goalId: week });
     expect(convert.status, await convert.clone().text()).toBe(201);
 
     // R-backlog-20 — conversion leaves a GAP: the survivors keep their relative order, nothing re-keyed.
@@ -195,7 +195,7 @@ describe('R-backlog-17/19 — the relative move', () => {
   it('R-backlog-19 — a converted item cannot be re-ordered at all', async () => {
     const week = (await seedWeeklyGoal(f, M, '2026-08-31', 'Also this week')).id;
     const a = await capture(M, 'A');
-    expect((await post(E.backlogItemConvert(a.id), { week: 0, goalId: week })).status).toBe(201);
+    expect((await post(E.backlogItemConvert(a.id), { goalId: week })).status).toBe(201);
     const res = await reorder(a.id, { to: 'top' });
     expect(res.status).toBe(409);
     expect(await codeOf(res)).toBe('ALREADY_CONVERTED');

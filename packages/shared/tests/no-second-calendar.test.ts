@@ -40,6 +40,12 @@ const OWNED = [
   // refuse. They decide which week a month means; there is one declaration of each and it is here.
   'zoomWeekForMonth',
   'taskWeekForMonth',
+  // ⚠ **A11 (32-week-selection §4.3)** — the OFFER list `taskWeekForMonth` is now the head of. One
+  // declaration, here, so the create sheet and Park cannot come to disagree about which weeks a month has.
+  'taskWeeksInMonth',
+  // ⚠ **A8 (R-task-54)** — carry age at a scope. `weeksBetween`'s generalisation, and the month scale the
+  // red chip is counted in; a second copy would be a second answer to "how late is this".
+  'periodsBetween',
   'dateInTimezone',
   'isValidTimezone',
   'addWeeks',

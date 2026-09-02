@@ -1,4 +1,4 @@
-import type { GoalView, TaskDetailView, TaskView, WeekView } from '@goal-cascade/shared';
+import { labelOf, type GoalView, type ReadingView, type TaskDetailView, type TaskView, type WeekView } from '@goal-cascade/shared';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { DependencyContainer } from 'tsyringe';
 import type { RequestContext } from '../../application/context';
@@ -81,14 +81,48 @@ function shortDate(date: string): string {
 /**
  * The carry chip, rendered server-side so the agent quotes the same words the owner sees in the UI.
  *
- * ⚠ **A2 (R-task-43)** — `carryAge` is now SIGNED, so `<= 0` covers both "created this week" and
- * "planned for a week that has not arrived". No label fires at either, which is R-lens-11: the only
- * escalation in the product must never fire at a plan.
+ * ⚠ **A2 (R-task-43)** — `carryAge` is SIGNED, so `<= 0` covers both "created this period" and "planned
+ * for a period that has not arrived". No label fires at either, which is R-lens-11: the only escalation
+ * in the product must never fire at a plan.
+ *
+ * ⚠ **A8 (R-task-54)** — counted in the task's own unit, `weeks` or `months`, and rendered in it. A month
+ * task that has carried since August says `3 months · since Aug` in November, in the one place where the
+ * unit means something. **It says nothing at all inside a week** — the month band renders no label of any
+ * kind (S-lens-31-2) — and that suppression belongs to the surface, not to this string.
  */
-function carryLabel(carryAge: number, originPeriodKey: string): string {
+function carryLabel(carryAge: number, carryUnit: 'weeks' | 'months', originPeriodKey: string): string {
   if (carryAge <= 0) return '';
-  const since = shortDate(originPeriodKey);
-  return carryAge === 1 ? `since ${since}` : `${carryAge} weeks · since ${since}`;
+  const since = carryUnit === 'months' ? labelOf('Monthly', originPeriodKey).split(' ')[0]! : shortDate(originPeriodKey);
+  return carryAge === 1 ? `since ${since}` : `${carryAge} ${carryUnit} · since ${since}`;
+}
+
+/**
+ * ⚠ **A8, new (R-measure-2/3/4)** — a measure, as the surface shapes it.
+ *
+ * `progress` is **absent from the payload** when there is no target or when `target === start`, rather
+ * than being `null`, `0`, `NaN` or `100`: an agent reading a field that is not there cannot report a
+ * percentage the product refuses to compute (R-measure-4, S-measure-4-3).
+ *
+ * `reading_count` is here and the readings themselves are not: a list result must not carry ninety values
+ * per row. `list_readings` fetches them when they are actually wanted.
+ */
+function measureOut(m: NonNullable<TaskView['measure']>) {
+  return {
+    kind: m.kind,
+    start: m.start,
+    /** **Derived** from the readings (R-measure-3). Never sent by an agent, never patchable. */
+    current: m.current,
+    target: m.target,
+    unit: m.unit,
+    ...(m.progress === null ? {} : { progress: m.progress }),
+    /** What the owner sees on the row: `12 / 15 leads`, or `12 leads` with no target. */
+    label: `${m.current}${m.target === null ? '' : ` / ${m.target}`}${m.unit ? ` ${m.unit}` : ''}`,
+  };
+}
+
+/** ⚠ **A8 (R-measure-5)** — one reading. No week, no month, no period: it follows the TASK. */
+export function readingOut(r: ReadingView) {
+  return { id: r.id, task_id: r.taskId, value: r.value, at: r.at };
 }
 
 /**
@@ -97,6 +131,7 @@ function carryLabel(carryAge: number, originPeriodKey: string): string {
  */
 export function taskOut(v: TaskView | TaskDetailView, goalPath: string | undefined) {
   const events = 'events' in v ? v.events : undefined;
+  const readings = 'readings' in v ? v.readings : undefined;
   return {
     id: v.id,
     goal_id: v.goalId,
@@ -107,6 +142,11 @@ export function taskOut(v: TaskView | TaskDetailView, goalPath: string | undefin
     links: v.links.map((l) => ({ id: l.id, url: l.url, created_at: l.createdAt })),
     status: v.status,
     done: v.done,
+    /**
+     * ⚠ **A8 (R-task-52)** — `Monthly` or `Weekly`, and the key's FORMAT matches it: `2026-09` or the
+     * Monday `2026-09-07`. Every visibility, carry and completion comparison is made within one scope.
+     */
+    scope: v.scope,
     origin_period_key: v.originPeriodKey,
     done_period_key: v.donePeriodKey,
     done_at: v.doneAt,
@@ -114,12 +154,20 @@ export function taskOut(v: TaskView | TaskDetailView, goalPath: string | undefin
     exited_at: v.exitedAt,
     /** ⚠ **A2** — signed. Negative means "planned ahead, not yet due" (R-task-43). */
     carry_age: v.carryAge,
-    carry_label: carryLabel(v.carryAge, v.originPeriodKey),
-    /** R-task-44 — false in a future week; there is no legal completion week for it yet. */
+    /** ⚠ **A8 (R-task-54)** — `weeks` or `months`. Never report an age without reading this. */
+    carry_unit: v.carryUnit,
+    carry_label: carryLabel(v.carryAge, v.carryUnit, v.originPeriodKey),
+    /**
+     * R-task-44 / R-task-55 — false in a future period; there is no legal completion period for it yet.
+     * ⚠ **A8** — the bound is at the TASK'S OWN SCOPE, so for a month task this answers about its MONTH.
+     */
     completable: v.completable,
+    /** ⚠ **A8 (R-measure-1)** — `null` on an ordinary checkbox, which is most tasks. */
+    measure: v.measure ? measureOut(v.measure) : null,
     created_at: v.createdAt,
     updated_at: v.updatedAt,
     ...(events ? { events } : {}),
+    ...(readings ? { reading_count: readings.length } : {}),
   };
 }
 

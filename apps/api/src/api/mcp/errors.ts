@@ -25,21 +25,25 @@ const RETRYABLE: ReadonlySet<ErrorCode> = new Set<ErrorCode>(['IDEMPOTENCY_IN_PR
  * is. Each names the tool to call next and, where the product forbids a plausible workaround, says so.
  *
  * ⚠ **A2** — four codes left this table with their rules (R-rm-2): `NOT_A_LEAF`, `BRANCH_NOT_ACTIVE`,
- * `WEEK_NOT_CURRENT` and `GOAL_HAS_OPEN_TASKS`. Three replacements carry the substitutions the product
- * refuses, and they are the ones worth reading twice:
- *  - **`NOT_A_WEEKLY_GOAL`** — never "use a leaf instead". The condition is the horizon.
- *  - **`NO_WEEKLY_GOAL`** — never "use a different goal that has one". Create the week's goal inline.
+ * `WEEK_NOT_CURRENT` and `GOAL_HAS_OPEN_TASKS`. ⚠ **A8 (R-rm-6)** — a fifth, `NOT_A_WEEKLY_GOAL`, goes
+ * with R-task-49's inference. Four replacements carry the substitutions the product refuses, and they are
+ * the ones worth reading twice:
+ *  - **`NOT_A_TASK_GOAL`** — never "use a leaf instead". The condition is the horizon, and it now names
+ *    two of them.
+ *  - **`NO_WEEKLY_GOAL`** — never "use a different goal that has one". Create the week's goal inline, or
+ *    put the work on the month.
  *  - **`PERIOD_IN_PAST`** — never "write it and move it afterwards". Planning does not rewrite history.
+ *  - **`NO_MEASURE`** — never "complete the task instead". Attach a measure, or record nothing.
  */
 const RECOVERY: Partial<Record<ErrorCode, string>> = {
   HORIZON_CONFLICT:
     "The child's horizon is not strictly shorter than the parent's — they are equal rank, or the parent is WEEKLY, which is terminal and can never have sub-goals. Do NOT retry with the same pair. On create: pick a shorter horizon than the parent (Life › Yearly › Quarterly › Monthly › Weekly), or a different parent — and note that levels may be SKIPPED, so a weekly goal under a quarterly or life goal is legal and is not what this refusal is about. On move: `details` carries both horizons — pick a target with a LONGER horizon, or tell the user this parent cannot hold this goal.",
   WOULD_CREATE_CYCLE:
     "The move target is the goal itself or one of its own descendants. This check runs BEFORE the horizon check, so it is the reason you get when both apply. Never retry. Re-read the relevant lens (`list_lens`) and choose a target OUTSIDE the moved goal's subtree. If the user pointed at a descendant, say plainly that a goal cannot move under its own child.",
-  NOT_A_WEEKLY_GOAL:
-    "That goal's horizon is not Weekly, and ONLY weekly goals hold tasks. `details` carries the horizon. This is about the HORIZON and nothing else — a monthly goal with no weekly children looks like the end of a branch and still cannot hold a task, which is the mistake this code exists to catch. Find a weekly goal for the week you want with find_goal(only=\"weekly\"), or create the task with create_task's `new_weekly_goal`, which makes the weekly goal and the task in one step. Never route the work to some other goal because the right one has no week yet.",
+  NOT_A_TASK_GOAL:
+    "That goal's horizon holds no tasks. Tasks live on MONTHLY and WEEKLY goals — the horizon and nothing else. `details` carries the horizon. A quarterly goal with no monthly children looks like the end of a branch and still cannot hold a task, which is the mistake this code exists to catch. Put the work on the monthly goal for the month you mean (create_task with that goal_id and no `period` — it becomes a month task on that goal), or on a weekly goal for a week. Never route the work to some other goal because the right one is the wrong horizon.",
   NO_WEEKLY_GOAL:
-    "No weekly goal exists at or under that goal for the target week, so nothing can receive the conversion. `details` carries `goalId` and `weekStart`. Do NOT retry unchanged and do NOT pick a different goal that happens to have one — re-send with `new_weekly_goal` (a parent id and a one-line title), which creates it and converts the item in the same transaction. Ask the user for the title if it is not obvious; the monthly goal's own title is usually right.",
+    "No weekly goal exists at or under that goal for the week you named, so nothing can receive the work. `details` carries `goalId` and `weekStart`. Do NOT retry unchanged and do NOT pick a different goal that happens to have one. Two good moves: re-send with `new_weekly_goal` (a parent id and a one-line title), which creates the weekly goal and the work in the same transaction — ask the user for the title if it is not obvious, the monthly goal's own title is usually right; or, if the user did not actually care which week, drop `period` entirely and let it be a MONTH task on the monthly goal, which needs nothing created at all.",
   PERIOD_IN_PAST:
     "The period named is earlier than the current one for that horizon, and nothing is ever created into, or moved into, a past period: planning does not rewrite history. `details` carries the period you sent and the current one. Do NOT retry with an earlier period, and do not try to work around it by moving something afterwards. Use the current period or a later one — get_period gives you the key. A past period is closed to new PLAN and to nothing else: completing a task that was live that week, unchecking one, or correcting a title all still work.",
   ALREADY_CONVERTED:
@@ -58,7 +62,14 @@ const RECOVERY: Partial<Record<ErrorCode, string>> = {
   TASK_ALREADY_EXITED:
     'The task is done, cancelled, or already in the backlog — only OPEN tasks can be moved to the backlog or cancelled. Re-read it with get_task and tell the user its actual state.',
   WEEK_OUT_OF_RANGE:
-    "On complete_task: the week is either in the FUTURE — you cannot finish work in a week that has not happened — or earlier than the task's own origin week. Read `completable` on the task: when it is false and the task's week is ahead, there is no legal completion week at all yet, and the answer is to wait, not to retry with a different offset. Elsewhere it means the offset is outside the storage range (±520).",
+    "On complete_task: the period is either in the FUTURE — you cannot finish work in a period that has not happened — or earlier than the task's own origin period. The comparison is made in the TASK'S OWN SCOPE, so a month task is bounded by months and a week task by weeks; sending a Monday for a month task, or the wrong scope's key, lands here too. Read `completable` on the task: when it is false and the task's period is ahead, there is no legal completion period at all yet, and the answer is to wait, not to retry with a different key. Elsewhere it means a week offset outside the storage range (±520).",
+
+  MEASURE_TARGET_EQUALS_START:
+    "The target equals the start, which names no movement. `details` carries both. Do NOT retry with the same pair and do NOT invent a target one unit away to get past this. Ask the user what the target actually is — or, if they are tracking a number with no finish line (an AMRAP set, a weight you just want recorded), send `target: null`, which is a real measure with a history and no percentage rather than a broken one.",
+  MEASURE_KIND_MISMATCH:
+    "You sent a `delta` against a GAUGE. A gauge is SET to a value (\"it is 78.5 now\"), not added to. Re-send with `value`. The reverse is allowed and is not a mistake: an absolute `value` against a counter is accepted, because correcting a counter to where it actually is is legitimate.",
+  NO_MEASURE:
+    "That task carries no number — it is an ordinary checkbox, which is what most tasks are. `details` carries the task id. Attach a measure first with set_task_measure (kind, start, optional target, optional unit), then record the reading. Do NOT complete the task instead, and do NOT record the value in its description: those are different things and the user asked for one of them.",
   CONCURRENT_UPDATE:
     "Someone — the owner's phone, most likely — changed this row first. Re-read the entity, check the user's intent still applies to the new state, then write ONCE. Never loop on this.",
   VALIDATION_FAILED:

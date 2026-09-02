@@ -44,8 +44,15 @@ describe('the surface an agent connects to', () => {
      * ⚠ **A1** — 36 → 37. **Added (1)**: `reorder_backlog_item` (R-backlog-19), the relative move behind
      * the manual per-goal backlog order. It is the only tool that writes a position, and there is
      * deliberately no second one that writes an index.
+     *
+     * ⚠ **A8** — 37 → 43. **Added (6)**: `retarget_task` (R-task-56) and the five measure tools
+     * (`set_task_measure`, `clear_task_measure`, `record_reading`, `list_readings`, `delete_reading` —
+     * R-measure-1/3/5). It is ONE tool for Park rather than a `park_task`/`unpark_task` pair (Q-A): two
+     * would be one operation under two names, and the direction is already decided by the task's scope
+     * and the key's format. Nothing was deleted, because A8's one removal (R-rm-6) is a web flow and an
+     * error code, not a tool.
      */
-    expect(tools).toHaveLength(37);
+    expect(tools).toHaveLength(43);
     expect(resources.length + templates.length).toBe(9);
     expect(prompts).toHaveLength(4);
 
@@ -101,12 +108,19 @@ describe('the surface an agent connects to', () => {
     const instructions: string = discover.result?.instructions ?? '';
     for (const anchor of [
       'Life › Yearly › Quarterly › Monthly › Weekly',
-      'ONLY WEEKLY GOALS HOLD TASKS',
+      // ⚠ **A8 (R-task-51)** — the heading changed, and the change is the amendment.
+      'MONTHLY AND WEEKLY GOALS HOLD TASKS',
+      "A TASK'S PERIOD, AND ITS SCOPE",
       'PERIODS',
       'LENSES',
       'THE WEEK',
       'CARRYING',
+      // ⚠ **A8 (R-task-54, S-lens-31-2)** — the paragraph that stops an agent reading a month task's
+      // carry age off the wire and telling the owner it is three weeks overdue.
+      'A MONTH TASK IS NEVER LATE IN A WEEK',
       'THE THREE EXITS',
+      'PARKING IS NOT AN EXIT',
+      'MEASURES',
       'NO REPORTS',
       'HOW TO WORK',
     ]) {
@@ -118,11 +132,31 @@ describe('the surface an agent connects to', () => {
      * A connecting agent that believed any of those would keep acting on a product that no longer
      * exists — routing work at leaves, asking to set a focus, refusing to plan a future week.
      */
-    for (const stale of ['LEAF, ACTIVE, DORMANT', 'exactly four horizons', 'set_goal_focus', 'save_weekly_plan']) {
+    for (const stale of [
+      'LEAF, ACTIVE, DORMANT',
+      'exactly four horizons',
+      'set_goal_focus',
+      'save_weekly_plan',
+      // ⚠ **A8 (R-task-51, R-rm-6)** — the old heading taught a rule that is now false about the product.
+      'ONLY WEEKLY GOALS HOLD TASKS',
+      'NOT_A_WEEKLY_GOAL',
+    ]) {
       expect(instructions, `the instructions block still says "${stale}"`).not.toContain(stale);
     }
-    // The trap, stated in the one place every connecting agent reads it.
-    expect(instructions).toMatch(/monthly goal that\s+happens to have no weekly children/);
+    // The trap, stated in the one place every connecting agent reads it. ⚠ **A8** — one horizon up.
+    expect(instructions).toMatch(/quarterly goal\s+that happens to have no monthly children/);
+    /**
+     * ⚠ **A8 (R-measure-8, R-measure-9) — the refusals an agent is most likely to helpfully violate.**
+     *
+     * "You're behind on this" is the single most natural thing for a model to say about a number with a
+     * target, and it is the one thing this product does not have. It has to be refused in the briefing,
+     * because by the time a tool description could say it the agent has already decided what to report.
+     */
+    // Whitespace-tolerant, because the block is hard-wrapped at 100 columns and a phrase may straddle a
+    // line break — the same reason the trap assertion above uses `\s+`.
+    for (const refusal of [/no\s+pace/, /no\s+projection/, /no\s+forecast/, /no\s+trend\s+line/, /no\s+streak/]) {
+      expect(instructions, `the instructions block does not refuse ${refusal}`).toMatch(refusal);
+    }
   });
 
   it('.refine() rules are dropped from the advertised schema, so they are stated in the description', async () => {
@@ -324,24 +358,50 @@ describe('tasks', () => {
   });
 
   /**
-   * SUPERSEDED — `BRANCH_NOT_ACTIVE` forbade "route the work to a goal that IS active", which was the
-   * one substitution the old product refused. R-backlog-26 replaces the code, and **A2 splits that
-   * refusal in two**, each with its own forbidden workaround:
+   * SUPERSEDED TWICE — `BRANCH_NOT_ACTIVE` forbade "route the work to a goal that IS active", which was
+   * the one substitution the old product refused. R-backlog-26 replaced the code, A2 split that refusal
+   * in two, and ⚠ **A8 (R-task-51, R-rm-6) moves the trap one horizon up**: `NOT_A_WEEKLY_GOAL` is
+   * retired, `NOT_A_TASK_GOAL` takes its slot, and the goal that looks like the end of a branch and still
+   * holds no work is now a childless **Quarterly** one. The two forbidden workarounds are unchanged:
    *
-   *  - `NOT_A_WEEKLY_GOAL` — never "use a leaf instead". The condition is the HORIZON (R-goal-39).
-   *  - `NO_WEEKLY_GOAL` — never "use a different goal that has one". Create the week's goal inline.
+   *  - `NOT_A_TASK_GOAL` — never "use a leaf instead". The condition is the HORIZON, now naming two.
+   *  - `NO_WEEKLY_GOAL` — never "use a different goal that has one". Create the week's goal inline, or
+   *    put the work on the month, which needs nothing created at all.
    */
-  it('S-goal-37-1 — NOT_A_WEEKLY_GOAL names the trap and forbids the substitution', async () => {
-    const { month } = await tree();
-    // A childless Monthly goal: a leaf by the structural definition, and never a task parent.
-    const childless = (await ok(t, token, 'create_goal', { title: 'nothing planned yet', horizon: 'Monthly', parent_id: (await tree()).year.id })).goal;
-    const err = await refused(t, token, 'create_task', { goal_id: childless.id, title: 'nope' }, 'NOT_A_WEEKLY_GOAL');
+  it('S-task-51-2 — NOT_A_TASK_GOAL names the trap and forbids the substitution', async () => {
+    const { year } = await tree();
+    // A childless Quarterly goal: a leaf by the structural definition, and never a task parent.
+    const childless = (await ok(t, token, 'create_goal', { title: 'nothing planned yet', horizon: 'Quarterly', parent_id: year.id })).goal;
+    const err = await refused(t, token, 'create_task', { goal_id: childless.id, title: 'nope' }, 'NOT_A_TASK_GOAL');
     expect(err.retryable).toBe(false);
     expect(err.recovery).toMatch(/horizon/i);
-    expect(err.recovery).toMatch(/monthly goal with no weekly children/i);
-    expect(err.recovery).toMatch(/new_weekly_goal/);
+    expect(err.recovery).toMatch(/quarterly goal with no monthly children/i);
+    // ⚠ **A8** — the recovery now names the MONTH path first, because it is the one that needs nothing
+    // created. An agent told only about `new_weekly_goal` would invent a weekly goal for work the owner
+    // asked to put on a month (R-rm-6's whole complaint about the flow it deletes).
+    expect(err.recovery).toMatch(/monthly goal/i);
+    expect(err.recovery).toMatch(/no `period`/);
     expect(err.recovery).toMatch(/Never route the work to some other goal/);
-    void month;
+  });
+
+  /**
+   * ⚠ **A8, new (R-task-51/52/57) — the owner's ask, over MCP, and the one row it writes.**
+   *
+   * The default path on a Monthly goal must create exactly one task and no goal. `created_weekly_goal`
+   * being null is the assertion that matters: R-rm-6 exists because a flow that minted one silently lost
+   * the owner three tasks, and an agent driving this surface is the one caller least able to notice.
+   */
+  it('S-task-51-1 / S-task-57-1 — create_task on a MONTHLY goal makes a month task and no goal', async () => {
+    const { month } = await tree();
+    const res = await ok(t, token, 'create_task', { goal_id: month.id, title: 'sign two clients' });
+    expect(res.task.scope).toBe('Monthly');
+    expect(res.task.origin_period_key).toBe(month.period_key);
+    expect(res.task.carry_unit).toBe('months');
+    expect(res.created_weekly_goal).toBeNull();
+    // It is visible as a month task and NOT as one of the week's own tasks (R-lens-31).
+    const listed = await ok(t, token, 'list_tasks', { scope: 'month' });
+    expect(listed.tasks.map((x: { id: string }) => x.id)).toContain(res.task.id);
+    expect((await ok(t, token, 'list_tasks', { scope: 'week' })).tasks.map((x: { id: string }) => x.id)).not.toContain(res.task.id);
   });
 
   it('S-task-48-1 — create_task’s inline `new_weekly_goal` makes both rows, and NAMES the one it made', async () => {
@@ -596,7 +656,7 @@ describe('resources', () => {
     expect(weekModel).not.toContain('save_weekly_plan');
     expect(weekModel).toMatch(/Positive\noffsets are \*\*ordinary\*\*/);
     const errors = JSON.parse(await read('goalcascade://rules/errors'));
-    expect(errors.NOT_A_WEEKLY_GOAL.retryable).toBe(false);
+    expect(errors.NOT_A_TASK_GOAL.retryable).toBe(false);
     expect(errors.PERIOD_IN_PAST.retryable).toBe(false);
     expect(errors.RATE_LIMITED.retryable).toBe(true);
     expect(errors.HORIZON_CONFLICT.recovery.length).toBeGreaterThan(40);

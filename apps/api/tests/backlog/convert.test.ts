@@ -237,11 +237,29 @@ describe('backlog → task conversion', () => {
     expect((await backlogRow(f, item.id))!.status).toBe('open');
   });
 
-  it('R-goal-36 - a conversion may never name a PAST week: the schema refuses a negative offset', async () => {
+  /**
+   * ⚠ **A8 (R-backlog-31) — rewritten, not weakened.** A2's version relied on `week: WeekOffset.min(0)`
+   * refusing a negative offset in the SCHEMA. A8 replaces the offset with a canonical `period` (one field,
+   * two scopes, the format the discriminator), so there is no negative number to refuse; the bound moves
+   * to the service, where the scope is known, and answers `PERIOD_IN_PAST` — which is the code R-goal-36
+   * actually names. The property is unchanged: nothing is created into a past period, at either scope.
+   */
+  it('R-goal-36 / R-backlog-31 - a conversion may never name a PAST period, at either scope', async () => {
     const item = await createItem(monthly, 'Not last week');
-    const res = await post(E.backlogItemConvert(item.id), { week: -1 });
-    expect(res.status).toBe(422);
+    const week = await post(E.backlogItemConvert(item.id), { period: '2026-08-24' });
+    expect(week.status).toBe(409);
+    expect(((await week.json()) as { error: { code: string } }).error.code).toBe('PERIOD_IN_PAST');
     expect((await backlogRow(f, item.id))!.status).toBe('open');
+
+    // The month half needs an item on a goal whose OWN month is past, because the month path can only
+    // ever name that goal's month (R-task-52 — a task takes its period from its goal, so a "different
+    // month" names no destination at all and is refused one line earlier, as a validation failure).
+    const july = (await seedGoal(f, { parentId: quarterly, horizon: 'Monthly', title: 'July', periodKey: '2026-07' })).id;
+    const stale = await createItem(july, 'Should have been July');
+    const month = await post(E.backlogItemConvert(stale.id), { period: '2026-07' });
+    expect(month.status).toBe(409);
+    expect(((await month.json()) as { error: { code: string } }).error.code).toBe('PERIOD_IN_PAST');
+    expect((await backlogRow(f, stale.id))!.status).toBe('open');
   });
 
   it('S-backlog-9-1 — converting an item that was deleted is refused, and no task is created', async () => {

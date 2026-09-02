@@ -51,16 +51,25 @@ export const ERROR_STATUS = {
   /** R-learning-2 — a Learning tag must be a Life goal or null. */
   NOT_A_LIFE_GOAL: 409,
   /**
-   * ⚠ **A2, new (R-goal-39, replaces `NOT_A_LEAF`)** — a task's `goalId` named a goal whose horizon is
-   * not `Weekly`.
+   * ⚠ **A8, new (R-task-51) — this code REPLACES `NOT_A_WEEKLY_GOAL` outright**, taking its slot and its
+   * status. `NOT_A_WEEKLY_GOAL` is retired with R-task-49's inference (R-rm-6) and the string must not
+   * survive in an error catalogue, an MCP recovery line, a test or client copy (S-task-51-2).
    *
-   * **The condition is the horizon, full stop — never leaf-ness** (R-goal-37). Because Weekly is terminal
-   * every Weekly goal is childless, so "Weekly" implies "no children"; **the converse is false and is the
-   * trap**: a Monthly goal with no Weekly children is a leaf by the structural definition and is
-   * precisely the goal that must never hold a task (S-goal-37-1). A build that admits it has keyed task
-   * ownership on leaf-ness.
+   * A task's `goalId` named a goal whose horizon is neither `Monthly` nor `Weekly`. `details.horizon`
+   * carries which.
+   *
+   * **The condition is still the horizon, full stop — never leaf-ness** (R-goal-37). It now names two
+   * horizons instead of one, and every other word of R-goal-39's ruling survives, including the trap it
+   * exists to catch: a **Quarterly** goal with no Monthly children is a leaf by the structural definition
+   * and still holds no task (S-task-51-2). A build that admits it has keyed task ownership on leaf-ness.
+   *
+   * **Why the line falls between Quarterly and Monthly.** The horizons that hold *deferred, undated* work
+   * are Yearly, Quarterly and Monthly (R-backlog-1); the horizons that hold *committed, dated* work are
+   * Monthly and Weekly; and Monthly is deliberately the one horizon that holds both, because it is where
+   * the two decisions meet (R-backlog-30). A task with a three-month deadline carries for thirteen weeks
+   * before anything says so, which is a backlog item that has learned to nag.
    */
-  NOT_A_WEEKLY_GOAL: 409,
+  NOT_A_TASK_GOAL: 409,
   /**
    * ⚠ **A2, new (R-backlog-26, replaces `BRANCH_NOT_ACTIVE`)** — no Weekly goal exists at or under the
    * item's goal for the target week, so nothing can receive the conversion. The client answers with
@@ -113,6 +122,15 @@ export const ERROR_STATUS = {
    * has already exited refuses both (S-task-17-1).
    */
   TASK_ALREADY_EXITED: 409,
+  /**
+   * ⚠ **A8, new (R-measure-3)** — a reading was recorded against, or deleted from, a task that carries no
+   * measure. A task with `measure = null` is an ordinary checkbox and has nothing to record a value into
+   * (R-measure-1); attach a measure first with `PUT /tasks/:id/measure`.
+   *
+   * A 409 and not a 422: the request was well formed and the input was fine — the task is simply not that
+   * kind of thing yet — and the client needs to tell that apart from a validation failure.
+   */
+  NO_MEASURE: 409,
   /** Q-2 / Q-3 — a write carrying a stale `version` lost the race with another device. */
   CONCURRENT_UPDATE: 409,
   IDEMPOTENCY_IN_PROGRESS: 409,
@@ -127,6 +145,27 @@ export const ERROR_STATUS = {
    * week arrives (S-task-44-1). A write into a past PERIOD is `PERIOD_IN_PAST`, not this.
    */
   WEEK_OUT_OF_RANGE: 422,
+  /**
+   * ⚠ **A8, new (R-measure-4)** — a measure was created or edited with `target === start`.
+   *
+   * It names no movement, and "maintain" — the only thing it could mean — is out of scope for this
+   * amendment. **Refusing it at the edge is only half the rule**: where such a row exists in the data
+   * anyway (a migration, a hand-edit, a bug), **no division is performed** — `progress` is absent from the
+   * wire and the UI renders the numbers alone. `NaN`, `Infinity`, `0%` and `100%` are each specifically
+   * forbidden as the answer, because this is the one place a divide-by-zero can reach a screen and a wrong
+   * number is worse than no number (S-measure-4-3).
+   */
+  MEASURE_TARGET_EQUALS_START: 422,
+  /**
+   * ⚠ **A8, new (R-measure-3)** — a `delta` was submitted against a **gauge**. A gauge is *set*, not added
+   * to, and there is nothing sensible to add a delta to when the owner's whole interaction is "it is 78.5
+   * now". Re-send with `value`.
+   *
+   * **The asymmetry is deliberate and is not a bug to fix**: an absolute `value` against a **counter** is
+   * *accepted*, because correcting a counter to where it actually is ("I'm at 12") is legitimate and a
+   * counter is a gauge you usually bump (S-measure-3-3).
+   */
+  MEASURE_KIND_MISMATCH: 422,
   VALIDATION_FAILED: 422,
   IDEMPOTENCY_KEY_REUSED: 422,
   /**

@@ -229,8 +229,56 @@ export const TASK_EVENT_KINDS = [
   'unchecked',
   'moved_to_backlog',
   'canceled',
+  /**
+   * ⚠ **A8 (R-task-58)** — five added, none removed. `parked` / `unparked` are R-task-56's two
+   * directions; the three `measure_*` kinds record the measure's SHAPE and never its values.
+   *
+   * **A reading is not an event, in either direction** (R-measure-7) — not on record, not on delete. A
+   * counter bumped daily for a quarter would put ninety rows into a log whose job is to answer "what
+   * happened to this task", and those ninety rows are already on the page, above it, in the right shape.
+   * There is deliberately no `reading_recorded` member here for a build to reach for.
+   *
+   * The month form of carrying reuses `carried`: it is the same event at a different scale, and a
+   * `carried_month` member would make every timeline reader branch on scope for one word of copy.
+   */
+  'parked',
+  'unparked',
+  'measure_added',
+  'measure_edited',
+  'measure_removed',
 ] as const;
 export const TaskEventKind = z.enum(TASK_EVENT_KINDS);
+
+/**
+ * ⚠ **A8, new (R-task-51, R-task-52)** — **the two horizons that hold tasks, and nothing else.**
+ *
+ * A task's `scope` is its goal's horizon, copied at creation. It is not a second horizon system: it may
+ * only ever be `Monthly` or `Weekly`, because only those two horizons hold tasks. It is what every
+ * visibility, carry and completion comparison is made *within*, and it is the format `originPeriodKey`
+ * must be in.
+ */
+export const TASK_SCOPES = ['Monthly', 'Weekly'] as const;
+export const TaskScope = z.enum(TASK_SCOPES);
+
+/** ⚠ **A8 (R-task-54)** — the unit `carryAge` is counted in, one per scope. Never mixed. */
+export const CARRY_UNITS = ['weeks', 'months'] as const;
+export const CarryUnit = z.enum(CARRY_UNITS);
+
+/**
+ * ⚠ **A8, new (R-measure-1)** — **two kinds, and there is no third.**
+ *
+ * A `counter` is added to (`+3`); a `gauge` is set (`= 78.5`). That is the whole difference between them
+ * and it is an **input affordance, not a storage difference** — every reading stores an absolute value
+ * either way (R-measure-3).
+ *
+ * **There is no `binary` member and there must never be one.** A checkbox is `measure = null`, not a
+ * degenerate counter that stops at 1: completion is already modelled and is not a number, a gauge with no
+ * target has no completion at all, unifying would grow a measure on every task in the product, and the
+ * migration would have to invent a reading with a timestamp for every task ever completed (R-measure-1,
+ * S-measure-1-1).
+ */
+export const MEASURE_KINDS = ['counter', 'gauge'] as const;
+export const MeasureKind = z.enum(MEASURE_KINDS);
 
 /** R-backlog-6 / D-19 — a backlog item is CONVERTED, not deleted, so a repeat conversion is refusable. */
 export const BACKLOG_STATUSES = ['open', 'converted'] as const;
@@ -292,6 +340,39 @@ export const MAX_INTERIOR_GOALS = 1000;
  * children-per-goal number could ever be right (Q-12, amended).
  */
 export const MAX_WEEKLY_GOALS_PER_WEEK = 50;
+
+/**
+ * ⚠ **A8, new (Q-26)** — **readings per task**, enforced on write.
+ *
+ * A daily counter produces ~365 a year and a task can carry indefinitely, so one payload needs a bound.
+ * **There is no compaction, no rollup and no pruning** — the same answer Q-12 gives for goals and for the
+ * same reason: the owner's dislike of clutter is about screens, not rows, and the task page renders a
+ * sparkline plus the *recent* values, so a long history costs a scroll nobody performs. Averaging or
+ * bucketing them would be the app editing the owner's own numbers, which is R-measure-8's line.
+ *
+ * The cap exists to bound one payload, and the refusal names it. If it is ever raised, the task-page read
+ * must page instead (Q-27).
+ */
+export const MAX_READINGS = 2000;
+
+/**
+ * ⚠ **A8, new (R-measure-2)** — the numeric floor for `start`, `target` and every reading `value`.
+ *
+ * Finite doubles, `|v| <= 1e9`. `NaN` and `±Infinity` are **refused**, never stored and never rendered
+ * (S-measure-2-2): a measure is the one place in this product where a number the owner did not write can
+ * reach a screen, and the answer to that is to refuse it at the edge.
+ */
+export const MEASURE_MAX_ABS = 1e9;
+export const MeasureNumber = z
+  .number()
+  .refine((v) => Number.isFinite(v), 'must be a finite number')
+  .refine((v) => Math.abs(v) <= MEASURE_MAX_ABS, `must be within ±${MEASURE_MAX_ABS}`);
+
+/**
+ * R-measure-2 — `leads`, `kg`, `£`. **Never parsed, converted, pluralised against a list, or validated
+ * against one**: they are all the same kind of thing to this product, a word you wrote. 16 graphemes.
+ */
+export const MeasureUnit = z.string().trim().max(16);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // View types — the shapes every read model is built out of.
@@ -479,51 +560,155 @@ export const TaskEventView = z.object({
 });
 
 /**
+ * ⚠ **A8, new (R-measure-2, R-measure-4)** — **the number a task carries**, or `null` on the vast
+ * majority of tasks, which are ordinary checkboxes and render exactly as they did before A8.
+ *
+ * `current` is **derived** (R-measure-3): the value of the latest surviving reading ordered
+ * `(at desc, id desc)`, or `start` when there are none. It is never client-supplied and never patchable;
+ * it is on the wire, and denormalised in storage, so a lens row can render `12 / 15 leads` without a
+ * per-task subquery.
+ *
+ * **Direction is implied and there is no direction flag** (R-measure-2): `target > start` counts up,
+ * `target < start` counts down. A flag would restate a fact the two numbers already make, and the first
+ * row where they disagreed would be unanswerable.
+ *
+ * ── `progress`, and the three ways it can be absent ────────────────────────────
+ * `(current − start) / (target − start)` — **one formula for both directions**, no branch:
+ * `start 80, target 75, current 78` is `(−2)/(−5) = 0.4`. It is `null`, and **no division is performed**,
+ * when:
+ *  1. there is no `target` — the AMRAP case, a first-class tracked measurement with no completion
+ *     criterion, no percentage and no bar (R-measure-4);
+ *  2. `target === start` — refused at the edge with `MEASURE_TARGET_EQUALS_START`, and if such a row
+ *     exists anyway (a migration, a hand-edit) the field is **omitted from the wire** rather than
+ *     computed. `NaN`, `Infinity`, `0%` and `100%` are each specifically forbidden as the answer: this is
+ *     the one place a divide-by-zero can reach a screen, and a wrong number is worse than no number
+ *     (S-measure-4-3).
+ *
+ * **The raw ratio may exceed 1 and is never clamped here.** 18 leads against a target of 15 is `1.2` and
+ * renders as `18 / 15 leads` — never `120%`, never a bar drawn past its own end. Only the bar's *drawn
+ * fill* is clamped, in the client, for drawing (S-measure-4-4).
+ *
+ * **Nothing derived from this is a verdict** (R-measure-8): no pace, projection, forecast, trend line,
+ * moving average, on-track/behind/ahead state in any form, streak, completion rate, burndown, per-period
+ * summary, or aggregation across two or more tasks. A number the owner recorded is data; a number the app
+ * derived about the owner is a judgment.
+ */
+export const MeasureView = z.object({
+  kind: MeasureKind,
+  start: z.number(),
+  /** **[srv], derived** from the readings (R-measure-3). Never sent, never patched. */
+  current: z.number(),
+  /** `null` is a legitimate measure with no completion and no percentage — not a degraded one. */
+  target: z.number().nullable(),
+  /** `''` when unset — never null, so the client never branches on it. */
+  unit: z.string(),
+  /** `null` when there is no target, or when `target === start`. See the doc block. */
+  progress: z.number().nullable(),
+});
+
+/**
+ * ⚠ **A8, new (R-measure-5)** — one recorded value, and its whole lifecycle.
+ *
+ * **There is no week, month, period or scope field here, and there must never be one.** A task carries
+ * across weeks and months and may be parked between them; if its readings reset at any boundary the
+ * history is worthless, which is the whole reason the feature exists — the sparkline of a workout that
+ * resets every Monday shows nothing (S-measure-5-2).
+ *
+ * `value` is the **absolute** value of the measure after this reading. A counter's `+3` is resolved to an
+ * absolute by the server before it is stored, which is what makes deletion correct with **one** rule for
+ * both kinds: deleting the latest falls back to the one before it, deleting a middle one changes nothing,
+ * deleting the only one returns `current` to `start` (R-measure-3).
+ *
+ * Append-only and individually deletable, and that is the whole of it: a reading is never edited in
+ * place, because correcting one is deleting it and recording another. No reset, no archive, no "clear
+ * history", and **no timeline entry in either direction** (R-measure-7).
+ */
+export const ReadingView = z.object({
+  id: Ulid,
+  taskId: Ulid,
+  value: z.number(),
+  at: Iso,
+});
+
+/**
  * A task, as it appears in a list.
  *
- * Weeks are ABSOLUTE Monday dates (D-1). Visibility is applied by the SERVER and never re-derived by the
- * client: an OPEN task is visible in every week >= its origin — it carries forward with no prompt
- * (R-task-7) — while a DONE task is visible only in the week it was completed (R-task-8), and an exited
- * task is visible in none (R-task-32). Visibility is a function of the task's OWN weeks and never of its
- * goal's period (R-task-42), which is what makes R-lens-12's carried band possible.
+ * ⚠ **A8 (R-task-52) — a task belongs to one PERIOD at one SCOPE, and the key's format is the
+ * discriminator.** `scope` is `Monthly` or `Weekly`, seeded from its goal's horizon at creation;
+ * `originPeriodKey` is `2026-09` or the Monday `2026-09-07` accordingly. Every visibility, carry and
+ * completion comparison in the product is made **within one scope**, against keys of one format. The week
+ * model is the Weekly scope's special case, not a parallel system.
  *
- * ⚠ **A2 (R-task-43) — `carryAge` is now SIGNED, and this is a silent wire break.** The type still
- * parses and the meaning changed underneath it. It is
- * `weeksBetween(originPeriodKey, min(viewedWeek, currentWeek))`, so work planned for a future week has a
- * NEGATIVE age: `<= 0` renders nothing, `= 1` the gray "since Mon 24 Aug", `>= 2` the red
- * "N weeks · since 10 Aug" chip — the only escalation in the product, which must never fire at a plan
- * (R-lens-11). Anything SUMMING these values, or re-parsing them as `nonnegative`, is now wrong.
+ * Visibility is applied by the SERVER and never re-derived by the client: an OPEN task is visible in every
+ * period >= its origin at its own scope — it carries forward with no prompt, no write and no job
+ * (R-task-53) — while a DONE task is visible only in the period it was completed in, and an exited task
+ * in none (R-task-32). Visibility is a function of the task's OWN period and never of its goal's
+ * (R-task-42), which is what makes both the carried band and a carried month task possible.
+ *
+ * ⚠ **A2 (R-task-43) / A8 (R-task-54) — `carryAge` is SIGNED and is counted in `carryUnit`.** It is
+ * `periodsBetween(scope, originPeriodKey, min(viewedPeriod, currentPeriod))`, so work planned for a future
+ * period has a NEGATIVE age: `<= 0` renders nothing, `= 1` the gray "since …", `>= 2` the red
+ * "N weeks · since …" / "N months · since …" chip — the only escalation in the product, which must never
+ * fire at a plan (R-lens-11). Anything SUMMING these values, or re-parsing them as `nonnegative`, is
+ * wrong; anything rendering the word "weeks" without reading `carryUnit` is now wrong too.
+ *
+ * ⚠ **A8 — a month task wears NO carry label of any kind inside a week** (R-task-54, S-lens-31-2): not
+ * the chip, not the gray line, not a muted variant. **The suppression is the CALL SITE's, not this
+ * field's** — `LensResponse.monthTasks` is where a month task appears in a week, and the band that
+ * renders it passes the suppression; the same task in the Monthly lens carries its chip normally, which
+ * is why the value on the wire is the honest month-scale age either way.
  */
 export const TaskView = z.object({
   id: Ulid,
   goalId: Ulid,
+  /** ⚠ **A8, new, required** (R-task-52). `Monthly` or `Weekly` — never any other horizon. */
+  scope: TaskScope,
   title: z.string(),
   cond: z.string(),
   description: z.string(),
   links: z.array(ExternalLinkView),
   status: TaskStatus,
   done: z.boolean(),
-  originPeriodKey: WeekStart,
-  donePeriodKey: WeekStart.nullable(),
+  /** ⚠ **A8** — widened from a Monday to a key at the task's own `scope`. */
+  originPeriodKey: PeriodKeyParam,
+  donePeriodKey: PeriodKeyParam.nullable(),
   doneAt: Iso.nullable(),
   /** R-task-32 / D-15 — the optional reason given on the Move-to-Backlog or Cancel confirm sheet. */
   exitReason: z.string().nullable(),
   exitedAt: Iso.nullable(),
-  /** ⚠ signed (R-task-43). See the doc block above. */
+  /** ⚠ signed (R-task-43), and counted in `carryUnit` (R-task-54). See the doc block above. */
   carryAge: z.int(),
+  /** ⚠ **A8, new, required** — `weeks` for a week task, `months` for a month task. Never mixed. */
+  carryUnit: CarryUnit,
   /**
-   * R-task-44/R-task-50 — whether a completion is legal for the week this view was built for
-   * (`originWeek <= week <= currentWeek`). The row renders no checkbox when it is false, and the server
-   * refuses one anyway; this is on the wire so the client does not re-derive a date rule.
+   * R-task-44 / R-task-50 / **R-task-55** — whether a completion is legal for the period this view was
+   * built for (`origin <= period <= currentPeriod`, **at the task's own scope**). The row renders no
+   * checkbox when it is false, and the server refuses one anyway; this is on the wire so the client does
+   * not re-derive a date rule.
+   *
+   * ⚠ **A8 — the NAME did not move and the MEANING did.** It is now the bound at the task's own scope,
+   * so a month task viewed in a week band answers about its MONTH. A client that assumed "this week" is
+   * reading a different sentence than the one being written.
    */
   completable: z.boolean(),
+  /** ⚠ **A8, new** — `null` on an ordinary checkbox, which is the vast majority (R-measure-1). */
+  measure: MeasureView.nullable(),
   createdAt: Iso,
   updatedAt: Iso,
   version: z.int().positive(),
 });
 
-/** A single task with its full activity log. Lists omit `events`; only the task page needs them. */
-export const TaskDetailView = TaskView.extend({ events: z.array(TaskEventView) });
+/**
+ * A single task with its full activity log, and — ⚠ **A8** — its readings.
+ *
+ * Lists omit both: a lens row needs `measure.current` and `measure.target`, which `TaskView` already
+ * carries, and never the history. `readings` is **oldest first**, which is sparkline order, and is
+ * bounded by `MAX_READINGS` (Q-26).
+ */
+export const TaskDetailView = TaskView.extend({
+  events: z.array(TaskEventView),
+  readings: z.array(ReadingView),
+});
 
 /**
  * R-backlog-1/2/3 — deferred future work under a Yearly/Quarterly/Monthly goal. ⚠ **A2 (R-backlog-26)** —
@@ -531,8 +716,19 @@ export const TaskDetailView = TaskView.extend({ events: z.array(TaskEventView) }
  * has no week, and a Weekly goal would give it one. No checkbox, no done-condition, no due date: this
  * shape is intentionally poorer than a task.
  *
- * `fromPeriodKey` is set only when the item arrived by Move-to-Backlog, and is the Monday of the week the
- * task was LIVE in — not "this week" (D-12).
+ * ⚠ **A8 (R-backlog-30) — and now, deliberately, no PERIOD either.** A backlog item is the only work
+ * object in this product with no period key, and a period key is exactly what makes something appear in a
+ * lens. That single absence is the whole enforceable difference between it and a **month task** on the
+ * same Monthly goal — the owner's *"backlog is maybe-someday; a month task is yes-this-month"* is the
+ * right thing to say to a person and the wrong thing to build on, because no rule can check a feeling.
+ * Backlog never appears in a week *because it has no week to appear in*; a month task always does
+ * *because its month contains that week*. Everything else — no checkbox, no ageing, manual order —
+ * follows (S-backlog-30-1).
+ *
+ * `fromPeriodKey` is set only when the item arrived by Move-to-Backlog, and is ⚠ **A8 (R-task-59)** the
+ * period the task was LIVE in **at its own scope**: the Monday of a week task's week (D-12, unchanged in
+ * value and meaning) or a month key for a month task, which renders `from Sep 2026` rather than
+ * `from week of …`. The format is the discriminator, exactly as it is on a task.
  */
 export const BacklogItemView = z.object({
   id: Ulid,
@@ -561,7 +757,7 @@ export const BacklogItemView = z.object({
   description: z.string(),
   links: z.array(ExternalLinkView),
   capturedAt: Iso,
-  fromPeriodKey: WeekStart.nullable(),
+  fromPeriodKey: PeriodKeyParam.nullable(),
   /**
    * ⚠ **A1, new (R-backlog-17)** — the item's manual position within its OWN goal's list.
    *
@@ -610,6 +806,11 @@ export type Theme = z.infer<typeof Theme>;
 export type TaskSource = z.infer<typeof TaskSource>;
 export type TaskStatus = z.infer<typeof TaskStatus>;
 export type TaskEventKind = z.infer<typeof TaskEventKind>;
+export type TaskScope = z.infer<typeof TaskScope>;
+export type CarryUnit = z.infer<typeof CarryUnit>;
+export type MeasureKind = z.infer<typeof MeasureKind>;
+export type MeasureView = z.infer<typeof MeasureView>;
+export type ReadingView = z.infer<typeof ReadingView>;
 export type BacklogStatus = z.infer<typeof BacklogStatus>;
 export type UserView = z.infer<typeof UserView>;
 export type PreferencesView = z.infer<typeof PreferencesView>;

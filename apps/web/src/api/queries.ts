@@ -807,6 +807,7 @@ export function useDeleteBacklogItem() {
  * (R-task-48) rather than sending the owner away — hence `quiet`, and hence no dead end.
  */
 export function useConvertBacklogItem() {
+  const { currentMonday } = useWeekClock();
   return useCommand<
     {
       id: string;
@@ -825,7 +826,7 @@ export function useConvertBacklogItem() {
         {
           ...(v.goalId ? { goalId: v.goalId } : {}),
           ...(v.newWeeklyGoal ? { newWeeklyGoal: v.newWeeklyGoal } : {}),
-          week: v.week ?? 0,
+          period: addWeeks(currentMonday, v.week ?? 0),
           ...(v.title ? { title: v.title } : {}),
           cond: v.cond ?? '',
           ...(v.version ? { version: v.version } : {}),

@@ -122,6 +122,14 @@ export async function seedTask(t: TestApp, userId: string, goalId: string, origi
     cond: '',
     description: '',
     status: 'open',
+    // ⚠ **A8 (R-task-52, R-measure-1)** — a WEEK task with no measure: what every task in the account was
+    // before A8, and what these fixtures are still about.
+    scope: 'Weekly',
+    measureKind: null,
+    measureStart: null,
+    measureCurrent: null,
+    measureTarget: null,
+    measureUnit: null,
     originPeriodKey,
     donePeriodKey: null,
     doneAt: null,

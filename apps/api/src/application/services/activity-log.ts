@@ -1,21 +1,25 @@
 import type { TaskEventView } from '@goal-cascade/shared';
 import { inject, injectable } from 'tsyringe';
 import type { Task, TaskEvent } from '../../domain/entities';
-import { TASK_EVENT_GLYPHS, type TaskEventKind, type TaskSource } from '../../domain/enums';
-import { addWeeks, weeksBetween } from '@goal-cascade/shared';
+import { TASK_EVENT_GLYPHS, type MeasureKind, type TaskEventKind, type TaskScope, type TaskSource } from '../../domain/enums';
+import { firstDayOf, labelOf, periodsBetween, stepPeriod } from '@goal-cascade/shared';
 import type { RequestContext } from '../context';
 import { IIdGenerator, ITaskEventRepo, type GuardedWrite } from '../ports';
 import { GuardedBatch } from './guarded-batch';
+import { currentPeriodOf } from './views';
 
 /**
- * How many weeks of `Carried to week of …` a single read may backfill.
+ * How many periods of `Carried to …` a single read may backfill.
  *
  * ⚠ **A2 (R-rm-3)** — this used to be `WEEK_HISTORY_WEEKS`, which is retired as a BOUND. It is not a
  * product rule and must never be read as one: it is the fan-out limit on one lazy write batch, so a read
- * of a task that has carried for three years does not emit 150 statements. Every week a read actually
- * visits still gets its line, because the window slides forward with the week being read.
+ * of a task that has carried for three years does not emit 150 statements. Every period a read actually
+ * visits still gets its line, because the window slides forward with the period being read.
+ *
+ * ⚠ **A8** — it counts PERIODS, at the task's own scope, so eight of them is eight weeks for a week task
+ * and eight months for a month task. The bound is on the batch, and a batch is a batch at either scale.
  */
-const CARRY_BACKFILL_WEEKS = 8;
+const CARRY_BACKFILL_PERIODS = 8;
 
 /**
  * R-task-30/31 — the activity timeline: the ONE place a task's history is written.
@@ -57,7 +61,7 @@ export class ActivityLog {
       text,
       glyph: TASK_EVENT_GLYPHS[kind],
       detail: detail === null ? null : JSON.stringify(detail),
-      weekStart: null,
+      periodKey: null,
       at: ctx.now,
     };
     return { event, write: { label: `taskEvent.${kind}`, stmt: this.events.insertStmt(event) } };
@@ -94,26 +98,46 @@ export class ActivityLog {
    * Failures are swallowed: this is a cosmetic log line produced during a READ, and a task list must not
    * 500 because a log entry raced with another device that had just written it.
    */
-  async ensureCarried(ctx: RequestContext, tasks: readonly Task[], viewedWeekStart: string): Promise<void> {
+  async ensureCarried(ctx: RequestContext, scope: TaskScope, tasks: readonly Task[], viewedPeriodKey: string): Promise<void> {
     const writes: GuardedWrite[] = [];
-    // R-task-38 — never log a carry into a week that has not arrived, however far ahead a lens looks.
-    const upTo = viewedWeekStart < ctx.currentWeekStart ? viewedWeekStart : ctx.currentWeekStart;
+    /**
+     * ⚠ **A8 (R-task-53, R-task-58) — the caller names the SCOPE and passes a period IN it.**
+     *
+     * It used to take a week and convert. That hid a real distinction: the period a month task is viewed
+     * in is the month the WEEK belongs to when you are reading a week (R-lens-31's band), and the month
+     * you asked for when you are reading the Monthly lens. One conversion inside here could only ever
+     * answer one of those, and it answered the wrong one for the lens that a month task actually lives
+     * in. The clamp, the backfill window, the `>= 1` floor and the idempotent insert are otherwise
+     * identical at both scales — R-task-38's "a period that has not arrived has not been crossed" is one
+     * comparison, not two.
+     */
+    // ⚠ R-goal-34 — the CURRENT period is the one containing TODAY, not the one containing the current
+    // week. On 2 Sep those are Sep and Aug, and using the second would stop the September line ever
+    // being produced (`currentPeriodOf`'s doc block).
+    const current = currentPeriodOf(ctx, scope);
+    // R-task-38 — never log a carry into a period that has not arrived, however far ahead a lens looks.
+    const upTo = viewedPeriodKey < current ? viewedPeriodKey : current;
     for (const task of tasks) {
-      // R-task-7/12 — only an OPEN task carries, and only into weeks strictly after its origin.
+      // R-task-7/12 — only an OPEN task carries, and only into periods strictly after its origin.
       if (task.status !== 'open') continue;
-      const age = weeksBetween(task.originPeriodKey, upTo);
-      for (let n = Math.max(1, age - (CARRY_BACKFILL_WEEKS - 1)); n <= age; n++) {
-        const weekStart = addWeeks(task.originPeriodKey, n);
-        const event: TaskEvent & { weekStart: string } = {
+      // A task of another scope is not this read's business; its own lens produces its own lines.
+      if (task.scope !== scope) continue;
+      const age = periodsBetween(scope, task.originPeriodKey, upTo);
+      for (let n = Math.max(1, age - (CARRY_BACKFILL_PERIODS - 1)); n <= age; n++) {
+        const periodKey = stepPeriod(scope, task.originPeriodKey, n);
+        const event: TaskEvent & { periodKey: string } = {
           id: this.ids.ulid(),
           userId: ctx.userId,
           taskId: task.id,
           kind: 'carried',
-          text: carriedText(weekStart),
+          text: carriedText(scope, periodKey),
           glyph: TASK_EVENT_GLYPHS.carried,
-          detail: JSON.stringify({ weekStart }),
-          weekStart,
-          at: `${weekStart}T00:00:00.000Z`,
+          detail: JSON.stringify({ periodKey }),
+          periodKey,
+          // `at` is the FIRST DAY of the period carried into, not "now": the entry describes something
+          // that happened at the start of that period, and stamping today's clock onto it would push a
+          // carry from three periods ago above a `Completed` from last one in a newest-first timeline.
+          at: `${firstDayOf(scope, periodKey)}T00:00:00.000Z`,
         };
         writes.push({
           label: 'taskEvent.carried',
@@ -186,7 +210,44 @@ const CREATED_TEXT: Record<TaskSource, string> = {
 };
 
 export const createdText = (source: TaskSource): string => CREATED_TEXT[source];
-export const carriedText = (weekStart: string): string => `Carried to week of ${weekLabel(weekStart)}`;
+
+/**
+ * R-task-29 / **R-task-58** — `Carried to week of Mon 24 Aug` / `Carried to Sep 2026`.
+ *
+ * One kind (`carried`) and two renderings, because it is the same event at two scales. A `carried_month`
+ * event kind would make every timeline reader branch on scope for one word of copy.
+ */
+export const carriedText = (scope: TaskScope, periodKey: string): string =>
+  scope === 'Monthly' ? `Carried to ${labelOf('Monthly', periodKey)}` : `Carried to week of ${weekLabel(periodKey)}`;
+
+/**
+ * ⚠ **A8 (R-task-56, R-task-58)** — Park's two directions, each named for where the task LANDED.
+ *
+ * `Parked in the week of Mon 14 Sep` and `Moved to Sep 2026`. Neither says "deferred", "snoozed",
+ * "rescheduled" or "moved to another week": Park is not a fourth exit (R-task-13), and a timeline that
+ * called it one would teach the owner a concept the product does not have (S-task-56-4).
+ */
+export const parkedText = (weekStart: string): string => `Parked in the week of ${weekLabel(weekStart)}`;
+export const unparkedText = (monthKey: string): string => `Moved to ${labelOf('Monthly', monthKey)}`;
+
+/**
+ * ⚠ **A8 (R-task-58, R-measure-7)** — the measure's SHAPE is timeline material and its VALUES are not.
+ *
+ * `Measure added: counter, 0 → 15 leads` names what the task became. `<target>` renders `no target` when
+ * it is null, because the AMRAP case is a real measure and the line must say so rather than trailing off.
+ *
+ * **No reading produces an event, on record or on delete** (R-measure-7). A counter bumped daily for a
+ * quarter would put ninety rows into a log whose purpose is to answer "what happened to this task", and
+ * those ninety rows are already on the page, above it, in the right shape. A deleted reading leaves no
+ * trace anywhere, deliberately: an audit trail of a typo defeats the reason deletion exists.
+ */
+const measureTargetLabel = (target: number | null): string => (target === null ? 'no target' : String(target));
+export const measureAddedText = (kind: MeasureKind, start: number, target: number | null, unit: string): string =>
+  `Measure added: ${kind}, ${start} → ${measureTargetLabel(target)}${unit ? ` ${unit}` : ''}`;
+/** R-task-27's truncation applies here as everywhere: the log is a glanceable history, not a diff. */
+export const measureEditedText = (field: string, from: string, to: string): string =>
+  `Measure edited: ${field} "${trunc(from)}" → "${trunc(to)}"`;
+export const MEASURE_REMOVED_TEXT = 'Measure removed';
 export const renamedText = (from: string, to: string): string => `Renamed: "${trunc(from)}" → "${trunc(to)}"`;
 export const condEditedText = (from: string, to: string): string =>
   `Done-condition edited: "${trunc(from)}" → "${trunc(to)}"`;

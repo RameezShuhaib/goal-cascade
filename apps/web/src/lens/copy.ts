@@ -245,8 +245,8 @@ export const taskDestinationNote = (week: string, month: string): string => `Lan
 /**
  * The rule, wherever it must be said. Never "leaves hold tasks" (R-goal-37).
  *
- * `lib/errorCopy.ts` is the one place it *is* said — the `NOT_A_WEEKLY_GOAL` refusal — and it imports
+ * `lib/errorCopy.ts` is the one place it *is* said — the `NOT_A_TASK_GOAL` refusal — and it imports
  * this rather than repeating the literal, which is what it used to do. A constant that exists to hold a
  * sentence, sitting beside a hardcoded copy of that sentence, is a rule with two definitions.
  */
-export const TASKS_LIVE_ON_WEEKLY_GOALS = 'Tasks live on weekly goals.';
+export const TASKS_LIVE_ON_TASK_GOALS = 'Tasks live on monthly and weekly goals.';
