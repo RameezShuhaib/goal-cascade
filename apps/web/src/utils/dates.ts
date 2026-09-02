@@ -1,3 +1,4 @@
+import { DAY_NAMES, MONTH_NAMES, dateLabel, dayLabel } from '@goal-cascade/shared';
 import { nowMs } from '../lib/serverClock';
 
 /**
@@ -17,10 +18,13 @@ import { nowMs } from '../lib/serverClock';
  * import the *only* one.**
  */
 
-/** Parse a `YYYY-MM-DD` as a UTC instant, so formatting never shifts it across a timezone boundary. */
-const dateOnly = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
 
-const fmt = (d: Date, opts: Intl.DateTimeFormatOptions): string => d.toLocaleDateString('en-GB', { timeZone: 'UTC', ...opts });
+/*
+ * ⚠ **A10** — the `en-GB` Intl formatter is GONE from this file. It rendered September as `Sept` under
+ * modern ICU while `@goal-cascade/shared`'s MONTHS said `Sep`, so the lens header and the task sheet
+ * spelled one month two ways, one tap apart — and which you got depended on the viewer's browser. Month
+ * and weekday names now come from shared, the same array the server labels periods with.
+ */
 
 /*
  * ⚠ **R-lens-30** — `addWeeks` is DELETED. It was the sixth of the six duplicated calendar functions this
@@ -44,12 +48,12 @@ const fmt = (d: Date, opts: Intl.DateTimeFormatOptions): string => d.toLocaleDat
  * shape by construction.
  */
 export function weekLabel(weekStart: string): string {
-  return fmt(dateOnly(weekStart), { weekday: 'short', day: 'numeric', month: 'short' });
+  return dayLabel(weekStart);
 }
 
 /** `24 Aug` — the short form used inside the red carry chip, and the date half of a period's week label. */
 export function shortDate(weekStart: string): string {
-  return fmt(dateOnly(weekStart), { day: 'numeric', month: 'short' });
+  return dateLabel(weekStart);
 }
 
 /**
@@ -68,7 +72,7 @@ export function weekOfLabel(weekStart: string): string {
 /** `Fri 28 Aug` — an instant (`doneAt`, `capturedAt`), in the viewer's own zone. */
 export function instantLabel(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  return Number.isNaN(d.getTime()) ? '' : `${DAY_NAMES[(d.getUTCDay() + 6) % 7]} ${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]}`;
 }
 
 /**
@@ -85,7 +89,7 @@ export function capturedLabel(iso: string): string {
   const today = new Date(nowMs());
   const sameDay =
     d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
-  return sameDay ? 'Today' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return sameDay ? 'Today' : `${d.getDate()} ${MONTH_NAMES[d.getMonth()]}`;
 }
 
 /*

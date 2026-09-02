@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
-import { http, HttpResponse } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import { AppShell } from '../../src/AppShell';
 import { renderApp } from '../render';
 import { apiError, bodyOf, lastRequest, requests, server } from '../msw/handlers';
@@ -47,6 +47,31 @@ describe('Creating a goal (R-nav-32)', () => {
    * clears a parent that is no longer legal with a stated reason.** All four steps, in one test, because
    * they are one interaction.
    */
+  it('R-nav-32 (A9): the default parent waits for EVERY horizon read, not whichever lands first', async () => {
+    /*
+     * Found in a browser, not by this suite. `useParentOptions` issues ONE query per legal horizon and
+     * they settle independently; the default-parent effect ran on the first non-empty option list and
+     * then could never re-run, so a new Monthly goal in Sep 2026 defaulted to the YEARLY goal for 2026
+     * whenever Yearly beat Quarterly. Every mock resolving in the same tick is exactly what hid it, so
+     * this test makes Quarterly land LAST — the ordering that actually happened.
+     */
+    server.use(
+      http.get('/api/goals', async ({ request }) => {
+        const lens = new URL(request.url).searchParams.get('lens') ?? 'Monthly';
+        if (lens === 'Quarterly') await delay(60);
+        return HttpResponse.json(F.lensFor(lens as 'Quarterly'));
+      }),
+    );
+
+    const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
+    const sheet = await openCreate(user);
+
+    // The Quarterly goal, not the Yearly one that resolved 60ms earlier.
+    await waitFor(() => expect(within(sheet).getByRole('button', { name: /^Choose a goal: Rebuild the gym habit/ })).toBeInTheDocument(), {
+      timeout: 3000,
+    });
+  });
+
   it('R-nav-32: changing the horizon re-clamps the period and clears an illegal parent, out loud', async () => {
     const { user } = renderApp(<AppShell />, { route: '/month/2026-08' });
     const sheet = await openCreate(user);

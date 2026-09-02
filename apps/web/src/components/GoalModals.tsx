@@ -143,7 +143,18 @@ export function GoalFormSheet({
    * rather than sitting beside it. Still an effect rather than a fallback, because the row it picks must
    * render as SELECTED and be announced (R-lens-13), not merely be what a `??` chain would have used.
    */
-  const defaultParent = useMemo(() => (needsParent ? nearestAncestor(picker.options) : null), [needsParent, picker.options]);
+  /*
+   * ⚠ **A9 fix** — gated on `!picker.isPending`, because `useParentOptions` reads **one query per legal
+   * horizon** and they settle independently. Ungated, this effect fired on whichever horizon resolved
+   * FIRST and then never re-ran (`chosenParent === null` stops being true), so a new Monthly goal in
+   * `Sep 2026` defaulted to the Yearly goal for 2026 whenever the Yearly read beat the Quarterly one —
+   * observed in the browser, invisible to a test whose mocks all resolve in the same tick.
+   * `nearestAncestor` was never wrong; it was being asked too early.
+   */
+  const defaultParent = useMemo(
+    () => (needsParent && !picker.isPending ? nearestAncestor(picker.options) : null),
+    [needsParent, picker.isPending, picker.options],
+  );
   useEffect(() => {
     if (defaultParent && chosenParent === null) setChosenParent(defaultParent.id);
   }, [defaultParent, chosenParent]);

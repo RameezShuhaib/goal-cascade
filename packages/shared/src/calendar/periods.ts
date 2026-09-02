@@ -140,11 +140,29 @@ export function weekRangeOf(horizon: Horizon, key: string): string {
   return `${dayLabel(from, spansYears)} – ${dayLabel(to, spansYears)}`;
 }
 
-/** `Mon 7 Sep`, or `Mon 7 Sep 2026` — the client's `weekLabel` shape, byte for byte (`utils/dates.ts`). */
-function dayLabel(date: string, withYear: boolean): string {
+/**
+ * `Mon 7 Sep`, or `Mon 7 Sep 2026`.
+ *
+ * ⚠ **A10** — this used to say it was the client's `weekLabel` shape "byte for byte" while the client
+ * built its own with `toLocaleDateString('en-GB', { month: 'short' })`. Modern ICU renders September as
+ * **`Sept`** under `en-GB`, so the lens header read `Mon 7 Sep – Sun 4 Oct` from MONTHS while the task
+ * sheet one tap away read `7 Sept` from Intl — one month, two spellings, and varying by the viewer's
+ * browser and ICU version. Exported so the claim is true by construction rather than by comment.
+ */
+export function dayLabel(date: string, withYear = false): string {
   const { year, month, day } = ymd(date);
   return `${DAYS[dayIndexOf(date)]} ${day} ${MONTHS[month - 1]}${withYear ? ` ${year}` : ''}`;
 }
+
+/** `7 Sep` — `dayLabel` without the weekday, for the carry chip and the `Week of …` label. */
+export function dateLabel(date: string): string {
+  const { month, day } = ymd(date);
+  return `${day} ${MONTHS[month - 1]}`;
+}
+
+/** The month vocabulary itself, so no consumer reaches for `Intl` and gets a different September. */
+export const MONTH_NAMES = MONTHS;
+export const DAY_NAMES = DAYS;
 
 /**
  * Monday = 0 … Sunday = 6, **derived from `weeks.ts`'s own Monday** rather than from a second
