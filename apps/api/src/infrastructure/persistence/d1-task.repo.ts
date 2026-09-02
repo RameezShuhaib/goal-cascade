@@ -53,8 +53,8 @@ export class D1TaskRepo implements ITaskRepo {
         and(
           eq(tasks.userId, userId),
           or(
-            and(eq(tasks.status, 'open'), lte(tasks.originWeekStart, weekStart)),
-            and(eq(tasks.status, 'done'), eq(tasks.doneWeekStart, weekStart)),
+            and(eq(tasks.status, 'open'), lte(tasks.originPeriodKey, weekStart)),
+            and(eq(tasks.status, 'done'), eq(tasks.donePeriodKey, weekStart)),
           ),
         ),
       )
@@ -71,7 +71,7 @@ export class D1TaskRepo implements ITaskRepo {
         .select()
         .from(tasks)
         .where(and(eq(tasks.userId, userId), eq(tasks.status, 'open'), inArray(tasks.goalId, part)))
-        .orderBy(asc(tasks.originWeekStart), asc(tasks.id))
+        .orderBy(asc(tasks.originPeriodKey), asc(tasks.id))
         .all(),
     );
   }
@@ -90,7 +90,7 @@ export class D1TaskRepo implements ITaskRepo {
     const rows = await this.db
       .select({ goalId: tasks.goalId, n: sql<number>`count(*)` })
       .from(tasks)
-      .where(and(eq(tasks.userId, userId), eq(tasks.status, 'open'), lte(tasks.originWeekStart, weekStart)))
+      .where(and(eq(tasks.userId, userId), eq(tasks.status, 'open'), lte(tasks.originPeriodKey, weekStart)))
       .groupBy(tasks.goalId)
       .all();
     return rows.map((r) => ({ goalId: r.goalId, open: Number(r.n) }));
@@ -108,9 +108,9 @@ export class D1TaskRepo implements ITaskRepo {
     beforeWeekStart: string,
   ): Promise<{ goalId: string; open: number; oldestOrigin: string }[]> {
     const rows = await this.db
-      .select({ goalId: tasks.goalId, n: sql<number>`count(*)`, oldest: sql<string>`min(${tasks.originWeekStart})` })
+      .select({ goalId: tasks.goalId, n: sql<number>`count(*)`, oldest: sql<string>`min(${tasks.originPeriodKey})` })
       .from(tasks)
-      .where(and(eq(tasks.userId, userId), eq(tasks.status, 'open'), sql`${tasks.originWeekStart} < ${beforeWeekStart}`))
+      .where(and(eq(tasks.userId, userId), eq(tasks.status, 'open'), sql`${tasks.originPeriodKey} < ${beforeWeekStart}`))
       .groupBy(tasks.goalId)
       .all();
     return rows.map((r) => ({ goalId: r.goalId, open: Number(r.n), oldestOrigin: r.oldest }));
@@ -124,7 +124,7 @@ export class D1TaskRepo implements ITaskRepo {
     const row = await this.db
       .select({ id: tasks.id })
       .from(tasks)
-      .where(and(eq(tasks.userId, userId), eq(tasks.status, 'open'), gt(tasks.originWeekStart, weekStart)))
+      .where(and(eq(tasks.userId, userId), eq(tasks.status, 'open'), gt(tasks.originPeriodKey, weekStart)))
       .limit(1)
       .get();
     return row !== undefined;

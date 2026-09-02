@@ -1,4 +1,4 @@
-import { LongText, MAX_LINKS, OneLiner, Reason, TaskSource, Title, Ulid, Url, WeekOffset } from '@goal-cascade/shared';
+import { LongText, MAX_LINKS, OneLiner, Reason, TaskSource, Title, Ulid, Url, WeekOffset, WeekStart } from '@goal-cascade/shared';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { GoalService, TaskService } from '../../../application/services';
@@ -48,7 +48,7 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
             : state === 'done'
               ? t.status === 'done'
               : state === 'carrying'
-                ? t.status === 'open' && t.carryWeeks >= 1
+                ? t.status === 'open' && t.carryAge >= 1
                 : true,
         );
         const paths = new Map<string, string | undefined>();
@@ -160,13 +160,18 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
       description:
         "Tick a task off. You may complete into any week from the task's origin week up to and including THIS one, past weeks included — past weeks stay fully editable for work. The task then appears only in the week it was completed in. A week earlier than the task's origin_week_start is refused, and so is ANY future week: you cannot finish work in a week that has not happened. A task whose weekly goal is in a future week therefore cannot be completed at all until that week arrives — `completable` on the task says so.",
       inputSchema: z
-        .object({ task_id: Ulid, week_offset: WeekOffset.max(0).default(0).describe('0 or negative. The future is refused.') })
+        .object({
+          task_id: Ulid,
+          period: WeekStart.optional().describe(
+            'The week you are standing in, as its Monday (2026-09-07). Omit for the current week. A future one is refused.',
+          ),
+        })
         .strict(),
     },
-    async ({ task_id, week_offset }) =>
+    async ({ task_id, period }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
-        const res = await dc.resolve(TaskService).complete(ctx, task_id, { week: week_offset });
+        const res = await dc.resolve(TaskService).complete(ctx, task_id, { period: period ?? ctx.currentWeekStart });
         return ok({ task: taskOut(res.task, await titleOf(res.task.goalId)), server_now: res.serverNow });
       }),
   );
@@ -195,14 +200,20 @@ export function registerTaskTools(server: McpServer, deps: McpDeps): void {
       title: 'Park a task above its week (exit 2 of 3)',
       description:
         "Take a task out of the week and park it in the backlog of the nearest goal ABOVE its week — normally the monthly parent — keeping the description and links and noting which week it came from. It does NOT go on its own weekly goal: a weekly goal is a week, and the point of this exit is to leave the week. A weekly goal hanging directly off a life goal has nowhere to put it and the exit is refused (LIFE_GOAL_NO_BACKLOG); complete or cancel remain available. Only OPEN tasks can be moved, future-dated ones included. The reason is OPTIONAL — this product is deliberately guilt-free; pass only what the user actually said.",
-      inputSchema: z.object({ task_id: Ulid, week_offset: WeekOffsetArg, reason: Reason.optional() }).strict(),
+      inputSchema: z
+        .object({
+          task_id: Ulid,
+          period: WeekStart.optional().describe('The week you are standing in, as its Monday. Omit for the current week.'),
+          reason: Reason.optional(),
+        })
+        .strict(),
     },
-    async ({ task_id, week_offset, reason }) =>
+    async ({ task_id, period, reason }) =>
       guard(async () => {
         stampIdempotencyKey(deps);
         const res = await dc
           .resolve(TaskService)
-          .moveToBacklog(ctx, task_id, { week: week_offset, ...(reason !== undefined ? { reason } : {}) });
+          .moveToBacklog(ctx, task_id, { period: period ?? ctx.currentWeekStart, ...(reason !== undefined ? { reason } : {}) });
         return ok({
           task: taskOut(res.task, await titleOf(res.task.goalId)),
           item: res.item,

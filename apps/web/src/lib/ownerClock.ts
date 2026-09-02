@@ -151,7 +151,7 @@ export function useOwnerToday(): string {
 /**
  * **What the rollover invalidates, and why each one.**
  *
- * `BootstrapResponse`'s own doc block already states the caveat — *"`week.offset` and `carryWeeks` are
+ * `BootstrapResponse`'s own doc block already states the caveat — *"`week.offset` and `carryAge` are
  * projections against `serverNow`, and a client holding a stale payload must refetch rather than re-derive
  * them."* Midnight is the moment that sentence comes due.
  *
@@ -163,8 +163,8 @@ export function useOwnerToday(): string {
  */
 export function invalidateForDayChange(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: keys.goalsAll }); // isPast / hasWork / hasForwardContent per period
-  void qc.invalidateQueries({ queryKey: ['bootstrap'] }); // week.offset and carryWeeks are projections
-  void qc.invalidateQueries({ queryKey: keys.tasksAll }); // carryWeeks
+  void qc.invalidateQueries({ queryKey: ['bootstrap'] }); // week.offset and carryAge are projections
+  void qc.invalidateQueries({ queryKey: keys.tasksAll }); // carryAge
 }
 
 /**

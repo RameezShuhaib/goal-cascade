@@ -14,7 +14,7 @@ import type {
   TaskView,
   TasksResponse,
 } from '@goal-cascade/shared';
-import { isPastPeriod } from '@goal-cascade/shared';
+import { addWeeks, isPastPeriod } from '@goal-cascade/shared';
 import { useApi } from '../context/ApiContext';
 import { useUI } from '../context/UIContext';
 import { newIdempotencyKey, type ApiClient } from './http';
@@ -406,7 +406,7 @@ export function useCommand<TVars, TData>(opts: CommandOptions<TVars, TData>): Co
 // ---- cache patch helpers ---------------------------------------------------
 //
 // Each one writes the server's fresh view into every cached shape that carries it. They are deliberately
-// dumb: replace the row, do not recompute anything derived from it. `carryWeeks`, `completable`,
+// dumb: replace the row, do not recompute anything derived from it. `carryAge`, `completable`,
 // `lifeRootId`, `plannedAgeWeeks`, `weeklyBreakdown` and `backlogCount` are all the SERVER's, computed for
 // the period the read model was built for, and are only correct in a payload the server built — which is
 // why every patch is followed by an invalidation rather than trusted as final.
@@ -659,8 +659,9 @@ export function usePatchTask() {
  * completion belongs to the week it was made in (R-task-8) — not to "now".
  */
 export function useCompleteTask() {
+  const { currentMonday } = useWeekClock();
   return useCommand<{ id: string; week?: number; version?: number }, Awaited<ReturnType<ApiClient['completeTask']>>>({
-    run: (c, v, k) => c.completeTask(v.id, { week: v.week ?? 0, ...(v.version ? { version: v.version } : {}) }, k),
+    run: (c, v, k) => c.completeTask(v.id, { period: addWeeks(currentMonday, v.week ?? 0), ...(v.version ? { version: v.version } : {}) }, k),
     onSuccess: (d, _v, qc) => patchTask(qc, d.task),
     invalidate: WEEK_KEYS,
   });
@@ -677,11 +678,12 @@ export function useUncheckTask() {
 
 /** Exit 2 of 3 (R-task-15) — the response carries both the exited task and the item it became. */
 export function useMoveTaskToBacklog() {
+  const { currentMonday } = useWeekClock();
   return useCommand<{ id: string; week?: number; reason?: string; version?: number }, Awaited<ReturnType<ApiClient['moveTaskToBacklog']>>>({
     run: (c, v, k) =>
       c.moveTaskToBacklog(
         v.id,
-        { week: v.week ?? 0, ...(v.reason ? { reason: v.reason } : {}), ...(v.version ? { version: v.version } : {}) },
+        { period: addWeeks(currentMonday, v.week ?? 0), ...(v.reason ? { reason: v.reason } : {}), ...(v.version ? { version: v.version } : {}) },
         k,
       ),
     onSuccess: (d, _v, qc) => {

@@ -487,9 +487,9 @@ export const TaskEventView = z.object({
  * task is visible in none (R-task-32). Visibility is a function of the task's OWN weeks and never of its
  * goal's period (R-task-42), which is what makes R-lens-12's carried band possible.
  *
- * ⚠ **A2 (R-task-43) — `carryWeeks` is now SIGNED, and this is a silent wire break.** The type still
+ * ⚠ **A2 (R-task-43) — `carryAge` is now SIGNED, and this is a silent wire break.** The type still
  * parses and the meaning changed underneath it. It is
- * `weeksBetween(originWeekStart, min(viewedWeek, currentWeek))`, so work planned for a future week has a
+ * `weeksBetween(originPeriodKey, min(viewedWeek, currentWeek))`, so work planned for a future week has a
  * NEGATIVE age: `<= 0` renders nothing, `= 1` the gray "since Mon 24 Aug", `>= 2` the red
  * "N weeks · since 10 Aug" chip — the only escalation in the product, which must never fire at a plan
  * (R-lens-11). Anything SUMMING these values, or re-parsing them as `nonnegative`, is now wrong.
@@ -503,14 +503,14 @@ export const TaskView = z.object({
   links: z.array(ExternalLinkView),
   status: TaskStatus,
   done: z.boolean(),
-  originWeekStart: WeekStart,
-  doneWeekStart: WeekStart.nullable(),
+  originPeriodKey: WeekStart,
+  donePeriodKey: WeekStart.nullable(),
   doneAt: Iso.nullable(),
   /** R-task-32 / D-15 — the optional reason given on the Move-to-Backlog or Cancel confirm sheet. */
   exitReason: z.string().nullable(),
   exitedAt: Iso.nullable(),
   /** ⚠ signed (R-task-43). See the doc block above. */
-  carryWeeks: z.int(),
+  carryAge: z.int(),
   /**
    * R-task-44/R-task-50 — whether a completion is legal for the week this view was built for
    * (`originWeek <= week <= currentWeek`). The row renders no checkbox when it is false, and the server
@@ -531,7 +531,7 @@ export const TaskDetailView = TaskView.extend({ events: z.array(TaskEventView) }
  * has no week, and a Weekly goal would give it one. No checkbox, no done-condition, no due date: this
  * shape is intentionally poorer than a task.
  *
- * `fromWeekStart` is set only when the item arrived by Move-to-Backlog, and is the Monday of the week the
+ * `fromPeriodKey` is set only when the item arrived by Move-to-Backlog, and is the Monday of the week the
  * task was LIVE in — not "this week" (D-12).
  */
 export const BacklogItemView = z.object({
@@ -561,7 +561,7 @@ export const BacklogItemView = z.object({
   description: z.string(),
   links: z.array(ExternalLinkView),
   capturedAt: Iso,
-  fromWeekStart: WeekStart.nullable(),
+  fromPeriodKey: WeekStart.nullable(),
   /**
    * ⚠ **A1, new (R-backlog-17)** — the item's manual position within its OWN goal's list.
    *

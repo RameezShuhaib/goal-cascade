@@ -123,12 +123,21 @@ describe('scalars normalise in the schema, not in handlers', () => {
     expect(WeekOffsetParam.safeParse('soon').success).toBe(false);
   });
 
-  it('S-rm-3-1 / R-task-44: CompleteTaskRequest.week carries its OWN future guard', () => {
-    // THE silent break of this amendment. You cannot finish work in a week that has not happened, and
-    // that guard used to come free from `WeekOffset`'s `.max(0)`.
-    expect(CompleteTaskRequest.parse({}).week).toBe(0);
-    expect(CompleteTaskRequest.parse({ week: -3 }).week).toBe(-3);
-    expect(CompleteTaskRequest.safeParse({ week: 1 }).success).toBe(false);
+  /**
+   * ⚠ **A8 (R-task-55) — rewritten, not deleted.** A2's version of this test asserted that
+   * `CompleteTaskRequest.week` carried its own `.max(0)`, because that guard used to come free from
+   * `WeekOffset`. A8 removes the offset entirely: an offset cannot express *"the period I am standing
+   * in"* once a task may be scoped to a month (S-task-55-2), so the request names a canonical period and
+   * the future bound moves to the service, where the scope is known. The property being protected is
+   * unchanged — you cannot finish work in a period that has not happened — and it is asserted at its new
+   * home in `apps/api/tests/tasks/*`.
+   */
+  it('S-task-55-2 / R-task-55: CompleteTaskRequest names an explicit period, never an offset', () => {
+    expect(CompleteTaskRequest.parse({ period: '2026-09-07' }).period).toBe('2026-09-07');
+    // No default and no offset: the client must say which period it is standing in.
+    expect(CompleteTaskRequest.safeParse({}).success).toBe(false);
+    expect(CompleteTaskRequest.safeParse({ week: 0 }).success).toBe(false);
+    expect(CompleteTaskRequest.safeParse({ week_offset: 0 }).success).toBe(false);
   });
 
   it('S-rm-3-1: no forward-week bound constant survives anywhere in the contract', () => {
@@ -167,11 +176,11 @@ describe('request schemas are strict', () => {
   });
 
   it('S-task-40-3: a task create carries NO week key of any kind', () => {
-    // `originWeekStart` is seeded once from the Weekly parent's `periodKey` and is immutable thereafter
+    // `originPeriodKey` is seeded once from the Weekly parent's `periodKey` and is immutable thereafter
     // (R-task-40). There is no target-week parameter that could disagree with the parent, so `.strict()`
     // is the whole guard: every spelling of "week" is an unknown key.
     const base = { goalId: '01J9ZQ8V2M7K3PQRSTVWXY0123', title: 'Run' };
-    for (const key of ['week', 'weekOffset', 'originWeek', 'originWeekStart']) {
+    for (const key of ['week', 'weekOffset', 'originWeek', 'originPeriodKey']) {
       expect(CreateTaskRequest.safeParse({ ...base, [key]: 0 }).success, key).toBe(false);
     }
   });

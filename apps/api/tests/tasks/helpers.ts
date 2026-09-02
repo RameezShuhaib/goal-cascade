@@ -3,7 +3,7 @@ import { IGoalRepo } from '../../src/application/ports';
 import { GuardedBatch } from '../../src/application/services';
 import type { Goal } from '../../src/domain/entities';
 import type { Horizon } from '../../src/domain/enums';
-import { labelOf } from '@goal-cascade/shared';
+import { addWeeks, labelOf, weekStartOfDate } from '@goal-cascade/shared';
 import { ids, type TestApp } from '../helpers/app';
 
 /**
@@ -69,6 +69,17 @@ export function makeWeek(t: TestApp, userId: string, parentId: string, weekStart
 }
 
 export const key = () => crypto.randomUUID().replace(/-/g, '');
+
+/**
+ * ⚠ **A8 (R-task-55)** — the Monday of the week the TEST CLOCK is in, and `n` weeks either side of it.
+ *
+ * `complete` and `move-to-backlog` no longer take an offset: the client names the canonical period it is
+ * standing in, because an offset cannot say which scope it means once a task may be scoped to a month
+ * (S-task-55-2). These two turn the offsets the old tests spoke in back into the keys the wire now wants,
+ * so the scenarios keep asserting what they always asserted.
+ */
+export const thisWeek = (t: TestApp): string => weekStartOfDate(t.clock.nowIso().slice(0, 10));
+export const weekAt = (t: TestApp, offset: number): string => addWeeks(thisWeek(t), offset);
 
 export async function createTask(
   t: TestApp,

@@ -62,13 +62,13 @@ export function TaskPage() {
     if (task) headingRef.current?.focus();
   }, [task?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const backTo = from ?? lensPath('Weekly', task?.originWeekStart);
+  const backTo = from ?? lensPath('Weekly', task?.originPeriodKey);
   /**
    * ⚠ **R-nav-30 P3** — this is a **client-side** fact whenever the page was reached from a lens: `fromWeek`
    * comes out of `location.state.from`, so the control names where you came from before any read starts.
    * Only the cold-by-URL case has to wait, and it waits as the word `Back`, which is true rather than grey.
    */
-  const backLabel = fromWeek ? weekOfLabel(fromWeek) : task ? weekOfLabel(task.originWeekStart) : 'Back';
+  const backLabel = fromWeek ? weekOfLabel(fromWeek) : task ? weekOfLabel(task.originPeriodKey) : 'Back';
   const backBtn = {
     minHeight: 44,
     border: 'none',
@@ -153,7 +153,7 @@ export function TaskPage() {
   const set = (p: Partial<typeof fields>) => setDraft({ ...fields, ...p });
   const lifeRoot = goalQ.data?.ancestors[0];
   const weeklyGoal = goalQ.data?.goal;
-  const age = task.carryWeeks;
+  const age = task.carryAge;
 
   const save = () => {
     // R-task-23 — send only what changed; a blank title falls back to the existing one and logs nothing.

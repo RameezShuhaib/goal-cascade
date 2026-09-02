@@ -61,7 +61,7 @@ export function shortDate(weekStart: string): string {
  *
  * It is deliberately byte-identical to what `domain/periods.labelOf('Weekly', key)` sends on
  * `PeriodView.label`, because the client sometimes has to name a week the server did not label for it
- * (a task's `originWeekStart`, an item's `fromWeekStart`). `routes.ts` states the rule — periods are
+ * (a task's `originPeriodKey`, an item's `fromPeriodKey`). `routes.ts` states the rule — periods are
  * machine-formatted in the URL and human-formatted on screen — and this is the one client spelling of
  * the human form. One concept, one shape.
  */

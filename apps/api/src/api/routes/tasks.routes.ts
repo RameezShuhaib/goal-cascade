@@ -28,7 +28,7 @@ import { resolveWeek } from '../week';
  * operation exists, so do not add one here.
  *
  * ⚠ **A2 (R-rm-5)** — the Tasks SCREEN is gone; this read is not. It is the Weekly lens's data source
- * (R-lens-12), and `POST /tasks` now takes **no week at all**: `originWeekStart` is seeded from the
+ * (R-lens-12), and `POST /tasks` now takes **no week at all**: `originPeriodKey` is seeded from the
  * Weekly parent's `periodKey` (R-task-40), and `newWeeklyGoal` creates that parent in the same
  * transaction when there is none (R-task-48).
  */

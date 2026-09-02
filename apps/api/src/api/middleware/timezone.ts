@@ -9,7 +9,7 @@ import type { AppBindings } from '../types';
  *
  *   an account with preferences → `ctx.tz = preferences.timezone`. `X-Timezone` is IGNORED: an owner
  *                                 travelling in another zone must still get their home week, or
- *                                 `originWeekStart`, carry ages and plan editability would differ per
+ *                                 `originPeriodKey`, carry ages and plan editability would differ per
  *                                 device (S-auth-5-1).
  *   no preferences row yet      → a valid `X-Timezone` → 'UTC'. That is the ONLY thing the header does:
  *                                 it seeds `preferences.timezone` at sign-up provisioning.

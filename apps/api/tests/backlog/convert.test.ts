@@ -71,7 +71,7 @@ describe('backlog → task conversion', () => {
         title: string;
         description: string;
         links: { url: string }[];
-        originWeekStart: string;
+        originPeriodKey: string;
         events: { kind: string; text: string; glyph: string }[];
       };
       item: { status: string; convertedToTaskId: string | null; convertedAt: string | null };
@@ -83,7 +83,7 @@ describe('backlog → task conversion', () => {
     expect(out.task.links.map((l) => l.url)).toEqual(['https://example.com/shoes', 'https://example.com/reviews']);
     // A2 (R-task-40) - origin comes from the RECEIVING WEEKLY GOAL's own week, not from "today".
     // At creation the two are equal by construction, because there is no target-week parameter.
-    expect(out.task.originWeekStart).toBe(CURRENT_WEEK);
+    expect(out.task.originPeriodKey).toBe(CURRENT_WEEK);
     // R-task-30 — the source is recorded on the created event, once, and never changes.
     expect(out.task.events).toHaveLength(1);
     expect(out.task.events[0]).toMatchObject({ kind: 'created', text: 'Created — pulled from Backlog', glyph: '＋' });
@@ -177,7 +177,7 @@ describe('backlog → task conversion', () => {
     });
     expect(res.status, await res.clone().text()).toBe(201);
     const out = (await res.json()) as {
-      task: { goalId: string; originWeekStart: string };
+      task: { goalId: string; originPeriodKey: string };
       goal: { id: string; horizon: string; periodKey: string; title: string } | null;
       item: { status: string };
     };
@@ -188,7 +188,7 @@ describe('backlog → task conversion', () => {
     // R-task-49 - the created goal is NAMED back, because it was created without being asked for.
     expect(out.goal!.title).toBe('Squats');
     expect(out.task.goalId).toBe(out.goal!.id);
-    expect(out.task.originWeekStart).toBe(CURRENT_WEEK);
+    expect(out.task.originPeriodKey).toBe(CURRENT_WEEK);
     expect(out.item.status).toBe('converted');
   });
 

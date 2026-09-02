@@ -101,9 +101,9 @@ export class ActivityLog {
     for (const task of tasks) {
       // R-task-7/12 — only an OPEN task carries, and only into weeks strictly after its origin.
       if (task.status !== 'open') continue;
-      const age = weeksBetween(task.originWeekStart, upTo);
+      const age = weeksBetween(task.originPeriodKey, upTo);
       for (let n = Math.max(1, age - (CARRY_BACKFILL_WEEKS - 1)); n <= age; n++) {
-        const weekStart = addWeeks(task.originWeekStart, n);
+        const weekStart = addWeeks(task.originPeriodKey, n);
         const event: TaskEvent & { weekStart: string } = {
           id: this.ids.ulid(),
           userId: ctx.userId,

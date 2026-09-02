@@ -61,8 +61,8 @@ describe('user A cannot touch ANY of user B entities through the MCP surface', (
       // A2 - a task hangs off a WEEKLY goal (R-goal-39), so B's secret work needs one.
       { id: B.weeklyGoal, userId: B.userId, parentId: B.monthlyGoal, horizon: 'Weekly', title: "B's private week", why: '', pulse: 'On track', periodKey: WEEK, period: 'Week of 31 Aug', createdAt: NOW, updatedAt: NOW, version: 1 },
     ]);
-    await db.insert(tasks).values({ id: B.task, userId: B.userId, goalId: B.weeklyGoal, title: "B's secret task", cond: '', description: '', status: 'open', originWeekStart: WEEK, doneWeekStart: null, doneAt: null, exitReason: null, exitedAt: null, movedToBacklogItemId: null, createdAt: NOW, updatedAt: NOW, version: 1 });
-    await db.insert(backlogItems).values({ id: B.item, userId: B.userId, goalId: B.monthlyGoal, title: "B's parked item", description: '', capturedAt: NOW, fromWeekStart: null, sortKey: '000001000000', status: 'open', convertedToTaskId: null, convertedAt: null, createdAt: NOW, updatedAt: NOW, version: 1 });
+    await db.insert(tasks).values({ id: B.task, userId: B.userId, goalId: B.weeklyGoal, title: "B's secret task", cond: '', description: '', status: 'open', originPeriodKey: WEEK, donePeriodKey: null, doneAt: null, exitReason: null, exitedAt: null, movedToBacklogItemId: null, createdAt: NOW, updatedAt: NOW, version: 1 });
+    await db.insert(backlogItems).values({ id: B.item, userId: B.userId, goalId: B.monthlyGoal, title: "B's parked item", description: '', capturedAt: NOW, fromPeriodKey: null, sortKey: '000001000000', status: 'open', convertedToTaskId: null, convertedAt: null, createdAt: NOW, updatedAt: NOW, version: 1 });
     await db.insert(learnings).values({ id: B.learning, userId: B.userId, goalId: B.lifeGoal, text: "B's private learning", applied: false, capturedAt: NOW, createdAt: NOW, updatedAt: NOW });
   });
 

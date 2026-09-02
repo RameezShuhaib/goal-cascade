@@ -288,7 +288,7 @@ describe('migration 0003 — the Weekly horizon, on real pre-A2 data', () => {
     const week = (await (await t.fetch(`/api/goals?lens=Weekly&period=${WEEK_C}`, { cookie: ownerCookie })).json()) as {
       items: { id: string; title: string; periodKey: string }[];
       carried: { id: string; title: string; periodKey: string }[];
-      tasks: { id: string; goalId: string; carryWeeks: number }[];
+      tasks: { id: string; goalId: string; carryAge: number }[];
       groups: { id: string | null; title: string; openTasks: number }[];
     };
 
@@ -307,7 +307,7 @@ describe('migration 0003 — the Weekly horizon, on real pre-A2 data', () => {
     // WEEK_A tasks are two weeks old in WEEK_C, which is the red chip.
     const carriedTasks = week.tasks.filter((x) => week.carried.some((g) => g.id === x.goalId));
     expect(carriedTasks).toHaveLength(2);
-    expect(carriedTasks.every((x) => x.carryWeeks === 2)).toBe(true);
+    expect(carriedTasks.every((x) => x.carryAge === 2)).toBe(true);
 
     // R-lens-3 — and the whole thing groups under the one Life goal, resolved by the server.
     expect(week.groups.map((g) => g.id)).toEqual([F.life]);

@@ -34,7 +34,7 @@ const post = (path: string, json: unknown) =>
 async function createItem(goalId: string, title: string, extra: Record<string, unknown> = {}) {
   const res = await post(E.backlog, { goalId, title, ...extra });
   expect(res.status, await res.clone().text()).toBe(201);
-  return ((await res.json()) as { item: { id: string; goalId: string; capturedAt: string; fromWeekStart: string | null } }).item;
+  return ((await res.json()) as { item: { id: string; goalId: string; capturedAt: string; fromPeriodKey: string | null } }).item;
 }
 
 async function listBacklog(goalId?: string) {
@@ -60,7 +60,7 @@ describe('backlog capture and listing', () => {
     expect(listed.description).toBe('before prices go up');
     expect(listed.links.map((l) => l.url)).toEqual(['https://example.com/race']);
     expect(listed.status).toBe('open');
-    expect(listed.fromWeekStart).toBeNull();
+    expect(listed.fromPeriodKey).toBeNull();
   });
 
   it('S-backlog-2-1 — an item on a Life goal is refused, on create and on move', async () => {
@@ -103,17 +103,17 @@ describe('backlog capture and listing', () => {
     expect(again.indexOf(tieB.id)).toBeLessThan(again.indexOf(tieA.id));
   });
 
-  it('S-backlog-10-1 — a move re-homes the item and leaves capturedAt and fromWeekStart untouched', async () => {
+  it('S-backlog-10-1 — a move re-homes the item and leaves capturedAt and fromPeriodKey untouched', async () => {
     t.clock.set('2026-08-24T08:00:00.000Z');
     const item = await createItem(monthly, 'Relocate me');
     t.clock.set('2026-08-31T10:00:00.000Z');
 
     const res = await post(E.backlogItemMove(item.id), { goalId: otherMonthly });
     expect(res.status).toBe(200);
-    const moved = ((await res.json()) as { item: { goalId: string; capturedAt: string; fromWeekStart: string | null } }).item;
+    const moved = ((await res.json()) as { item: { goalId: string; capturedAt: string; fromPeriodKey: string | null } }).item;
     expect(moved.goalId).toBe(otherMonthly);
     expect(moved.capturedAt).toBe(item.capturedAt);
-    expect(moved.fromWeekStart).toBe(item.fromWeekStart);
+    expect(moved.fromPeriodKey).toBe(item.fromPeriodKey);
 
     expect((await listBacklog(otherMonthly)).items.some((i) => i.id === item.id)).toBe(true);
     expect((await listBacklog(monthly)).items.some((i) => i.id === item.id)).toBe(false);

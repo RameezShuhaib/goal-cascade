@@ -83,7 +83,7 @@ export type Goal = {
  * ⚠ **A2 (R-task-39)** — a task under a **Weekly goal**, and under nothing else. The condition is the
  * horizon, never leaf-ness (R-goal-37).
  *
- * `originWeekStart` / `doneWeekStart` are absolute Monday dates (D-1). Carrying is DERIVED, not written:
+ * `originPeriodKey` / `donePeriodKey` are absolute Monday dates (D-1). Carrying is DERIVED, not written:
  * an open task is visible in every week >= its origin with no job and no row change (R-task-7), which is
  * why this product has no cron.
  *
@@ -115,8 +115,8 @@ export type Task = {
    * The Weekly goal says what the work is FOR; this says when it was LIVE. What legitimately diverges is
    * exactly one thing — **the task carried** — and that divergence is the product working (R-lens-12).
    */
-  originWeekStart: string;
-  doneWeekStart: string | null;
+  originPeriodKey: string;
+  donePeriodKey: string | null;
   /** D-4 — the instant Completed was logged. The "Done Fri 28 Aug" label is DERIVED from it, never stored. */
   doneAt: string | null;
   exitReason: string | null;
@@ -161,7 +161,7 @@ export type TaskEvent = {
 
 /**
  * R-backlog-1/2/3 — deferred future work under a Yearly/Quarterly/Monthly goal. Never a Life goal, never
- * a week. `fromWeekStart` is the Monday of the week a task was LIVE in when it was moved out (D-12), or
+ * a week. `fromPeriodKey` is the Monday of the week a task was LIVE in when it was moved out (D-12), or
  * null when captured directly.
  *
  * D-19 — a converted item keeps its row with `status: 'converted'` and a pointer to the task it became,
@@ -174,7 +174,7 @@ export type BacklogItem = {
   title: string;
   description: string;
   capturedAt: string;
-  fromWeekStart: string | null;
+  fromPeriodKey: string | null;
   /**
    * ⚠ **A1 (R-backlog-17)** — the manual position within this item's own goal's list: an opaque,
    * lexicographically ordered string minted by the server (`domain/sort-keys.ts`) and never by a client.

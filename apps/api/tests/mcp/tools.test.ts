@@ -303,7 +303,7 @@ describe('tasks', () => {
     expect(created.goal_path).toContain('Three gym sessions');
     expect(created.status).toBe('open');
     // R-task-40 — the week came from the PARENT, and no request field named one.
-    expect(created.origin_week_start).toBe(THIS_WEEK);
+    expect(created.origin_period_key).toBe(THIS_WEEK);
 
     await ok(t, token, 'update_task', { task_id: created.id, title: 'Book the physio properly' });
     const linked = (await ok(t, token, 'add_task_link', { task_id: created.id, url: 'https://example.com/booking' })).task;
@@ -315,7 +315,7 @@ describe('tasks', () => {
     const reopened = (await ok(t, token, 'uncheck_task', { task_id: created.id })).task;
     expect(reopened.status).toBe('open');
     // R-task-19/21 — it comes back with the age it really has, not a fresh one.
-    expect(reopened.origin_week_start).toBe(created.origin_week_start);
+    expect(reopened.origin_period_key).toBe(created.origin_period_key);
 
     const detail = (await ok(t, token, 'get_task', { task_id: created.id })).task;
     expect(detail.events.map((e: any) => e.kind)).toEqual(
@@ -356,7 +356,7 @@ describe('tasks', () => {
     expect(res.created_weekly_goal.horizon).toBe('Weekly');
     expect(res.created_weekly_goal.period_key).toBe(THIS_WEEK);
     expect(res.task.goal_id).toBe(res.created_weekly_goal.id);
-    expect(res.task.origin_week_start).toBe(THIS_WEEK);
+    expect(res.task.origin_period_key).toBe(THIS_WEEK);
     void month;
   });
 
@@ -379,7 +379,7 @@ describe('tasks', () => {
     // R-task-43 — and its age is NEGATIVE, so the only escalation in the product cannot fire at it.
     const week = await ok(t, token, 'list_tasks', { week_offset: 1 });
     const row = week.tasks.find((x: any) => x.id === task.id);
-    expect(row.carry_weeks).toBeLessThan(0);
+    expect(row.carry_age).toBeLessThan(0);
     expect(row.carry_label).toBe('');
 
     const err = await refused(t, token, 'complete_task', { task_id: task.id }, 'WEEK_OUT_OF_RANGE');

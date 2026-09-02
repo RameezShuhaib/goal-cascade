@@ -117,7 +117,7 @@ export function registerGoalTools(server: McpServer, deps: McpDeps): void {
             weekly_goals_this_week: b.lens.items.length,
             carried_weekly_goals: b.lens.carried.length,
             open_tasks: b.lens.tasks.filter((t) => t.status === 'open').length,
-            carrying_tasks: b.lens.tasks.filter((t) => t.status === 'open' && t.carryWeeks >= 1).length,
+            carrying_tasks: b.lens.tasks.filter((t) => t.status === 'open' && t.carryAge >= 1).length,
             backlog: b.backlog.length,
             learnings: b.learnings.length,
           },

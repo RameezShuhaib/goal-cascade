@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addWeeks, offsetOf, weekStartOf, weekStartOfDate, weeksBetween } from '@goal-cascade/shared';
-import { carryWeeks } from '../../src/domain/weeks';
+import { carryAge } from '../../src/domain/weeks';
 import { createTestApp, signedInOwner } from '../helpers/app';
 import { createGoal, lens, makeLine, seedGoal, seedTask } from '../goals/fixtures';
 
@@ -25,18 +25,18 @@ describe('REVIEW / attack 5 — a stored week is an absolute Monday and never de
     const task = await seedTask(t, userId, weekly.id, '2026-08-31');
 
     const before = (await (await t.fetch(`/api/tasks/${task.id}`, { cookie })).json()) as {
-      task: { originWeekStart: string; carryWeeks: number };
+      task: { originPeriodKey: string; carryAge: number };
     };
-    expect(before.task).toMatchObject({ originWeekStart: '2026-08-31', carryWeeks: 0 });
+    expect(before.task).toMatchObject({ originPeriodKey: '2026-08-31', carryAge: 0 });
 
     t.clock.set('2026-09-07T00:00:01.000Z'); // one second into the next Monday, UTC
 
     const after = (await (await t.fetch(`/api/tasks/${task.id}`, { cookie })).json()) as {
-      task: { originWeekStart: string; carryWeeks: number };
+      task: { originPeriodKey: string; carryAge: number };
     };
     // The ROW did not move; the projection did. That is D-1 in one assertion.
-    expect(after.task.originWeekStart).toBe('2026-08-31');
-    expect(after.task.carryWeeks).toBe(1);
+    expect(after.task.originPeriodKey).toBe('2026-08-31');
+    expect(after.task.carryAge).toBe(1);
 
     /**
      * SUPERSEDED — the old assertions here were `planIn(…).entries` and `goalById(…).isActive`, which
@@ -121,25 +121,25 @@ describe('REVIEW / attack 5 — a stored week is an absolute Monday and never de
   });
 
   it('R-task-43 — the carry threshold lands on the correct side at EXACTLY 1 and EXACTLY 2 weeks', () => {
-    // The label is a client rendering of `carryWeeks`, which is `min(viewed, current) − origin` in whole
+    // The label is a client rendering of `carryAge`, which is `min(viewed, current) − origin` in whole
     // weeks (⚠ A2: signed, R-task-43). These are all past/current views, where the `min` is inert.
     const current = '2026-08-31';
-    expect(carryWeeks('2026-08-31', '2026-08-31', current)).toBe(0); // R-task-12: no label
-    expect(carryWeeks('2026-08-24', '2026-08-31', current)).toBe(1); // R-task-10: gray "since …"
-    expect(carryWeeks('2026-08-17', '2026-08-31', current)).toBe(2); // R-task-11: red chip, at exactly 2
-    expect(carryWeeks('2026-08-10', '2026-08-31', current)).toBe(3);
+    expect(carryAge('2026-08-31', '2026-08-31', current)).toBe(0); // R-task-12: no label
+    expect(carryAge('2026-08-24', '2026-08-31', current)).toBe(1); // R-task-10: gray "since …"
+    expect(carryAge('2026-08-17', '2026-08-31', current)).toBe(2); // R-task-11: red chip, at exactly 2
+    expect(carryAge('2026-08-10', '2026-08-31', current)).toBe(3);
     // …and across a year end, where naive month/day arithmetic would drift.
-    expect(carryWeeks('2026-12-28', '2027-01-04', '2027-01-04')).toBe(1);
-    expect(carryWeeks('2026-12-21', '2027-01-04', '2027-01-04')).toBe(2);
+    expect(carryAge('2026-12-28', '2027-01-04', '2027-01-04')).toBe(1);
+    expect(carryAge('2026-12-21', '2027-01-04', '2027-01-04')).toBe(2);
     // It depends on the VIEWED week, never on today (S-task-11-2).
-    expect(carryWeeks('2026-08-17', '2026-08-24', current)).toBe(1);
+    expect(carryAge('2026-08-17', '2026-08-24', current)).toBe(1);
     /**
      * SUPERSEDED — the last line used to read "a task can never be 'negative' weeks old", asserting
      * R-task-37's `max(0, …)` clamp. R-task-43 supersedes it: the age is SIGNED, and a negative value is
      * the honest reading of "not due yet". No label fires below 1 either way, which is why this needs an
      * assertion rather than a comment — nothing that renders changed.
      */
-    expect(carryWeeks('2026-08-31', '2026-08-24', current)).toBe(-1);
+    expect(carryAge('2026-08-31', '2026-08-24', current)).toBe(-1);
     expect(offsetOf('2026-08-24', '2026-08-31')).toBe(-1);
   });
 
@@ -153,9 +153,9 @@ describe('REVIEW / attack 5 — a stored week is an absolute Monday and never de
 
     const at = async (week: number) => {
       const res = (await (await t.fetch(`/api/tasks?week=${week}`, { cookie })).json()) as {
-        tasks: { id: string; carryWeeks: number }[];
+        tasks: { id: string; carryAge: number }[];
       };
-      return res.tasks.find((x) => x.id === task.id)?.carryWeeks;
+      return res.tasks.find((x) => x.id === task.id)?.carryAge;
     };
     expect(await at(0)).toBe(2); // exactly 2 → the red chip
     expect(await at(-1)).toBe(1); // exactly 1 → the gray label

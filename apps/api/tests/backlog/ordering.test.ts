@@ -30,7 +30,7 @@ beforeAll(async () => {
 const post = (path: string, json: unknown) =>
   t.fetch(`${API_BASE}${path}`, { method: 'POST', cookie: f.cookie, json, idempotencyKey: crypto.randomUUID() });
 
-type Item = { id: string; title: string; sortKey: string; capturedAt: string; goalId: string; version: number; fromWeekStart: string | null };
+type Item = { id: string; title: string; sortKey: string; capturedAt: string; goalId: string; version: number; fromPeriodKey: string | null };
 
 async function capture(goalId: string, title: string): Promise<Item> {
   const res = await post(E.backlog, { goalId, title });
@@ -262,7 +262,7 @@ describe('R-backlog-20 — moving, converting and deleting', () => {
     const moved = (await listAll()).find((i) => i.title === 'A')!;
     // S-backlog-10-1 still holds: it did not become newer by being re-filed.
     expect(moved.capturedAt).toBe(a.capturedAt);
-    expect(moved.fromWeekStart).toBe(a.fromWeekStart);
+    expect(moved.fromPeriodKey).toBe(a.fromPeriodKey);
   });
 
   it('S-backlog-20-2 — deleting the middle of a rearranged list leaves the survivors in order, un-re-keyed', async () => {

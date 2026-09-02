@@ -19,7 +19,7 @@ const withBacklog = (items = [F.backlogItem()]) => server.use(http.get('/api/bac
 
 describe('The Backlog page (R-backlog-13)', () => {
   it('lists items under their owning goal, with the from-week note the exit left behind', async () => {
-    withBacklog([F.backlogItem({ goalId: F.M, fromWeekStart: F.LAST_MONDAY })]);
+    withBacklog([F.backlogItem({ goalId: F.M, fromPeriodKey: F.LAST_MONDAY })]);
     renderApp(<AppShell />, { route: '/backlog' });
 
     expect(await screen.findByText('Find a squat rack that is free at 7am')).toBeInTheDocument();

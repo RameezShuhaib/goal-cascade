@@ -64,7 +64,7 @@ describe('The task page — a route, not a sheet (S-task-45-1)', () => {
     withWeek();
     server.use(
       http.get('/api/tasks/:id', () =>
-        HttpResponse.json(F.taskResponse({ id: F.ulid(21), goalId: F.WC, title: 'Find a route with no traffic lights', originWeekStart: F.THREE_WEEKS_AGO, carryWeeks: 3 })),
+        HttpResponse.json(F.taskResponse({ id: F.ulid(21), goalId: F.WC, title: 'Find a route with no traffic lights', originPeriodKey: F.THREE_WEEKS_AGO, carryAge: 3 })),
       ),
     );
     const { user } = renderApp(<AppShell />, { route: `/task/${F.ulid(21)}` });
@@ -100,7 +100,7 @@ describe('The task page — exit 1 given a second home (R-task-50)', () => {
     const { user } = await openFromLens();
     await user.click(screen.getByRole('button', { name: 'Complete Book the Tuesday slot' }));
 
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/complete'))).toMatchObject({ week: 0 }));
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/complete'))).toMatchObject({ period: F.THIS_MONDAY }));
     // The reason the page was opened is now finished, so it hands you back to the week.
     expect(await screen.findByRole('status')).toHaveTextContent('Done');
     expect(await screen.findByText('Three easy runs and one long run')).toBeInTheDocument();
@@ -116,7 +116,7 @@ describe('The task page — exit 1 given a second home (R-task-50)', () => {
 
   it('R-task-44: a task whose week has not arrived renders no checkbox on its page either', async () => {
     withWeek();
-    server.use(http.get('/api/tasks/:id', () => HttpResponse.json(F.taskResponse({ completable: false, carryWeeks: -1, originWeekStart: F.NEXT_MONDAY }))));
+    server.use(http.get('/api/tasks/:id', () => HttpResponse.json(F.taskResponse({ completable: false, carryAge: -1, originPeriodKey: F.NEXT_MONDAY }))));
     renderApp(<AppShell />, { route: `/task/${F.ulid(20)}` });
     await screen.findByRole('heading', { level: 1, name: 'Book the Tuesday slot' });
 
@@ -127,7 +127,7 @@ describe('The task page — exit 1 given a second home (R-task-50)', () => {
 
   it('S-task-17-1: a done task offers neither of the other two exits, but stays editable', async () => {
     withWeek();
-    server.use(http.get('/api/tasks/:id', () => HttpResponse.json(F.taskResponse({ status: 'done', done: true, doneWeekStart: F.THIS_MONDAY, doneAt: F.NOW }))));
+    server.use(http.get('/api/tasks/:id', () => HttpResponse.json(F.taskResponse({ status: 'done', done: true, donePeriodKey: F.THIS_MONDAY, doneAt: F.NOW }))));
     renderApp(<AppShell />, { route: `/task/${F.ulid(20)}` });
     await screen.findByRole('heading', { level: 1, name: 'Book the Tuesday slot' });
 
@@ -150,7 +150,7 @@ describe('The task page — exit 1 given a second home (R-task-50)', () => {
     await user.type(within(sheet).getByLabelText('Reason (optional)'), 'not this month after all');
     await user.click(within(sheet).getByRole('button', { name: 'Move it' }));
 
-    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/move-to-backlog'))).toMatchObject({ week: 0, reason: 'not this month after all' }));
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/move-to-backlog'))).toMatchObject({ period: F.THIS_MONDAY, reason: 'not this month after all' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Moved to Backlog — reason noted');
     // D-15 — nothing was deleted: the task keeps its row so the timeline entry has a home.
     expect(requests('DELETE', '/api/tasks')).toHaveLength(0);

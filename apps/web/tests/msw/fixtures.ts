@@ -134,13 +134,13 @@ export const task = (over: Partial<TaskView> = {}): TaskView => ({
   links: [],
   status: 'open',
   done: false,
-  originWeekStart: THIS_MONDAY,
-  doneWeekStart: null,
+  originPeriodKey: THIS_MONDAY,
+  donePeriodKey: null,
   doneAt: null,
   exitReason: null,
   exitedAt: null,
   /** ⚠ signed (R-task-43): negative means work that is not due yet. */
-  carryWeeks: 0,
+  carryAge: 0,
   /** ⚠ new (R-task-44/50): the row renders no checkbox when this is false. */
   completable: true,
   createdAt: NOW,
@@ -167,7 +167,7 @@ export const backlogItem = (over: Partial<BacklogItemView> = {}): BacklogItemVie
   description: '',
   links: [],
   capturedAt: NOW,
-  fromWeekStart: null,
+  fromPeriodKey: null,
   /** ⚠ **A1 (R-backlog-17)** — opaque, server-minted, never parsed by the client. */
   sortKey: '000001000000',
   status: 'open',
@@ -426,8 +426,8 @@ export function weeklyLens(periodKey = THIS_MONDAY): LensResponse {
     carried: [carriedGoal()],
     groups: [group({ id: L, openTasks: 2 })],
     tasks: [
-      task({ id: ulid(20), goalId: W, title: 'Tuesday easy 6k', carryWeeks: 0 }),
-      task({ id: ulid(21), goalId: WC, title: 'Find a route with no traffic lights', carryWeeks: 3, originWeekStart: THREE_WEEKS_AGO }),
+      task({ id: ulid(20), goalId: W, title: 'Tuesday easy 6k', carryAge: 0 }),
+      task({ id: ulid(21), goalId: WC, title: 'Find a route with no traffic lights', carryAge: 3, originPeriodKey: THREE_WEEKS_AGO }),
     ],
   });
 }

@@ -347,7 +347,7 @@ describe('R-goal-16/17/18/40 — move', () => {
     expect(moved.lifeRootId).toBe(b.life.id); // the GROUP moved, which is the point of Move
 
     const week = await lens(t, cookie, { lens: 'Weekly', period: THIS_WEEK });
-    expect(week.tasks.find((x) => x.id === task.id)?.originWeekStart).toBe(THIS_WEEK);
+    expect(week.tasks.find((x) => x.id === task.id)?.originPeriodKey).toBe(THIS_WEEK);
     // …and the goal appears in exactly ONE week, which is the property the guard protects.
     expect(week.items.filter((g) => g.id === a.weekly.id)).toHaveLength(1);
     expect((await lens(t, cookie, { lens: 'Weekly', period: '2026-09-07' })).items.map((g) => g.id)).not.toContain(a.weekly.id);

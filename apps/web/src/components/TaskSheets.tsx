@@ -43,7 +43,7 @@ export function ConfirmTaskExitSheet({ taskId, exit, week }: { taskId: string; e
   const done = (message: string) => {
     close();
     ui.showToast(message);
-    navigate(lensPath('Weekly', task?.originWeekStart));
+    navigate(lensPath('Weekly', task?.originPeriodKey));
   };
 
   const confirm = () => {
@@ -51,7 +51,7 @@ export function ConfirmTaskExitSheet({ taskId, exit, week }: { taskId: string; e
     const trimmed = reason.trim();
     if (exit === 'backlog') {
       moveToBacklog.mutate(
-        // D-12 — `fromWeekStart` is the week the task was LIVE in, which is the week being viewed.
+        // D-12 — `fromPeriodKey` is the week the task was LIVE in, which is the week being viewed.
         { id: task.id, week, ...(trimmed ? { reason: trimmed } : {}), version: task.version },
         { onSuccess: () => done('Moved to Backlog' + (trimmed ? ' — reason noted' : '')) },
       );

@@ -112,7 +112,7 @@ export async function seedGoal(
  * R-task-41 forbids back-dating through the API, and R-task-40 gives a task no week parameter at all, so
  * a task that originated in a past week can only be arranged this way.
  */
-export async function seedTask(t: TestApp, userId: string, goalId: string, originWeekStart: string, title = 'work') {
+export async function seedTask(t: TestApp, userId: string, goalId: string, originPeriodKey: string, title = 'work') {
   const now = t.clock.nowIso();
   const task: Task = {
     id: ids.ulid(),
@@ -122,8 +122,8 @@ export async function seedTask(t: TestApp, userId: string, goalId: string, origi
     cond: '',
     description: '',
     status: 'open',
-    originWeekStart,
-    doneWeekStart: null,
+    originPeriodKey,
+    donePeriodKey: null,
     doneAt: null,
     exitReason: null,
     exitedAt: null,
@@ -147,7 +147,7 @@ export async function seedBacklogItem(t: TestApp, userId: string, goalId: string
     title,
     description: '',
     capturedAt: now,
-    fromWeekStart: null,
+    fromPeriodKey: null,
     sortKey: '000001000000',
     status: 'open',
     convertedToTaskId: null,

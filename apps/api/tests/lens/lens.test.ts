@@ -118,7 +118,7 @@ describe('R-lens-4 — the group header count, anchored to ONE week', () => {
     await seedTask(t, userId, a.weekly.id, THIS_WEEK);
     await seedTask(t, userId, a.weekly.id, THIS_WEEK);
     const done = await seedTask(t, userId, a.weekly.id, THIS_WEEK);
-    await t.fetch(`/api/tasks/${done.id}/complete`, { method: 'POST', cookie, idempotencyKey: crypto.randomUUID(), json: {} });
+    await t.fetch(`/api/tasks/${done.id}/complete`, { method: 'POST', cookie, idempotencyKey: crypto.randomUUID(), json: { period: THIS_WEEK } });
 
     const groupIn = async (q: Parameters<typeof lens>[2]) =>
       (await lens(t, cookie, q)).groups.find((g) => g.id === a.life.id)?.openTasks;
@@ -172,7 +172,7 @@ describe('R-lens-12 — the Weekly lens and the CARRIED band', () => {
     // It is labelled with the week it was written FOR, which is how it is told from this week's plan.
     expect(week.carried[0]?.periodKey).toBe('2026-08-10');
     // …and its still-open task carries the red chip's age (R-task-11).
-    expect(week.tasks.find((x) => x.id === old.task.id)?.carryWeeks).toBe(3);
+    expect(week.tasks.find((x) => x.id === old.task.id)?.carryAge).toBe(3);
   });
 
   it('S-lens-12-3 — the band is ordered OLDEST FIRST, so the longest-outstanding work is at the top', async () => {
@@ -211,7 +211,7 @@ describe('R-lens-12 — the Weekly lens and the CARRIED band', () => {
       method: 'POST',
       cookie,
       idempotencyKey: crypto.randomUUID(),
-      json: { week: -2 },
+      json: { period: '2026-08-17' },
     });
     expect(done.status).toBe(200);
 
@@ -255,7 +255,7 @@ describe('R-lens-11 / R-goal-43 — future work is never styled as late; a stale
 
     const week = await lens(t, cookie, { lens: 'Weekly', period: '2026-09-21' });
     expect(week.items.map((g) => g.id)).toContain(far.id);
-    for (const task of week.tasks) expect(task.carryWeeks).toBeLessThanOrEqual(0);
+    for (const task of week.tasks) expect(task.carryAge).toBeLessThanOrEqual(0);
     // …and it is not late anywhere else either: it is absent from the current week's numbers.
     expect((await lens(t, cookie, { lens: 'Life' })).groups.find((g) => g.id === a.life.id)?.openTasks).toBe(0);
     expect(week.period).toMatchObject({ isPast: false, isCurrent: false });

@@ -86,7 +86,7 @@ export type NewTaskDraft = {
    * ⚠ **A2 (R-task-40)** — the task's own stored week, taken from the **Weekly goal** receiving it. There
    * is no target-week parameter anywhere in the product: at creation the two are equal by construction.
    */
-  originWeekStart: string;
+  originPeriodKey: string;
   /** Structured provenance for the `created` event (`{ backlogItemId }`). */
   detail: Record<string, unknown>;
 };
@@ -102,7 +102,7 @@ export type TaskWrites = { task: Task; links: TaskLink[]; event: TaskEvent; writ
  * `TaskService` owns everything a task does AFTER it exists; this is the narrow seam where a conversion
  * mints one. See `docs/work/05-backlog-capture/build.md`.
  *
- * ⚠ **A2 (R-task-40)** — `originWeekStart` comes from the **Weekly goal** the conversion resolved, not
+ * ⚠ **A2 (R-task-40)** — `originPeriodKey` comes from the **Weekly goal** the conversion resolved, not
  * from "the current week": the receiving goal names the target week (R-backlog-26), and the task's week
  * is seeded from it once and then immutable. No back-dating survives that, because the resolution itself
  * refuses a past week.
@@ -120,8 +120,8 @@ export function buildTaskWrites(
     cond: draft.cond,
     description: draft.description,
     status: 'open',
-    originWeekStart: draft.originWeekStart,
-    doneWeekStart: null,
+    originPeriodKey: draft.originPeriodKey,
+    donePeriodKey: null,
     doneAt: null,
     exitReason: null,
     exitedAt: null,
@@ -204,7 +204,7 @@ export function toTaskEventView(e: TaskEvent): TaskEventView {
 /**
  * The freshly created task, with the one event it has.
  *
- * `carryWeeks` is 0 by construction: at creation a task's own week and the week it is being viewed in are
+ * `carryAge` is 0 by construction: at creation a task's own week and the week it is being viewed in are
  * the same (R-task-40), so there is nothing for R-task-43's signed age to measure. `completable` is
  * false for a FUTURE week — a task under a Weekly goal that has not arrived cannot be completed at all
  * until it does (R-task-44).
@@ -219,13 +219,13 @@ export function toNewTaskDetailView(w: TaskWrites, currentWeekStart: string): Ta
     links: w.links.map(toLinkView),
     status: w.task.status,
     done: false,
-    originWeekStart: w.task.originWeekStart,
-    doneWeekStart: null,
+    originPeriodKey: w.task.originPeriodKey,
+    donePeriodKey: null,
     doneAt: null,
     exitReason: null,
     exitedAt: null,
-    carryWeeks: 0,
-    completable: w.task.originWeekStart <= currentWeekStart,
+    carryAge: 0,
+    completable: w.task.originPeriodKey <= currentWeekStart,
     createdAt: w.task.createdAt,
     updatedAt: w.task.updatedAt,
     version: w.task.version,
@@ -265,7 +265,7 @@ export function assertCanHoldBacklog(goal: Goal): void {
 export function buildBacklogItem(
   ctx: RequestContext,
   ids: IIdGenerator,
-  input: { goalId: string; title: string; description: string; links: readonly string[]; fromWeekStart?: string | null; sortKey: string },
+  input: { goalId: string; title: string; description: string; links: readonly string[]; fromPeriodKey?: string | null; sortKey: string },
 ): { item: BacklogItem; links: BacklogLink[] } {
   const item: BacklogItem = {
     id: ids.ulid(),
@@ -274,7 +274,7 @@ export function buildBacklogItem(
     title: input.title,
     description: input.description,
     capturedAt: ctx.now,
-    fromWeekStart: input.fromWeekStart ?? null,
+    fromPeriodKey: input.fromPeriodKey ?? null,
     sortKey: input.sortKey,
     status: 'open',
     convertedToTaskId: null,
@@ -464,7 +464,7 @@ export class BacklogService {
   }
 
   /**
-   * R-backlog-10 / S-backlog-10-1 — move to any other NON-Life goal. `capturedAt` and `fromWeekStart` are
+   * R-backlog-10 / S-backlog-10-1 — move to any other NON-Life goal. `capturedAt` and `fromPeriodKey` are
    * untouched: the item did not become newer by being re-filed, and "came out of the week of …" is a
    * fact about its history, not about its current goal.
    */
@@ -474,7 +474,7 @@ export class BacklogService {
 
     // ⚠ **A1 (R-backlog-20)** — a FRESH key at the top of the destination. Its old position is not
     // preserved, because a per-goal order has nothing to preserve it against (R-backlog-21) and the
-    // destination's own order is the only one that now applies. `capturedAt` and `fromWeekStart` are
+    // destination's own order is the only one that now applies. `capturedAt` and `fromPeriodKey` are
     // still untouched (S-backlog-10-1): the item did not become newer by being re-filed, and "came out of
     // the week of …" is a fact about its history, not about its current goal.
     const top = await this.mintTop(ctx, input.goalId);
@@ -670,7 +670,7 @@ export class BacklogService {
         links: itemLinks.map((l) => l.url),
         source: 'backlog',
         // R-task-40 — from the receiving Weekly goal's own week, never from "today".
-        originWeekStart: resolved.goal.periodKey,
+        originPeriodKey: resolved.goal.periodKey,
         detail: { backlogItemId: item.id },
       },
     );

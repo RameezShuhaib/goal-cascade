@@ -81,14 +81,14 @@ function shortDate(date: string): string {
 /**
  * The carry chip, rendered server-side so the agent quotes the same words the owner sees in the UI.
  *
- * ⚠ **A2 (R-task-43)** — `carryWeeks` is now SIGNED, so `<= 0` covers both "created this week" and
+ * ⚠ **A2 (R-task-43)** — `carryAge` is now SIGNED, so `<= 0` covers both "created this week" and
  * "planned for a week that has not arrived". No label fires at either, which is R-lens-11: the only
  * escalation in the product must never fire at a plan.
  */
-function carryLabel(carryWeeks: number, originWeekStart: string): string {
-  if (carryWeeks <= 0) return '';
-  const since = shortDate(originWeekStart);
-  return carryWeeks === 1 ? `since ${since}` : `${carryWeeks} weeks · since ${since}`;
+function carryLabel(carryAge: number, originPeriodKey: string): string {
+  if (carryAge <= 0) return '';
+  const since = shortDate(originPeriodKey);
+  return carryAge === 1 ? `since ${since}` : `${carryAge} weeks · since ${since}`;
 }
 
 /**
@@ -107,14 +107,14 @@ export function taskOut(v: TaskView | TaskDetailView, goalPath: string | undefin
     links: v.links.map((l) => ({ id: l.id, url: l.url, created_at: l.createdAt })),
     status: v.status,
     done: v.done,
-    origin_week_start: v.originWeekStart,
-    done_week_start: v.doneWeekStart,
+    origin_period_key: v.originPeriodKey,
+    done_period_key: v.donePeriodKey,
     done_at: v.doneAt,
     exit_reason: v.exitReason,
     exited_at: v.exitedAt,
     /** ⚠ **A2** — signed. Negative means "planned ahead, not yet due" (R-task-43). */
-    carry_weeks: v.carryWeeks,
-    carry_label: carryLabel(v.carryWeeks, v.originWeekStart),
+    carry_age: v.carryAge,
+    carry_label: carryLabel(v.carryAge, v.originPeriodKey),
     /** R-task-44 — false in a future week; there is no legal completion week for it yet. */
     completable: v.completable,
     created_at: v.createdAt,

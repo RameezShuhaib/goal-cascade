@@ -8,7 +8,7 @@ import { weeksBetween } from '@goal-cascade/shared';
  * here is not calendar arithmetic at all: it is read-model policy over work — R-task-43's signed carry
  * age, and R-task-7/8/32's week visibility.
  *
- * **The client already receives both answers** — `TaskView.carryWeeks`, and a task simply being present
+ * **The client already receives both answers** — `TaskView.carryAge`, and a task simply being present
  * in `LensResponse.tasks` — and must never recompute either, because they are decisions about work, not
  * about dates. That is where the line is drawn: **the calendar is shared vocabulary; visibility and age
  * are policy.**
@@ -39,15 +39,15 @@ import { weeksBetween } from '@goal-cascade/shared';
  *
  * ⚠ **A2 supersedes R-task-37's outer `max(0, …)` clamp.** Dropping it changes nothing that renders —
  * no label fires below 1 either way — and leaves ONE guard instead of two, carried in the sign. A
- * negative age is the honest reading of "not due yet". **`TaskView.carryWeeks` therefore stops being
+ * negative age is the honest reading of "not due yet". **`TaskView.carryAge` therefore stops being
  * `nonnegative`: it is a silent wire break, and anything summing these values is now wrong.**
  *
  * An already-late open task (origin in the past) projected into a future week keeps the age it has
  * TODAY: it is late now and still open then, so the chip is correct there (S-task-43-2).
  */
-export function carryWeeks(originWeekStart: string, viewedWeekStart: string, currentWeekStart: string): number {
+export function carryAge(originPeriodKey: string, viewedWeekStart: string, currentWeekStart: string): number {
   const measuredAt = viewedWeekStart < currentWeekStart ? viewedWeekStart : currentWeekStart;
-  return weeksBetween(originWeekStart, measuredAt);
+  return weeksBetween(originPeriodKey, measuredAt);
 }
 
 /**
@@ -59,11 +59,11 @@ export function carryWeeks(originWeekStart: string, viewedWeekStart: string, cur
  * visible in no week at all (D-15).
  */
 export function isVisibleInWeek(
-  task: { status: 'open' | 'done' | 'canceled' | 'movedToBacklog'; originWeekStart: string; doneWeekStart: string | null },
+  task: { status: 'open' | 'done' | 'canceled' | 'movedToBacklog'; originPeriodKey: string; donePeriodKey: string | null },
   viewedWeekStart: string,
 ): boolean {
-  if (task.status === 'open') return weeksBetween(task.originWeekStart, viewedWeekStart) >= 0;
-  if (task.status === 'done') return task.doneWeekStart === viewedWeekStart;
+  if (task.status === 'open') return weeksBetween(task.originPeriodKey, viewedWeekStart) >= 0;
+  if (task.status === 'done') return task.donePeriodKey === viewedWeekStart;
   return false;
 }
 

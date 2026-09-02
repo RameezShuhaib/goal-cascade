@@ -86,14 +86,14 @@ export const handlers: HttpHandler[] = [
   // ⚠ **A2 (R-task-48)** — the create answers with the Weekly goal it made, when it made one.
   http.post('/api/tasks', cmd(() => HttpResponse.json(F.createTaskResponse(), { status: 201 }))),
   http.patch('/api/tasks/:id', () => HttpResponse.json(F.taskResponse())),
-  http.post('/api/tasks/:id/complete', cmd(() => HttpResponse.json(F.taskResponse({ status: 'done', done: true, doneWeekStart: F.THIS_MONDAY, doneAt: F.NOW })))),
+  http.post('/api/tasks/:id/complete', cmd(() => HttpResponse.json(F.taskResponse({ status: 'done', done: true, donePeriodKey: F.THIS_MONDAY, doneAt: F.NOW })))),
   http.post('/api/tasks/:id/uncheck', cmd(() => HttpResponse.json(F.taskResponse()))),
   http.post(
     '/api/tasks/:id/move-to-backlog',
     cmd(() =>
       HttpResponse.json({
         task: F.taskDetail({ status: 'movedToBacklog', exitedAt: F.NOW }),
-        item: F.backlogItem({ fromWeekStart: F.THIS_MONDAY }),
+        item: F.backlogItem({ fromPeriodKey: F.THIS_MONDAY }),
         serverNow: F.NOW,
       }),
     ),

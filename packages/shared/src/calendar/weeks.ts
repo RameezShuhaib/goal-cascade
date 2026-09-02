@@ -19,7 +19,7 @@
  * It used to be `apps/api/src/domain/weeks.ts`, and the client held a partial re-implementation of it in
  * `utils/periodKeys.ts` + `utils/dates.ts` while a doc block insisted it did not. **A rule the two sides
  * must agree about is shared vocabulary and belongs in one module**; a rule only one side is allowed to
- * have an opinion about is policy and stays on the server. `carryWeeks` and `isVisibleInWeek` are policy
+ * have an opinion about is policy and stays on the server. `carryAge` and `isVisibleInWeek` are policy
  * and remain in `apps/api/src/domain/weeks.ts`; every function below is vocabulary.
  *
  * Zero runtime imports: this module is pure and depends on nothing but `Intl`.

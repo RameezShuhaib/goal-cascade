@@ -185,7 +185,7 @@ export const ZoomResponse = z.object({ anchor: z.iso.date(), rows: z.array(ZoomR
  *
  * `plan` is gone with the entity (R-rm-2) and `ideas` with theirs (R-rm-1). Every week in the payload is
  * an ABSOLUTE Monday date (D-1), so the snapshot does not decay across a Monday boundary — but
- * `week.offset` and `carryWeeks` are projections against `serverNow`, and a client holding a stale payload
+ * `week.offset` and `carryAge` are projections against `serverNow`, and a client holding a stale payload
  * must refetch rather than re-derive them.
  */
 export const BootstrapResponse = z.object({

@@ -2,7 +2,7 @@ import type { BacklogItemView, ExternalLinkView, TaskView, WeekView } from '@goa
 import type { BacklogItem, BacklogLink, Goal, Task, TaskLink } from '../../domain/entities';
 import { isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
 import { offsetOf } from '@goal-cascade/shared';
-import { carryWeeks } from '../../domain/weeks';
+import { carryAge } from '../../domain/weeks';
 import type { RequestContext } from '../context';
 
 /**
@@ -10,7 +10,7 @@ import type { RequestContext } from '../context';
  *
  * They live here rather than in whichever service happened to own them first: `GoalService.lens` renders
  * the Weekly lens's tasks (R-lens-12) and `TaskService` renders the same tasks for `GET /tasks`, so a
- * second implementation of `carryWeeks` would be a second implementation of R-task-43 — and the two
+ * second implementation of `carryAge` would be a second implementation of R-task-43 — and the two
  * would disagree the first time one of them was "tidied".
  *
  * ⚠ **A1/A2** — `toBacklogItemView` joined them, for the same reason and after the same near miss: three
@@ -71,7 +71,7 @@ export function toBacklogItemView(
     description: item.description,
     links: links.filter((l) => l.itemId === item.id).map(toLinkView),
     capturedAt: item.capturedAt,
-    fromWeekStart: item.fromWeekStart,
+    fromPeriodKey: item.fromPeriodKey,
     sortKey: item.sortKey,
     status: item.status,
     convertedToTaskId: item.convertedToTaskId,
@@ -85,7 +85,7 @@ export function toBacklogItemView(
 /**
  * A task as any list renders it.
  *
- * ⚠ **A2 (R-task-43) — `carryWeeks` is SIGNED**, and it is measured against
+ * ⚠ **A2 (R-task-43) — `carryAge` is SIGNED**, and it is measured against
  * `min(viewedWeek, currentWeek)` rather than against the viewed week alone.
  *
  * Two terms, each answering a different way of being wrong: it depends on the **viewed** week, so a past
@@ -113,14 +113,14 @@ export function toTaskView(
     links: links.filter((l) => l.taskId === task.id).map(toLinkView),
     status: task.status,
     done: task.status === 'done',
-    originWeekStart: task.originWeekStart,
-    doneWeekStart: task.doneWeekStart,
+    originPeriodKey: task.originPeriodKey,
+    donePeriodKey: task.donePeriodKey,
     doneAt: task.doneAt,
     exitReason: task.exitReason,
     exitedAt: task.exitedAt,
-    carryWeeks: carryWeeks(task.originWeekStart, viewedWeekStart, currentWeekStart),
+    carryAge: carryAge(task.originPeriodKey, viewedWeekStart, currentWeekStart),
     completable:
-      task.status === 'open' && viewedWeekStart >= task.originWeekStart && viewedWeekStart <= currentWeekStart,
+      task.status === 'open' && viewedWeekStart >= task.originPeriodKey && viewedWeekStart <= currentWeekStart,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     version: task.version,

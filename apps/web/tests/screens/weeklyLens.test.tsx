@@ -73,7 +73,7 @@ describe('Weekly lens — this week, and what carried into it (R-lens-12)', () =
   });
 
   it('§7.2: a week with nothing planned but work still carrying says so, rather than looking broken', async () => {
-    withLens(F.lens({ lens: 'Weekly', period: F.period({ periodKey: F.THIS_MONDAY }), items: [], carried: [F.carriedGoal()], groups: [F.group({ id: F.L, openTasks: 1 })], tasks: [F.task({ goalId: F.WC, carryWeeks: 3, originWeekStart: F.THREE_WEEKS_AGO })] }));
+    withLens(F.lens({ lens: 'Weekly', period: F.period({ periodKey: F.THIS_MONDAY }), items: [], carried: [F.carriedGoal()], groups: [F.group({ id: F.L, openTasks: 1 })], tasks: [F.task({ goalId: F.WC, carryAge: 3, originPeriodKey: F.THREE_WEEKS_AGO })] }));
     renderApp(<AppShell />, { route: '/week/2026-08-31' });
 
     expect(await screen.findByText('Nothing planned for this week — the work below is still carrying.')).toBeInTheDocument();
@@ -86,7 +86,7 @@ describe('Weekly lens — this week, and what carried into it (R-lens-12)', () =
 /**
  * The carry labels, and **the amendment's first silent break**.
  *
- * `TaskView.carryWeeks` is signed now (R-task-43) and still parses, so nothing about the type would catch
+ * `TaskView.carryAge` is signed now (R-task-43) and still parses, so nothing about the type would catch
  * a client that treated it as a magnitude. The red chip is the only escalation in this product; firing it
  * at a plan would destroy the one signal that means anything (R-lens-11).
  */
@@ -103,21 +103,21 @@ describe('Weekly lens — the carry label, now that the age is signed (R-task-43
     );
 
   it('S-task-12-1: age 0 carries no label', async () => {
-    withTask({ carryWeeks: 0 });
+    withTask({ carryAge: 0 });
     renderApp(<AppShell />, { route: '/week/2026-08-31' });
     await screen.findByText('Tuesday easy 6k');
     expect(screen.queryByText(/since /)).not.toBeInTheDocument();
   });
 
   it('S-task-10-1: age 1 is the gray "since <Monday>"', async () => {
-    withTask({ carryWeeks: 1, originWeekStart: F.LAST_MONDAY });
+    withTask({ carryAge: 1, originPeriodKey: F.LAST_MONDAY });
     renderApp(<AppShell />, { route: '/week/2026-08-31' });
     expect(await screen.findByText('since Mon 24 Aug')).toBeInTheDocument();
     expect(screen.queryByText(/weeks · since/)).not.toBeInTheDocument();
   });
 
   it('S-task-11-1: age 2+ is the red chip — and no popup, modal or nag anywhere', async () => {
-    withTask({ carryWeeks: 3, originWeekStart: F.THREE_WEEKS_AGO });
+    withTask({ carryAge: 3, originPeriodKey: F.THREE_WEEKS_AGO });
     renderApp(<AppShell />, { route: '/week/2026-08-31' });
     expect(await screen.findByText('3 weeks · since 10 Aug')).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -134,7 +134,7 @@ describe('Weekly lens — the carry label, now that the age is signed (R-task-43
         period: F.period({ periodKey: F.NEXT_MONDAY, label: 'Week of 7 Sep', isCurrent: false }),
         items: [F.weeklyGoal({ periodKey: F.NEXT_MONDAY, period: 'Week of 7 Sep' })],
         groups: [F.group({ id: F.L })],
-        tasks: [F.task({ goalId: F.W, title: 'Next week already', carryWeeks: -1, originWeekStart: F.NEXT_MONDAY, completable: false })],
+        tasks: [F.task({ goalId: F.W, title: 'Next week already', carryAge: -1, originPeriodKey: F.NEXT_MONDAY, completable: false })],
       }),
     );
     renderApp(<AppShell />, { route: '/week/2026-09-07' });
@@ -156,7 +156,7 @@ describe('Weekly lens — the carry label, now that the age is signed (R-task-43
         period: F.period({ periodKey: F.NEXT_MONDAY, label: 'Week of 7 Sep', isCurrent: false }),
         items: [F.weeklyGoal({ periodKey: F.NEXT_MONDAY, period: 'Week of 7 Sep' })],
         groups: [F.group({ id: F.L })],
-        tasks: [F.task({ goalId: F.W, title: 'Next week already', carryWeeks: -1, completable: false })],
+        tasks: [F.task({ goalId: F.W, title: 'Next week already', carryAge: -1, completable: false })],
       }),
     );
     renderApp(<AppShell />, { route: '/week/2026-09-07' });
@@ -174,7 +174,7 @@ describe('Weekly lens — the carry label, now that the age is signed (R-task-43
         items: [],
         carried: [F.carriedGoal()],
         groups: [F.group({ id: F.L, openTasks: 1 })],
-        tasks: [F.task({ goalId: F.WC, title: 'Sort out the long-run route', carryWeeks: 3, originWeekStart: F.THREE_WEEKS_AGO })],
+        tasks: [F.task({ goalId: F.WC, title: 'Sort out the long-run route', carryAge: 3, originPeriodKey: F.THREE_WEEKS_AGO })],
       }),
     );
     renderApp(<AppShell />, { route: '/week/2026-09-07' });
@@ -192,7 +192,7 @@ describe('Weekly lens — the three exits, and nothing else (R-task-13)', () => 
 
     await waitFor(async () => {
       // The offset is computed from two absolute Mondays the server sent — never from a device clock.
-      expect(await bodyOf(lastRequest('POST', '/complete'))).toMatchObject({ week: -1 });
+      expect(await bodyOf(lastRequest('POST', '/complete'))).toMatchObject({ period: F.LAST_MONDAY });
     });
   });
 
@@ -211,7 +211,7 @@ describe('Weekly lens — the three exits, and nothing else (R-task-13)', () => 
         period: F.period({ periodKey: F.THIS_MONDAY }),
         items: [F.weeklyGoal()],
         groups: [F.group({ id: F.L })],
-        tasks: [F.task({ goalId: F.W, title: 'Tuesday easy 6k', status: 'done', done: true, doneWeekStart: F.THIS_MONDAY, doneAt: F.NOW })],
+        tasks: [F.task({ goalId: F.W, title: 'Tuesday easy 6k', status: 'done', done: true, donePeriodKey: F.THIS_MONDAY, doneAt: F.NOW })],
       }),
     );
     const { user } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
@@ -232,7 +232,7 @@ describe('Weekly lens — the three exits, and nothing else (R-task-13)', () => 
         period: F.period({ periodKey: F.LAST_MONDAY, label: 'Week of 24 Aug', isCurrent: false, isPast: true }),
         items: [F.weeklyGoal({ periodKey: F.LAST_MONDAY, period: 'Week of 24 Aug' })],
         groups: [F.group({ id: F.L, openTasks: 1 })],
-        tasks: [F.task({ goalId: F.W, title: 'Tuesday easy 6k', carryWeeks: 1, originWeekStart: F.LAST_MONDAY })],
+        tasks: [F.task({ goalId: F.W, title: 'Tuesday easy 6k', carryAge: 1, originPeriodKey: F.LAST_MONDAY })],
       }),
     );
     renderApp(<AppShell />, { route: '/week/2026-08-24' });

@@ -26,8 +26,8 @@ import { DomainError, notFound } from '../../domain/errors';
 import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../domain/goal-tree';
 import { FIRST_SORT_KEY, topKey } from '../../domain/sort-keys';
 
-import { dateInTimezone, isPastPeriod, labelOf, periodKeyOf, weekStartFromOffset } from '@goal-cascade/shared';
-import { carryWeeks } from '../../domain/weeks';
+import { dateInTimezone, isPastPeriod, labelOf, periodKeyOf } from '@goal-cascade/shared';
+import { carryAge } from '../../domain/weeks';
 import type { RequestContext } from '../context';
 import {
   IBacklogLinkRepo,
@@ -82,9 +82,9 @@ import { backlogLabelsOf, toBacklogItemView, toTaskView, weekView } from './view
  *    Weekly goal is childless, so "Weekly" implies "no children"; **the converse is false and is the
  *    trap** — a Monthly goal with no Weekly children is a leaf by the structural definition and must
  *    never hold a task (S-goal-37-1).
- *  - **There is no week parameter.** `originWeekStart` is seeded once from the Weekly parent's
+ *  - **There is no week parameter.** `originPeriodKey` is seeded once from the Weekly parent's
  *    `periodKey` (R-task-40) and is immutable. `.strict()` refuses every spelling of `week`.
- *  - **`carryWeeks` is signed** (R-task-43), and `complete` keeps its `<= currentWeek` bound explicitly
+ *  - **`carryAge` is signed** (R-task-43), and `complete` keeps its `<= currentWeek` bound explicitly
  *    (R-task-44) — the guard it used to inherit from `WeekOffset.max(0)`.
  */
 @injectable()
@@ -145,7 +145,7 @@ export class TaskService {
    * week" must stay ONE interaction. The data model is not special-cased for it: there is no goal-less
    * task, no implicit inbox and no nullable `goalId`, and R-goal-39 still holds unconditionally.
    *
-   * `originWeekStart` comes from the parent's `periodKey` and from nowhere else (R-task-40). **No
+   * `originPeriodKey` comes from the parent's `periodKey` and from nowhere else (R-task-40). **No
    * back-dating** (R-task-41): a Weekly goal whose week is past refuses the create with `PERIOD_IN_PAST`.
    * Creating forward is unbounded — a Weekly goal three months out accepts tasks, they are invisible
    * until that week arrives (R-task-7) and are never styled as late (R-lens-11).
@@ -184,8 +184,8 @@ export class TaskService {
       // R-task-40 — seeded ONCE from the Weekly parent's `periodKey`, then immutable and never re-read.
       // The Weekly goal says what the work is for; this says when it was live, and at creation they are
       // equal BY CONSTRUCTION because there is no target-week parameter to disagree with the parent.
-      originWeekStart: goal.periodKey,
-      doneWeekStart: null,
+      originPeriodKey: goal.periodKey,
+      donePeriodKey: null,
       doneAt: null,
       exitReason: null,
       exitedAt: null,
@@ -213,7 +213,7 @@ export class TaskService {
     ]);
 
     return {
-      task: await this.detail(ctx, task, task.originWeekStart),
+      task: await this.detail(ctx, task, task.originPeriodKey),
       // R-task-49 — when a Weekly goal was created for you, the client must SAY SO: nothing may be
       // created invisibly. It is `null` on the ordinary path.
       goal: createdGoal ? await this.goalView(ctx, createdGoal) : null,
@@ -275,15 +275,15 @@ export class TaskService {
     const task = await this.load(ctx, id);
     this.assertNotExited(task, 'complete');
     if (task.status === 'done') {
-      throw new DomainError('TASK_ALREADY_EXITED', 'task is already completed', { doneWeekStart: task.doneWeekStart });
+      throw new DomainError('TASK_ALREADY_EXITED', 'task is already completed', { donePeriodKey: task.donePeriodKey });
     }
-    const weekStart = this.resolveWeekFor(ctx, task, input.week, { allowFuture: false });
+    const weekStart = this.assertPeriodFor(ctx, task, input.period, { allowFuture: false });
 
     const event = this.activity.append(ctx, id, 'completed', COMPLETED_TEXT, { weekStart });
     const next = await this.write(
       ctx,
       task,
-      { status: 'done', doneWeekStart: weekStart, doneAt: ctx.now },
+      { status: 'done', donePeriodKey: weekStart, doneAt: ctx.now },
       input.version,
       [event.write],
     );
@@ -291,7 +291,7 @@ export class TaskService {
   }
 
   /**
-   * R-task-19/20/21 — NOT an exit. Clears `doneWeekStart` and `doneAt`, KEEPS `originWeekStart` (so the
+   * R-task-19/20/21 — NOT an exit. Clears `donePeriodKey` and `doneAt`, KEEPS `originPeriodKey` (so the
    * task carries back into the current week under its ORIGINAL origin, with the carry label its real age
    * earns — S-task-19-1), and does not re-parent it or touch its goal.
    *
@@ -306,8 +306,8 @@ export class TaskService {
     this.assertNotExited(task, 'uncheck');
     if (task.status !== 'done') throw new DomainError('VALIDATION_FAILED', 'task is not completed');
 
-    const events = [this.activity.append(ctx, id, 'unchecked', UNCHECKED_TEXT, { doneWeekStart: task.doneWeekStart }).write];
-    const patch: Partial<Task> = { status: 'open', doneWeekStart: null, doneAt: null };
+    const events = [this.activity.append(ctx, id, 'unchecked', UNCHECKED_TEXT, { donePeriodKey: task.donePeriodKey }).write];
+    const patch: Partial<Task> = { status: 'open', donePeriodKey: null, doneAt: null };
     if (input.cond !== undefined && input.cond !== '' && input.cond !== task.cond) {
       patch.cond = input.cond;
       events.push(this.activity.append(ctx, id, 'cond_edited', condEditedText(task.cond, input.cond), {
@@ -323,7 +323,7 @@ export class TaskService {
   /**
    * R-task-15/17/36 / **R-backlog-29** — exit 2 of 3, on OPEN tasks only. ONE batch: the task takes its
    * terminal status and reason, and a backlog item appears carrying title, description and links, with
-   * `fromWeekStart` = the week the task was LIVE in (D-12 — not "this week", and not a display string).
+   * `fromPeriodKey` = the week the task was LIVE in (D-12 — not "this week", and not a display string).
    *
    * ⚠ **A2 — the item does NOT land on the task's own goal any more, and missing this writes an illegal
    * row silently.** The owning goal is now a **Weekly** goal, which may hold no backlog items
@@ -341,7 +341,7 @@ export class TaskService {
     const task = await this.load(ctx, id);
     this.assertOpenForExit(task);
     // R-task-36 — the week may be a future one: changing your mind about next week is not a fourth exit.
-    const fromWeekStart = this.resolveWeekFor(ctx, task, input.week, { allowFuture: true });
+    const fromPeriodKey = this.assertPeriodFor(ctx, task, input.period, { allowFuture: true });
     const { host, interior } = await this.nearestBacklogHost(ctx, task.goalId);
     const taskLinks = await this.links.listByTasks(ctx.userId, [task.id]);
     // ⚠ **A1 (R-backlog-18)** — an item arriving by the Move-to-Backlog exit lands at the TOP of its host
@@ -357,7 +357,7 @@ export class TaskService {
       title: task.title,
       description: task.description,
       capturedAt: now,
-      fromWeekStart,
+      fromPeriodKey,
       sortKey: top ?? FIRST_SORT_KEY,
       status: 'open',
       convertedToTaskId: null,
@@ -376,7 +376,7 @@ export class TaskService {
     const event = this.activity.append(ctx, id, 'moved_to_backlog', movedToBacklogText(input.reason), {
       reason: input.reason ?? null,
       itemId: item.id,
-      fromWeekStart,
+      fromPeriodKey,
       goalId: host.id,
     });
 
@@ -393,7 +393,7 @@ export class TaskService {
     );
 
     return {
-      task: await this.detail(ctx, next, fromWeekStart),
+      task: await this.detail(ctx, next, fromPeriodKey),
       item: toBacklogItemView(item, itemLinks, backlogLabelsOf(interior, host.id)),
       serverNow: ctx.now,
     };
@@ -591,19 +591,21 @@ export class TaskService {
   }
 
   /**
-   * D-1 — resolve a wire offset (offsets exist only on the wire) and enforce the week bounds for THIS
-   * operation.
+   * R-task-55 — the period bounds for THIS operation, checked against the key the CLIENT named.
    *
-   * `originWeek <= week` always: a task did not exist in a week before its own origin (S-task-14-2).
-   * `week <= currentWeek` for **complete** only (R-task-44) — you cannot finish work in a week that has
-   * not happened — while the other two exits work on future-dated work (R-task-36).
+   * ⚠ **A8** — the wire no longer carries an offset. The client sends the canonical period it is standing
+   * in, because an offset cannot say which scope it means once a task may be scoped to a month
+   * (S-task-55-2). The two bounds are unchanged:
+   *
+   * `origin <= period` always: a task did not exist in a period before its own origin (S-task-14-2).
+   * `period <= currentPeriod` for **complete** only (R-task-44) — you cannot finish work in a period that
+   * has not happened — while the other two exits work on future-dated work (R-task-36).
    */
-  private resolveWeekFor(ctx: RequestContext, task: Task, offset: number, opts: { allowFuture: boolean }): string {
-    const weekStart = weekStartFromOffset(ctx.currentWeekStart, offset);
-    if (weekStart < task.originWeekStart) {
+  private assertPeriodFor(ctx: RequestContext, task: Task, weekStart: string, opts: { allowFuture: boolean }): string {
+    if (weekStart < task.originPeriodKey) {
       throw new DomainError('WEEK_OUT_OF_RANGE', 'the task did not exist in that week', {
         weekStart,
-        originWeekStart: task.originWeekStart,
+        originPeriodKey: task.originPeriodKey,
       });
     }
     if (!opts.allowFuture && weekStart > ctx.currentWeekStart) {

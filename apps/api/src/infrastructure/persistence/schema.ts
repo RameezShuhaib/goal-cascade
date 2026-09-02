@@ -234,9 +234,9 @@ export const tasks = sqliteTable(
      * up rather than recorded changes meaning without a write (D-1). No join to `goals` is needed by any
      * week-scoped read, which is why `ix_tasks_open_week` still serves them all.
      */
-    originWeekStart: text('origin_week_start').notNull(),
+    originPeriodKey: text('origin_week_start').notNull(),
     /** R-task-14/19 — set on complete, cleared on uncheck. `done` is derived from it, never stored. */
-    doneWeekStart: text('done_week_start'),
+    donePeriodKey: text('done_week_start'),
     /** D-4 — the instant of completion. The "Done Fri 28 Aug" label is rendered from this. */
     doneAt: text('done_at'),
     /** D-15 — the optional reason from the Move/Cancel confirm sheet, retained on the record. */
@@ -249,9 +249,9 @@ export const tasks = sqliteTable(
   },
   (t) => [
     // R-task-7 — the open-task week scan: `status='open' AND origin_week_start <= :week`.
-    index('ix_tasks_open_week').on(t.userId, t.status, t.originWeekStart),
+    index('ix_tasks_open_week').on(t.userId, t.status, t.originPeriodKey),
     // R-task-8 — the done-task week lookup: `status='done' AND done_week_start = :week`.
-    index('ix_tasks_done_week').on(t.userId, t.status, t.doneWeekStart),
+    index('ix_tasks_done_week').on(t.userId, t.status, t.donePeriodKey),
     // R-goal-24 / R-nav-7 — per-goal counts and the carry signal.
     index('ix_tasks_goal').on(t.userId, t.goalId, t.status),
   ],
@@ -328,7 +328,7 @@ export const backlogItems = sqliteTable(
     /** Q-7 / D-17 — a real timestamp, never a display string like `'Today'`. */
     capturedAt: text('captured_at').notNull(),
     /** D-12 — the Monday of the week the task was LIVE in when it was moved out. */
-    fromWeekStart: text('from_week_start'),
+    fromPeriodKey: text('from_week_start'),
     /**
      * ⚠ **A1, new (R-backlog-17)** — the manual position within this item's OWN goal's list.
      *

@@ -11,10 +11,10 @@ import { FieldError, commandError } from './states';
 /**
  * One task row: the checkbox, the body, the carry label, and the skippable uncheck follow-up.
  *
- * Nothing here is computed. `done`, `completable`, `carryWeeks` and `originWeekStart` are the server's,
+ * Nothing here is computed. `done`, `completable`, `carryAge` and `originPeriodKey` are the server's,
  * for the week this list was built for.
  *
- * ⚠ **A2 (R-task-43) — `carryWeeks` is SIGNED, and this is the wire break that produces no type error.**
+ * ⚠ **A2 (R-task-43) — `carryAge` is SIGNED, and this is the wire break that produces no type error.**
  * `weeksBetween(origin, min(viewed, current))` goes NEGATIVE for work that is not due yet, so the guard
  * below is `>= 1` and not `!== 0`, and the chip's threshold is `>= 2`:
  *
@@ -147,18 +147,18 @@ function UncheckPrompt({ task }: { task: TaskView }) {
  * this is **the only place in the product where R-task-43's signed age turns into something a person
  * sees**. A rule enforced twice is a rule that will be corrected once.
  *
- * The sign is the whole point: `carryWeeks` is negative for work planned into a future week, so a plan
+ * The sign is the whole point: `carryAge` is negative for work planned into a future week, so a plan
  * never ages and the one escalation in this product never fires at it (R-lens-11).
  */
 export function CarryLabel({ task }: { task: TaskView }) {
   const S = useSkin();
-  const age = task.carryWeeks;
+  const age = task.carryAge;
   if (task.done || age < 1) return null;
   const sev = age >= 2 ? 'chip' : 'gray';
   return (
     <div style={{ marginTop: 4 }}>
       <span style={S.carryLabel(sev)}>
-        {sev === 'chip' ? `${age} weeks · since ${shortDate(task.originWeekStart)}` : `since ${weekLabel(task.originWeekStart)}`}
+        {sev === 'chip' ? `${age} weeks · since ${shortDate(task.originPeriodKey)}` : `since ${weekLabel(task.originPeriodKey)}`}
       </span>
     </div>
   );

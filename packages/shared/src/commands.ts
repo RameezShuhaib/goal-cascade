@@ -382,7 +382,7 @@ export const NewWeeklyGoalInput = z.object({ parentId: Ulid, title: Title }).str
 /**
  * R-task-3/39/40/41/48 — a task is created **under a Weekly goal**, and under nothing else.
  *
- * ⚠ **A2 — there is NO week field on this request, at all.** `originWeekStart` is seeded once from the
+ * ⚠ **A2 — there is NO week field on this request, at all.** `originPeriodKey` is seeded once from the
  * Weekly parent's `periodKey` and is immutable thereafter (R-task-40); a request carrying `week`,
  * `weekOffset` or `originWeek` is refused as an unknown key by `.strict()` (S-task-40-3). Nothing derives
  * a task's week by reading its goal at read time either — deleting the goal row from a query result must
@@ -423,22 +423,25 @@ export const PatchTaskRequest = z
   .strict();
 
 /**
- * R-task-14/44 — exit 1 of 3. Any week that has BEGUN is completable, including past ones (past weeks
- * stay fully interactive), so the week is explicit.
+ * R-task-14/44 — exit 1 of 3. Any period that has BEGUN is completable, including past ones (past periods
+ * stay fully interactive), so the period is explicit.
  *
- * ⚠ **A2 (R-rm-3, R-task-44) — the `.max(0)` on this line is NEW and load-bearing.** It used to be
- * inherited from `WeekOffset`, which no longer carries one; widening that schema would have removed this
- * guard **with no diff on this line at all**. You cannot finish work in a week that has not happened, and
- * the bound is now reachable at any distance because there is no forward cap anywhere else.
+ * ⚠ **A8 (R-task-55) — `week: WeekOffset.max(0)` became `period`, an explicit canonical key.** An offset
+ * cannot express *"the period I am standing in"* once a task may be scoped to a month: on Wed 2 Sep 2026
+ * the current week belongs to **August** while the current month is September, so "offset 0" has two
+ * different answers and the client is the only one that knows which surface it is on (S-task-55-2). The
+ * `.max(0)` it used to carry becomes `period <= currentPeriod(scope)`, re-stated in the service against
+ * the resolved key — the same bound, moved to where the scope is known.
  *
- * A week before the task's own origin is refused with `422 WEEK_OUT_OF_RANGE` (S-task-14-2). A task under
- * a FUTURE Weekly goal therefore cannot be completed at all until that week arrives — no week satisfies
- * both bounds — and its row renders no checkbox (S-task-44-1).
+ * A period before the task's own origin is refused with `422 WEEK_OUT_OF_RANGE` (S-task-14-2, the code is
+ * unchanged and is now scope-agnostic). A task under a FUTURE goal therefore cannot be completed at all
+ * until that period arrives — no period satisfies both bounds — and its row renders no checkbox
+ * (S-task-44-1, S-task-55-1).
  */
-export const CompleteTaskRequest = z.object({ week: WeekOffset.max(0).default(0), version: OptionalVersion }).strict();
+export const CompleteTaskRequest = z.object({ period: WeekStart, version: OptionalVersion }).strict();
 
 /**
- * R-task-19/21 — unchecking clears `doneWeekStart` and `doneAt`, keeps `originWeekStart`, logs
+ * R-task-19/21 — unchecking clears `donePeriodKey` and `doneAt`, keeps `originPeriodKey`, logs
  * `Unchecked`, and the task carries into the current week under its ORIGINAL origin with the carry label
  * its real age earns. `cond` is the skippable inline "Update the done-condition?" edit; omitted, blank,
  * or unchanged is a no-op that logs nothing (S-task-21-1, S-task-21-3).
@@ -447,7 +450,7 @@ export const UncheckTaskRequest = z.object({ cond: OneLiner.optional(), version:
 
 /**
  * R-task-15/36 / R-backlog-29 — exit 2 of 3. The task keeps its row with `status: 'movedToBacklog'`
- * (D-15) and becomes a backlog item carrying title, description and links, with `fromWeekStart` = the
+ * (D-15) and becomes a backlog item carrying title, description and links, with `fromPeriodKey` = the
  * week it was live in (D-12). The reason is optional (R-task-18) and is retained on the record.
  *
  * ⚠ **A2 (R-backlog-29) — the item does NOT land on the task's own goal any more.** That goal is now a
@@ -456,10 +459,13 @@ export const UncheckTaskRequest = z.object({ cond: OneLiner.optional(), version:
  * ancestor**, normally the Monthly parent. A Weekly goal whose only ancestor is a Life goal has no legal
  * target and the exit is refused with `LIFE_GOAL_NO_BACKLOG` (S-backlog-29-2).
  *
- * The week may be a future one (R-task-36): changing your mind about next week is not a fourth exit.
+ * The period may be a future one (R-task-36): changing your mind about next week is not a fourth exit.
+ *
+ * ⚠ **A8 (R-task-55)** — `week: WeekOffset` became `period`, for the same reason `CompleteTaskRequest`'s
+ * did: the client names the period it is standing in, because an offset cannot say which scope it means.
  */
 export const MoveTaskToBacklogRequest = z
-  .object({ week: WeekOffset.default(0), reason: Reason.optional(), version: OptionalVersion })
+  .object({ period: WeekStart, reason: Reason.optional(), version: OptionalVersion })
   .strict();
 
 /** R-task-16 — exit 3 of 3. The reason is optional and is retained on the record (D-15). */
@@ -506,7 +512,7 @@ export const PatchBacklogItemRequest = z
   .strict();
 
 /**
- * R-backlog-10 — move to any other non-Life, non-Weekly goal. `capturedAt`/`fromWeekStart` unchanged.
+ * R-backlog-10 — move to any other non-Life, non-Weekly goal. `capturedAt`/`fromPeriodKey` unchanged.
  *
  * ⚠ **A1 (R-backlog-20)** — the item also gets a **fresh `sortKey` at the top of the destination's list**.
  * Its old position is not preserved and there is no field here to preserve it with: manual order is per

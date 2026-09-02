@@ -71,7 +71,7 @@ export function BacklogItemCard({
         {item.description && <div style={{ fontSize: 13, color: S.body, marginTop: 4 }}>{item.description}</div>}
         {item.links.length > 0 && <div style={{ fontSize: 12, fontWeight: 700, color: S.T.accentLink, marginTop: 3 }}>{plural(item.links.length, 'link')}</div>}
         {/* R-task-15 / D-12 — the week the task was LIVE in, an absolute Monday, not "this week". */}
-        {item.fromWeekStart && <div style={{ fontSize: 11.5, color: S.T.mut, marginTop: 2 }}>from week of {shortDate(item.fromWeekStart)}</div>}
+        {item.fromPeriodKey && <div style={{ fontSize: 11.5, color: S.T.mut, marginTop: 2 }}>from week of {shortDate(item.fromPeriodKey)}</div>}
       </button>
       {/*
        * ⚠ **R-nav-31** — this was an inline `chipBtn` row **with no selected state at all**, and it is
