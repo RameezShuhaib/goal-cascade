@@ -32,7 +32,7 @@ import { indexTree, isLifeHorizon, lifeRootIn, type TreeIndex } from '../../doma
 import { FIRST_SORT_KEY, topKey } from '../../domain/sort-keys';
 
 import { dateInTimezone, isPastPeriod, isPeriodKeyFor } from '@goal-cascade/shared';
-import { NO_MEASURE } from '../../domain/measures';
+import { NO_MEASURE, assertMeasure, measureColumns } from '../../domain/measures';
 import type { RequestContext } from '../context';
 import {
   IBacklogLinkRepo,
@@ -90,22 +90,6 @@ function currentFrom(readings: readonly Reading[], start: number): number {
 
 /** R-task-58 — a measure field's old/new value, as the timeline renders it. `null` is `no target`. */
 const labelOfValue = (v: string | number | null): string => (v === null ? 'no target' : String(v));
-
-/**
- * R-measure-1 — the five columns, all-or-nothing. Given no input it is `NO_MEASURE`: the five nulls,
- * which is how "this task is an ordinary checkbox" is written and the only way to write it.
- */
-function measureColumns(m: MeasureInput | undefined) {
-  if (m === undefined) return NO_MEASURE;
-  return {
-    measureKind: m.kind,
-    measureStart: m.start,
-    // No readings exist yet, so `current` IS `start` (R-measure-3). It is never client-supplied.
-    measureCurrent: m.start,
-    measureTarget: m.target,
-    measureUnit: m.unit,
-  };
-}
 
 /**
  * The task lifecycle — R-task-3..50, Q-6, Q-17, D-1, D-4, D-12, D-13, D-15.
@@ -233,7 +217,7 @@ export class TaskService {
     const now = ctx.now;
     const writes: GuardedWrite[] = [];
 
-    if (input.measure !== undefined) this.assertMeasure(input.measure);
+    if (input.measure !== undefined) assertMeasure(input.measure);
     const { goal, createdGoal } = await this.resolveTarget(ctx, input, today);
     if (createdGoal) writes.push({ label: 'goal.insertForTask', stmt: this.goals.insertStmt(createdGoal) });
     const scope = goal.horizon === 'Monthly' ? 'Monthly' : 'Weekly';
@@ -636,7 +620,7 @@ export class TaskService {
   async setMeasure(ctx: RequestContext, id: string, input: SetMeasureRequest): Promise<TaskResponse> {
     const task = await this.load(ctx, id);
     this.assertNotExited(task, 'carry a measure');
-    const m = this.assertMeasure(input.measure);
+    const m = assertMeasure(input.measure);
 
     /**
      * ⚠ **R-measure-3 — `currentFrom`, not `readings.at(-1)`.**
@@ -894,32 +878,6 @@ export class TaskService {
       [event.write],
     );
     return { task: await this.detail(ctx, next, cursor.periodKey), goal: null, serverNow: ctx.now };
-  }
-
-  /**
-   * ⚠ **R-measure-4 — THE `target === start` rule, and it reads two numbers.**
-   *
-   * It names no movement, and "maintain" — the only thing it could mean — is out of scope for this
-   * amendment. **This is the whole enforcement point**, deliberately here rather than in a Zod refinement
-   * on `MeasureInput`: a refinement guards `/api/*` alone, and the MCP tools declare their own schemas,
-   * so `set_task_measure` used to write a `5 / 5` measure with no progress and a
-   * `Measure added: counter, 5 → 5` line beside it. It also could never carry its own code, because
-   * `api/validate.ts` flattens every schema failure to `VALIDATION_FAILED` — which is how the web came to
-   * render the constant's NAME to the owner as a toast.
-   *
-   * Refusing it here is only half the rule. The other half is that where such a row exists **anyway** — a
-   * migration, a hand-edit, a bug — **no division is performed**: `progressOf` returns `null` and the
-   * field is omitted from the wire (`domain/measures.ts`). `NaN`, `Infinity`, `0%` and `100%` are each
-   * specifically forbidden as the answer, because this is the one place a divide-by-zero reaches a screen.
-   */
-  private assertMeasure(m: MeasureInput): MeasureInput {
-    if (m.target !== null && m.target === m.start) {
-      throw new DomainError('MEASURE_TARGET_EQUALS_START', 'a target equal to the start names no movement', {
-        start: m.start,
-        target: m.target,
-      });
-    }
-    return m;
   }
 
   /** R-measure-3 — a reading needs somewhere to go. A checkbox has nowhere (`NO_MEASURE`, 409). */

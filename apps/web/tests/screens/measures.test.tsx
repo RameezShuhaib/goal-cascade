@@ -6,6 +6,7 @@ import { AppShell } from '../../src/AppShell';
 import { renderApp } from '../render';
 import { bodyOf, cmd, lastRequest, server } from '../msw/handlers';
 import * as F from '../msw/fixtures';
+import * as C from '../../src/components/measureCopy';
 
 /**
  * ⚠ **A8 (R-measure-1 … R-measure-9) — a task's number.**
@@ -51,12 +52,33 @@ describe('R-measure-4 — every measure state on a row, and the two keys that ar
     return (await screen.findByText(t.title)).closest('button') as HTMLElement;
   };
 
-  /** A task with NO measure renders exactly as it did before — byte-identical, and that is a requirement. */
-  it('no measure: no line, no bar, nothing added to the row at all', async () => {
-    const row = await rowOf({});
-    expect(within(row).getByText('Done when: 300 logged in the CRM')).toBeInTheDocument();
-    expect(screen.queryByTestId('measure-line')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('measure-bar')).not.toBeInTheDocument();
+  /**
+   * ⚠ **A task with NO measure renders exactly as it did before — byte-identical, and that is a
+   * requirement (R-measure-1, S-measure-1-1).**
+   *
+   * Both rows are in the SAME week, on the same screen, differing in one field. The previous version
+   * rendered a measure-less task alone and asserted two absences, which is also what a build with no
+   * measure feature at all produces — it could not distinguish *suppressed* from *not implemented*, and
+   * it passed unchanged against the commit before this feature existed.
+   */
+  it('no measure: no line, no bar, nothing added to the row — beside a row that HAS all three', async () => {
+    const plain = rowTask({ id: F.ulid(22), title: 'Call the three warm ones' });
+    const measured = rowTask({ measure: F.measure({ kind: 'counter', start: 0, current: 62, target: 300, unit: 'leads', progress: 62 / 300 }) });
+    withWeek({ tasks: [plain, measured] });
+    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+
+    const plainRow = (await screen.findByText(plain.title)).closest('button') as HTMLElement;
+    const measuredRow = screen.getByText(measured.title).closest('button') as HTMLElement;
+
+    // The measured row proves the feature is on this screen at all.
+    expect(within(measuredRow).getByTestId('measure-line')).toHaveTextContent('62 / 300 leads');
+    expect(within(measuredRow).getByTestId('measure-bar')).toBeInTheDocument();
+
+    // The plain row carries the title and the done-condition, and nothing else has been added to it.
+    expect(within(plainRow).getByText('Done when: 300 logged in the CRM')).toBeInTheDocument();
+    expect(within(plainRow).queryByTestId('measure-line')).not.toBeInTheDocument();
+    expect(within(plainRow).queryByTestId('measure-bar')).not.toBeInTheDocument();
+    expect(plainRow.textContent).toBe('Call the three warm onesDone when: 300 logged in the CRM');
   });
 
   it('a counter with a target: `62 / 300 leads` and a bar at the server’s own progress', async () => {
@@ -308,8 +330,15 @@ describe('R-measure-3 — recording: one eyebrow, one field, one button', () => 
     await waitFor(() => expect(screen.getByText('Recorded 65. Now 65 of 300 leads.')).toBeInTheDocument());
     expect(field).toHaveFocus();
     expect(field).toHaveValue('');
-    // No toast: a notification about a value that repainted three lines above the field.
-    expect(screen.queryByText('Recorded')).not.toBeInTheDocument();
+    /**
+     * ⚠ **No toast: a notification about a value that repainted three lines above the field.**
+     *
+     * Asserted on the ROLE, not on a string. `queryByText('Recorded')` is a whole-string exact match, so
+     * it fires only on an element whose entire text is that one word — which no toast this product can
+     * render ever is, and every real toast would have slipped past it. `Toast` is the only
+     * `role="status"` on this page, so its absence is the assertion.
+     */
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   /** R-measure-3 accepts an absolute against a counter — correcting it to where it actually is. */
@@ -376,9 +405,22 @@ describe('R-measure-3 — recording: one eyebrow, one field, one button', () => 
 
     await waitFor(() => expect(screen.getAllByTestId('measure-line')[0]).toHaveTextContent('300 / 300 leads'));
     expect(screen.getAllByTestId('measure-bar')[0]).toHaveAttribute('data-fill', '100');
-    // The announcement is the ordinary one, and there is no second sentence beside it.
-    expect(screen.getByText('Recorded 300. Now 300 of 300 leads.')).toBeInTheDocument();
-    expect(screen.queryByText(/complete|done!|reached|target hit|100%|congrat/i)).not.toBeInTheDocument();
+    /**
+     * ⚠ **THE GOVERNING RULE OF THE FEATURE, asserted as an EQUALITY.**
+     *
+     * The announcing region's whole text must BE the ordinary sentence — not merely contain it, and not
+     * merely avoid six words someone thought of in advance. A blacklist of `complete|done!|reached|target
+     * hit|100%|congrat` passes `🎉 Nice one`, `Target met` and `Nailed it`; no list of forbidden words
+     * can prove *nothing else was said*. `recordedAnnouncement` is called rather than spelled out, so the
+     * assertion is "the region says exactly what a record says" and cannot drift from the copy it pins.
+     */
+    const announced = C.recordedAnnouncement(
+      F.measure({ kind: 'counter', start: 0, current: 300, target: 300, unit: 'leads', progress: 1 }),
+    );
+    expect(announced).toBe('Recorded 300. Now 300 of 300 leads.');
+    await waitFor(() => expect(screen.getByTestId('measure-announcement').textContent).toBe(announced));
+    // And nothing celebratory anywhere else on the page either — not a toast, not a badge, not a line.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
     // R-measure-6 — the checkbox is unchanged in every particular. It does not auto-tick at target.
     expect(screen.getByRole('button', { name: 'Complete Book the Tuesday slot' })).toBeInTheDocument();
   });
@@ -444,8 +486,15 @@ describe('R-measure-5 — the sparkline and the readings, on the task page and o
     const svg = screen.getByTestId('measure-sparkline');
     expect(svg).toHaveAttribute('aria-hidden', 'true');
     expect(svg).toHaveAttribute('preserveAspectRatio', 'none');
+    /**
+     * ⚠ **EXACTLY ONE CHILD, counted rather than enumerated.** An enumerated blacklist — `line, circle,
+     * text, rect, g, defs` — missed `polyline`, `polygon`, `use`, `marker`, `image`, `foreignObject`,
+     * `animate`, `tspan` and, pointedly, **`<title>`**: the standard SVG tooltip, which `Sparkline.tsx`'s
+     * own docblock forbids by name and which no list assembled by hand reliably remembers. The rule is
+     * "one `<svg>`, one `<path>`, and nothing else", so it is counted.
+     */
+    expect(svg.querySelectorAll('*')).toHaveLength(1);
     expect(svg.querySelectorAll('path')).toHaveLength(1);
-    expect(svg.querySelectorAll('line, circle, text, rect, g, defs')).toHaveLength(0);
     const d = svg.querySelector('path')!.getAttribute('d')!;
     expect(d).toMatch(/^M [\d.]+ [\d.]+ L [\d.]+ [\d.]+ L [\d.]+ [\d.]+$/);
     expect(d).not.toMatch(/[CQSTA]/);

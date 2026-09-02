@@ -379,7 +379,14 @@ export const group = (over: Partial<LifeGroupView> & { id: string | null }): Lif
 /** One lens page, exactly as `GoalService.lens` builds it (R-lens-16). */
 export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensResponse {
   const items = over.items ?? [];
-  const groups = over.groups ?? [...new Set(items.map((i) => i.lifeRootId))].map((id) => group({ id, openTasks: 0 }));
+  /**
+   * ⚠ **A8 (R-lens-31)** — the band's Monthly goals, resolved from `monthTasks` against the fixture's
+   * interior tree, which is exactly how `GoalService.lens` resolves them. A test about a **carried**
+   * month task — whose goal is in an earlier month than the band's — passes its own array.
+   */
+  const monthGoals = over.monthGoals ?? goalsOfMonthTasks(over.monthTasks ?? []);
+  const groups =
+    over.groups ?? [...new Set([...items, ...monthGoals].map((i) => i.lifeRootId))].map((id) => group({ id, openTasks: 0 }));
   return {
     nextCursor: null,
     hasForwardContent: false,
@@ -398,6 +405,7 @@ export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensRespo
     // ⚠ **A8 (R-lens-31)** — the month band. Empty by default and on every lens but Weekly; a test that
     // wants it passes both, because the key and the array must agree about which month is on screen.
     monthTasks: over.monthTasks ?? [],
+    monthGoals,
     monthPeriodKey: over.monthPeriodKey ?? (over.lens === 'Weekly' ? periodKeyOf('Monthly', THIS_MONDAY) : null),
     // R-lens-23 — one entry per DISTINCT parent, with Life parents left out (the suppression is an
     // absence). Derived here exactly as `GoalService.lens` derives it, from the same fixture tree.
@@ -407,6 +415,17 @@ export function lens(over: Partial<LensResponse> & { lens: Horizon }): LensRespo
 
 /** Every interior goal in the fixture account, by id — the set `GoalService` resolves parent lines from. */
 const INTERIOR = (): GoalView[] => [...lifeGoals(), ...yearlyGoals(), ...quarterlyGoals(), ...monthlyGoals()];
+
+/** R-lens-31 — one entry per distinct `goalId`, in `monthTasks`' own first-appearance order. */
+function goalsOfMonthTasks(tasks: readonly TaskView[]): GoalView[] {
+  const byId = new Map(INTERIOR().map((g) => [g.id, g]));
+  const out: GoalView[] = [];
+  for (const id of new Set(tasks.map((t) => t.goalId))) {
+    const g = byId.get(id);
+    if (g) out.push(g);
+  }
+  return out;
+}
 
 function parentsOf(items: readonly GoalView[]): GoalRefView[] {
   const byId = new Map(INTERIOR().map((g) => [g.id, g]));

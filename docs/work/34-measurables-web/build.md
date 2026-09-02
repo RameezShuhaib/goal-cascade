@@ -10,6 +10,10 @@ Green at the end: **655 api / 481 web / 132 shared**, typecheck clean across all
 `npm run build -w @goal-cascade/web` emitting `dist/sw.js` with a 13-entry precache manifest. Floors were
 655 / 439 / 132. Nothing deployed, nothing merged.
 
+⚠ **§13 is a later pass on this same build**: five defects found by review before anything merged, plus six
+test-quality gaps in the tests below. Two of the five needed the wire. Green after it: **661 api / 491 web /
+132 shared**. Where §1–§12 and §13 disagree, **§13 is what shipped.**
+
 ---
 
 ## 1. What shipped
@@ -134,7 +138,8 @@ appeared.
 
 ## 6. Divergences from the UX plan, and why
 
-1. **Where the band's Monthly goals come from — a second read the plan did not budget for.**
+1. **Where the band's Monthly goals come from — a second read the plan did not budget for.** ⚠ **RESOLVED
+   IN §13, and the read was not merely expensive — it was WRONG. `LensResponse.monthGoals` landed.**
    §4.1 says the band renders `Title` and `LifeLine` per Monthly goal. **The wire does not carry them**:
    `monthTasks` is tasks only, and `items`, `carried`, `groups` and `parents` on a Weekly payload are all
    about *Weekly* goals. So `MonthBand` reads `useLens('Monthly', monthPeriodKey)` — **one** extra request,
@@ -265,7 +270,11 @@ it *should* scroll) are all unverified by eye and are the E2E pass's first four 
 
 ---
 
-## 11. Hand-off: put the band's goals on the wire (API-side, not done here)
+## 11. Hand-off: put the band's goals on the wire (API-side, not done here) — ⚠ **DONE IN §13**
+
+*Kept as written because §13's fix is exactly this, and because the cost analysis below is what justified
+it. The one thing this section got wrong is stated at the top of §13.1: the extra read was not only a round
+trip, it answered with the wrong month's goals.*
 
 **The problem, precisely.** `LensResponse.monthTasks` carries `TaskView`s and nothing else. The band has to
 draw one card per Monthly goal — `Title` (title + pulse dot) and `LifeLine` (`under <life goal>`, plus the
@@ -348,3 +357,176 @@ and letting the existing chips do the rest.
 
 There is **no UX design for it**: `33-measurables-ux` does not cover the Backlog page, so this needs a UX
 pass before a build one, not a build agent guessing at a second button on a row.
+
+---
+
+## 13. The fix pass: five defects, six test-quality gaps
+
+Found by code review against this branch **before anything merged**. Nothing here is a new feature; every
+item is something §1–§12 built or tested wrongly. Floors held: **661 api / 491 web / 132 shared** (from
+655 / 481 / 132), typecheck clean in all three workspaces, `npm run build -w @goal-cascade/web` green.
+Nothing deployed, nothing merged.
+
+### 13.1 A carried month task rendered nowhere — and could take the whole band with it
+
+**The defect.** `MonthBand` read `useLens('Monthly', monthPeriodKey)` and indexed *that month's* goals by
+id, then dropped every card whose goal it could not find. A **carried** month task's goal keeps its own
+earlier `periodKey` (R-task-53) — a task carried out of June and open in August hangs off a **June**
+Monthly goal, which is not on August's page — so the row was filtered out silently, and when every task in
+the band was carried `cards.length === 0` returned `null`: the heading, the deadline sentence and the
+past-month foot all gone, while `showMonthBand` was true. Carrying is the whole reason month tasks exist,
+so this broke the feature's main case.
+
+**§11's own proposal, built.** `LensResponse.monthGoals: GoalView[]` — Weekly lens only, one entry per
+distinct `goalId` in `monthTasks`, in that array's first-appearance order, resolved out of `interior`,
+which already holds **every** Monthly goal the account has (R-lens-27). It costs **no read**: the
+`listByIds` §11 budgeted for was not even needed, because the ids were already in memory. `groupsOf` is
+widened to cover them so a Life line reached only through the band still resolves its `under …` — which is
+a genuine amendment to R-lens-19 and is written up in `SPEC.md` as one: `groups` covers *what the screen
+shows*, not what `items` holds. `openTasks` stays 0 there; S-lens-31-3 is untouched.
+
+**The `useLens('Monthly', …)` call and both maps it fed are deleted, not kept as a fallback**, and a test
+asserts the Weekly lens makes **zero** `lens=Monthly` requests. A fallback read would be the defect
+re-added with a longer path to it.
+
+### 13.2 `Move to Backlog` on a month task was refused every time
+
+`ConfirmTaskExitSheet` took a week **offset** and `useMoveTaskToBacklog` turned it into
+`addWeeks(currentMonday, week)` — always a Monday. A Monday against a `scope: 'Monthly'` task is
+`WEEK_OUT_OF_RANGE`: the server's scope check doing exactly its job (R-task-52). The sheet was already
+reading `task.scope` two lines away, to name the goal the item lands on, so the fact was on the screen
+while the write was wrong.
+
+It now sends `clock.periodFor(task.scope, week, task.originPeriodKey)` — **the client's one spelling of
+"the period to write a task into"**, whose docblock already named the exit sheet as one of its callers.
+`periodFor` gained an optional origin as a **lower bound**: the current month is right for a carried task
+and wrong for one written into a month that has not arrived (legal and ordinary — R-goal-36), so the
+answer is the later of the two. It is a comparison of two `YYYY-MM` keys, not a date computation — the
+property R-goal-33 chose the format for — so no calendar function is declared outside `shared/calendar`.
+
+### 13.3 `Move to <month>`: withdrawn, and here is why there was no third option
+
+The un-park button sent `period: monthlyAncestor.periodKey` unconditionally, so whenever that month was
+past the server answered `PERIOD_IN_PAST` — and the MSW handler did not replicate the refusal, so a green
+test pinned a write that could not succeed. Worse than untested: it looked like a guard.
+
+**"Retarget to the current month instead" is not an option that exists.** `unpark` derives the destination
+from the tree — the Weekly goal's nearest Monthly ancestor — and then *checks* the key the client sent
+against that goal's own month, refusing any other with `VALIDATION_FAILED`. There is exactly one legal key
+and it is the one that is past. So the two honest behaviours are *send a write the server refuses* or
+*take the control away*, and **the control is taken away**: `MonthBand`'s own answer to the identical
+shape, `canUnpark = !isPastPeriod('Monthly', ancestor.periodKey, today)`, the error unreachable rather
+than handled. D-5 applies unchanged — withdrawn, never disabled, and **no sentence apologising for an
+option that was never real**. The `In the week of 31 Aug.` line still renders: where the task lives is a
+fact and stays true.
+
+**It is not the rare case.** At the seam the Weekly lens shows the week of Mon 31 Aug while the calendar
+month is September, so a task in *this* week under an August Monthly goal meets it on 2 September.
+
+### 13.4 `Park in a week` dead-ended for a carried task — the offer moves, the control stays
+
+`weeks = taskWeeksInMonth(task.originPeriodKey, clock.today)`, and a carried task's **origin** month is
+behind, so every week of it was filtered out as past: `weeks` was `[]`, `chosen` was `null`, `blocked` was
+permanently true. The sheet opened and could never be finished.
+
+**Decided: offer the weeks of the month the task is IN now** — the same `periodFor` answer §13.2 uses —
+rather than withdrawing the control. Parking a long-carried task into a week of the month it has reached
+is the most useful thing this sheet does; withdrawing it would leave that task with no way out of the
+month but an exit, which is the opposite of what R-task-59 is for. It is also exactly what the server
+accepts: `park` bounds the target week by `PERIOD_IN_PAST` and by **nothing else** — it does not require
+the week to sit inside the task's origin month — so no option offered can be refused. The destination line
+moves with it (`Lands in the week of 14 Sep · Sep 2026.`): naming the origin month would describe a month
+the write does not touch.
+
+*The asymmetry with §13.3 is not an inconsistency.* Park has up to four legal targets and needed the right
+list; un-park has exactly one legal target and it is illegal. A control is re-aimed when something legal is
+left to offer, and withdrawn when nothing is.
+
+### 13.5 A measure attached during a backlog conversion was silently discarded — and it was an API change
+
+The sheet renders `MeasureFields` on both save paths, validates the draft on both, and **gates `Save task`
+on that validity** on both (`measureBlocked`) — then the `convertItem` branch dropped the measure on the
+floor. A number the owner was required to get right, discarded without a word: A9's own
+silent-partial-write defect in a new place.
+
+`ConvertBacklogItemRequest` did **not** accept a measure (it is `.strict()`), so this is an API change and
+it is made: `measure: MeasureInput.optional()`, the twin of `CreateTaskRequest.measure`. Hiding the fields
+on that path was rejected — it makes the same task reachable with a number through one door and not the
+other, for no reason the owner can see.
+
+Server-side it is **explicit only**. `buildTaskWrites`' comment *"a conversion never brings a measure"* was
+right about the **item** (which has no number to carry) and was doing duty for a rule about the
+**command**; it now says so, and absent still means the five nulls. The task comes back measurable with its
+`Measure added` line in the same batch (R-task-58) — which meant `toNewTaskDetailView`'s hardcoded
+`measure: null` and single-event array had to go too, or the response would have lied about the row it had
+just written.
+
+**`assertMeasure` and `measureColumns` moved from `TaskService` to `domain/measures.ts`.** The docblock
+claimed to be *"the whole enforcement point"*, which was true while one service wrote measures and stopped
+being true the moment a conversion could. They are module functions now, called by both minting paths, and
+`MEASURE_TARGET_EQUALS_START` answers 422 on both.
+
+### 13.6 The six test-quality gaps
+
+| Gap | What it was | What it is now |
+|---|---|---|
+| **A** | `Pull from backlog` asserted absent only in the **past-month** test, where the whole `LinkRow` is already gone — deleting `pull={false}` kept the suite green | asserted on the off-seam test, on the card that **does** render `+ Task`, where the prop is the only thing suppressing it |
+| **B** | *the governing rule of the feature* guarded by a six-word blacklist that `🎉 Nice one`, `Target met` and `Nailed it` all pass | the announcing region's full `textContent` **equals** `recordedAnnouncement(m)` — the copy function is called, not spelled, so the assertion cannot drift from what it pins |
+| **C** | an enumerated list of forbidden SVG children, missing `polyline`, `polygon`, `use`, `marker`, `image`, `foreignObject`, `animate`, `tspan` and — pointedly — **`<title>`**, the tooltip `Sparkline.tsx`'s own docblock forbids by name | `svg.querySelectorAll('*')` has length **1**. Not a list; a count |
+| **D** | `queryByText('Recorded')` — a whole-string exact match, so it fires only on an element whose entire text is that one word, which no real toast is | `queryByRole('status')` |
+| **E** | three tests passed identically against `main`: a no-measure row that never constructs a measure; a "band absent" test whose two conditions were already true; and a "both directions" title asserting one | the plain row is now rendered **beside a measured one on the same screen**; the band test carries its own counter-example (same payload, one task added); the un-park direction is asserted, which is where 13.3 and 13.4 lived |
+| **F** | carry suppression tested at `carryAge: 3` only, by matching three strings — missing the age-1 branch, and unable to tell *suppressed* from *spelled differently* | `CarryLabel`'s wrapper carries `data-testid="carry-label"`; asserted **absent in the band and present on the same task in the Monthly lens**, at ages 1 and 3 |
+
+### 13.7 The ledger — what was proven to fail first, and what is a guard
+
+**The rule, applied literally: a test is a regression guard only if it was RUN against the unfixed code and
+failed.** Everything else is labelled coverage or a guard, and where a guard's value depends on a
+counterfactual, that counterfactual was **run**, not reasoned about.
+
+| Test | Verdict |
+|---|---|
+| `monthBand` — carried task renders under its own goal's title | **proven to fail first** (its goal was not in the Monthly page's `byId`) |
+| `monthBand` — the whole band renders when every task is carried | **proven to fail first** (`MonthBand` returned `null`) |
+| `monthBand` — no `lens=Monthly` request | **proven to fail first** (1 request) |
+| `month-tasks` (api) — `monthGoals` carries a goal from an earlier month | **proven to fail first** (re-run against `monthGoals: []`) |
+| `month-tasks` (api) — a band-only Life root is in `groups` | **proven to fail first** (same run) |
+| `month-tasks` (api) — `monthGoals` empty on every other lens | **coverage** — vacuously true before, because the field did not exist |
+| `park` — `Move to Backlog` on a month task posts a month key | **proven to fail first** (posted `2026-08-31`) |
+| `park` — a week task still posts its week | **coverage** — green before and after; it pins the half that must not move |
+| `park` — un-park withdrawn when the ancestor's month is past | **proven to fail first**, re-run after tightening the name regex: `/^Move to /` also matched `Move to Backlog`, so the first red was for the wrong reason and does not count |
+| `park` — a carried task's Park offers the current month's weeks | **proven to fail first** (no radiogroup at all: the list was empty) |
+| `backlog` — a measure travels on the convert command | **proven to fail first** (no `measure` in the body) |
+| `backlog` — no `measure` key when none was attached | **coverage** — green before and after |
+| `convert` (api) — the conversion carries a named measure and logs it | **proven to fail first** (re-run with the passthrough removed) |
+| `convert` (api) — `target === start` refused on this path | **proven to fail first** (same run) |
+| `convert` (api) — no measure named ⇒ an ordinary checkbox | **coverage** |
+| **A** — `Pull from backlog` absent where `+ Task` renders | **guard**, green before and after. **Counterfactual RUN**: deleting `pull={false}` turns it red |
+| **B** — the announcement equals `recordedAnnouncement(m)` | **guard**, green before and after. **Counterfactual RUN**: appending `' Nailed it.'` to the announcement turns it red — the old blacklist stayed green |
+| **C** — the sparkline's `<svg>` has exactly one child | **guard**, green before and after. **Counterfactual RUN**: adding `<title>Readings</title>` turns it red — the old enumeration stayed green |
+| **D** — `queryByRole('status')` | **guard**, green before and after. **Counterfactual RUN**: showing a toast on record turns it red — the old `queryByText('Recorded')` stayed green |
+| **E** — the plain row beside a measured one | **guard**. It is the assertion `main` cannot pass, which is exactly what the gap was |
+| **E** — the band's counter-example in the same test | **guard**. It discriminates against *no band at all*; it does **not** discriminate a gate keyed on `monthGoals`, because `MonthBand` returns `null` for an empty card list either way. Stated rather than claimed — that counterfactual was run and stayed green |
+| **E** — both directions withdrawn once the task is not open | **guard** for the un-park half, which was untested |
+| **F** — `carry-label` absent in the band, present in the Monthly lens, at ages 1 and 3 | **proven to fail first** (the `data-testid` did not exist). **Counterfactual also RUN**: dropping `suppressCarry` turns it red |
+
+**Counts.** Web 481 → **491** (+10: 4 `monthBand`, 4 `park`, 2 `backlog`; `measures` is net 0 — four tests
+strengthened in place, none added, none weakened). API 655 → **661** (+3 `month-tasks`, +3 `convert`).
+Shared **132**, unchanged. **Nothing was retired and nothing was weakened.**
+
+### 13.8 Docs
+
+- `docs/SPEC.md` §2: **R-lens-31** (`monthGoals` on the wire, and the R-lens-19 amendment it forces),
+  **R-task-55** (the exits name a period at the task's own scope; the "month a task is in now" rule),
+  **R-task-56** (Park's option list; un-park's third withdrawal), **R-backlog-31** (the conversion carries a
+  named measure, and where the one enforcement point now lives). §6's Amendment 8 ledger gains **The web
+  half's fix pass**, tabulating the five with which of them touched the wire.
+- ⚠ **`docs/BUSINESS-RULES.md` DID change this time**, in two bullets — Park's week list and its
+  one-legal-destination rule, and that the conversion sheet's save carries whatever you set in it — so
+  `apps/api/src/api/mcp/business-rules.ts` is **regenerated in the same commit**, and
+  `apps/api/tests/mcp/verbatim.test.ts` is green as the proof rather than as an alibi.
+
+### 13.9 Still true from §10, and still not verified by eye
+
+No browser pass was run in this pass either. The month band's cards now arrive **with** the rest of the
+lens rather than a round trip later, which removes the seam §11 predicted — that improvement is reasoned
+from the deleted request and the passing test, **not seen**. It stays first on the E2E list.

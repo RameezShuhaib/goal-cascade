@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
-import { labelOf, type TaskDetailView } from '@goal-cascade/shared';
+import { isPastPeriod, labelOf, type TaskDetailView } from '@goal-cascade/shared';
 import { useUI } from '../context/UIContext';
 import { useAddTaskLink, useCompleteTask, useGoal, usePatchTask, useRemoveTaskLink, useRetargetTask, useTask, useUncheckTask } from '../api/queries';
 import { useWeekClock } from '../lib/weekClock';
@@ -483,13 +483,30 @@ function mondayInPath(path: string | null): string | null {
  * Both are withdrawn — **never disabled, and with no sentence apologising for the absence** (D-5) — when
  * the task is not open, on R-task-17's existing rule: a task that has left a period cannot be moved
  * between periods.
+ *
+ * ⚠ **And un-park is withdrawn a second time: when the monthly ancestor's month is PAST.**
+ *
+ * The destination is fully determined by the tree — the server walks to the Weekly goal's nearest
+ * Monthly ancestor and then *checks* the key the client sent against that goal's own month, refusing any
+ * other with `VALIDATION_FAILED` — so there is no second month this control could name and **retargeting
+ * to the current month instead is not an option that exists**. That leaves exactly two honest behaviours
+ * once the ancestor's month has ended: send a write the server refuses with `PERIOD_IN_PAST`, or take the
+ * control away. It is taken away, which is `MonthBand`'s own answer to the identical shape (R-goal-36,
+ * R-task-41): **the error is unreachable rather than handled**, so it is not caught, not mapped and not
+ * copy-written for. The line above still renders, because where the task lives is a fact and stays true.
+ *
+ * It is not rare and it is not the past: at the seam the Weekly lens shows the week of Mon 31 Aug while
+ * the calendar month is September, so a task in **this** week under an August Monthly goal meets it.
  */
 function WhereThisGoes({ task, monthlyAncestor }: { task: TaskDetailView; monthlyAncestor: { periodKey: string } | null }) {
   const S = useSkin();
   const ui = useUI();
+  const clock = useWeekClock();
   const retarget = useRetargetTask();
   const isMonth = task.scope === 'Monthly';
   const monthLabel = monthlyAncestor ? labelOf('Monthly', monthlyAncestor.periodKey) : '';
+  /** R-goal-36 / R-task-41 — the product's existing past-period rule, read once and branched on once. */
+  const monthHasEnded = monthlyAncestor !== null && isPastPeriod('Monthly', monthlyAncestor.periodKey, clock.today);
 
   const line = isMonth
     ? monthTaskPlaceLine(labelOf('Monthly', task.originPeriodKey))
@@ -504,7 +521,7 @@ function WhereThisGoes({ task, monthlyAncestor }: { task: TaskDetailView; monthl
           {PARK_IN_A_WEEK}
         </button>
       )}
-      {task.status === 'open' && !isMonth && monthlyAncestor && (
+      {task.status === 'open' && !isMonth && monthlyAncestor && !monthHasEnded && (
         <button
           type="button"
           style={{ ...S.menuBtn, marginTop: 10 }}

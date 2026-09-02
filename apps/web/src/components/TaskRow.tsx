@@ -214,7 +214,12 @@ export function CarryLabel({ task }: { task: TaskView }) {
   const since = isMonth ? monthSinceLabel(task.originPeriodKey) : weekLabel(task.originPeriodKey);
   const chipSince = isMonth ? monthSinceLabel(task.originPeriodKey) : shortDate(task.originPeriodKey);
   return (
-    <div style={{ marginTop: 4 }}>
+    /*
+     * ⚠ `data-testid` so the month band's suppression (S-lens-31-2) is a PRESENCE test rather than a
+     * string match: the two branches below spell the label two different ways, and a test that matched
+     * strings could not tell "suppressed" from "spelled differently".
+     */
+    <div data-testid="carry-label" style={{ marginTop: 4 }}>
       <span style={S.carryLabel(sev)}>
         {sev === 'chip' ? `${age} ${task.carryUnit} · since ${chipSince}` : `since ${since}`}
       </span>

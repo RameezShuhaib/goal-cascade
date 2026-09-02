@@ -11,6 +11,7 @@ import type {
   MoveBacklogItemRequest,
   PatchBacklogItemRequest,
   GoalView,
+  MeasureInput,
   ReorderBacklogItemRequest,
   TaskDetailView,
   TaskEventView,
@@ -21,6 +22,7 @@ import type { BacklogItem, BacklogLink, Goal, Task, TaskEvent, TaskLink } from '
 import { TASK_EVENT_GLYPHS, type TaskScope, type TaskSource } from '../../domain/enums';
 import { DomainError, notFound } from '../../domain/errors';
 import { indexTree, isLifeHorizon } from '../../domain/goal-tree';
+import { assertMeasure, measureColumns, toMeasureView } from '../../domain/measures';
 
 import { between, rekey, topKey, withinGoal } from '../../domain/sort-keys';
 import { dateInTimezone, isPastPeriod, isPeriodKeyFor } from '@goal-cascade/shared';
@@ -36,6 +38,7 @@ import {
   ITaskRepo,
 } from '../ports';
 import { GuardedBatch } from './guarded-batch';
+import { measureAddedText } from './activity-log';
 import { backlogLabelsOf, currentPeriodOf, toBacklogItemView, type BacklogLabels } from './views';
 import { resolveWeeklyTarget } from './weekly-target';
 
@@ -91,11 +94,19 @@ export type NewTaskDraft = {
    * CHOOSE the goal, never to disagree with the one it chose.
    */
   originPeriodKey: string;
+  /**
+   * ⚠ **A8 (R-measure-1, Q-E) — a measure the CALLER supplied, and only ever that.**
+   *
+   * The create sheet is one sheet with two save paths, so a number typed into it must survive both.
+   * Nothing is inferred from the backlog item: an item has no number to carry, and inventing one would
+   * be the app deciding what the owner meant. Absent ⇒ `NO_MEASURE`, the five nulls, exactly as before.
+   */
+  measure?: MeasureInput;
   /** Structured provenance for the `created` event (`{ backlogItemId }`). */
   detail: Record<string, unknown>;
 };
 
-export type TaskWrites = { task: Task; links: TaskLink[]; event: TaskEvent; writes: GuardedWrite[] };
+export type TaskWrites = { task: Task; links: TaskLink[]; event: TaskEvent; measureEvent: TaskEvent | null; writes: GuardedWrite[] };
 
 /**
  * Build the rows for a task created by a CONVERSION, as unexecuted statements.
@@ -129,13 +140,10 @@ export function buildTaskWrites(
     status: 'open',
     originPeriodKey: draft.originPeriodKey,
     donePeriodKey: null,
-    // ⚠ **A8 (R-measure-1)** — a conversion never brings a measure: a backlog item has no number to
-    // carry, and inventing one would be the app deciding what the owner meant. Attach it after.
-    measureKind: null,
-    measureStart: null,
-    measureCurrent: null,
-    measureTarget: null,
-    measureUnit: null,
+    // ⚠ **A8 (R-measure-1)** — a conversion never *infers* a measure: a backlog item has no number to
+    // carry, and inventing one would be the app deciding what the owner meant. It does carry one the
+    // caller named, because the sheet that converts an item is the sheet that creates a task (Q-E).
+    ...measureColumns(draft.measure),
     doneAt: null,
     exitReason: null,
     exitedAt: null,
@@ -163,14 +171,41 @@ export function buildTaskWrites(
     periodKey: null,
     at: ctx.now,
   };
+  /**
+   * ⚠ **A8 (R-task-58)** — a measure attached at create logs `Measure added`, exactly as attaching one
+   * later does and exactly as `TaskService.create` does. The task's shape changed; the timeline says so
+   * once, in the same batch, and the `created` line above stays the line about where the work came from.
+   */
+  const measureEvent: TaskEvent | null =
+    draft.measure === undefined
+      ? null
+      : {
+          id: deps.ids.ulid(),
+          userId: ctx.userId,
+          taskId: task.id,
+          kind: 'measure_added',
+          text: measureAddedText(draft.measure.kind, draft.measure.start, draft.measure.target, draft.measure.unit),
+          glyph: TASK_EVENT_GLYPHS.measure_added,
+          detail: JSON.stringify({
+            kind: draft.measure.kind,
+            start: draft.measure.start,
+            target: draft.measure.target,
+            unit: draft.measure.unit,
+          }),
+          periodKey: null,
+          at: ctx.now,
+        };
+
   return {
     task,
     links,
     event,
+    measureEvent,
     writes: [
       { label: 'task.insert', stmt: deps.tasks.insertStmt(task) },
       ...links.map((l) => ({ label: 'taskLink.insert', stmt: deps.taskLinks.insertStmt(l) })),
       { label: 'taskEvent.insert', stmt: deps.taskEvents.insertStmt(event) },
+      ...(measureEvent ? [{ label: 'taskEvent.insertMeasure', stmt: deps.taskEvents.insertStmt(measureEvent) }] : []),
     ],
   };
 }
@@ -243,13 +278,16 @@ export function toNewTaskDetailView(w: TaskWrites, currentPeriodKey: string): Ta
     carryAge: 0,
     carryUnit: w.task.scope === 'Monthly' ? 'months' : 'weeks',
     completable: w.task.originPeriodKey <= currentPeriodKey,
-    // ⚠ **A8 (R-measure-1)** — a conversion never brings a measure, so a converted task is an ordinary
-    // checkbox and its payload is byte-identical to what it was before A8 (S-measure-1-1).
-    measure: null,
+    // ⚠ **A8 (R-measure-1)** — `null` unless the command named one, in which case it is the measure it
+    // named, projected the same way every other read projects it. With none, a converted task is an
+    // ordinary checkbox and its payload is byte-identical to what it was before A8 (S-measure-1-1).
+    measure: toMeasureView(w.task),
     createdAt: w.task.createdAt,
     updatedAt: w.task.updatedAt,
     version: w.task.version,
-    events: [toTaskEventView(w.event)],
+    // R-task-58 — the `Measure added` line, when there is one, beside the `created` one it shares a batch
+    // with. Newest first, which is the order the timeline is read in everywhere else.
+    events: [...(w.measureEvent ? [toTaskEventView(w.measureEvent)] : []), toTaskEventView(w.event)],
     readings: [],
   };
 }
@@ -704,6 +742,8 @@ export class BacklogService {
         // R-task-52 — from the receiving goal's own period and horizon, never from "today".
         scope: resolved.goal.horizon === 'Monthly' ? 'Monthly' : 'Weekly',
         originPeriodKey: resolved.goal.periodKey,
+        // ⚠ **A8 (Q-E)** — the measure the create sheet attached, on the same command. Never inferred.
+        ...(input.measure !== undefined ? { measure: assertMeasure(input.measure) } : {}),
         detail: { backlogItemId: item.id },
       },
     );

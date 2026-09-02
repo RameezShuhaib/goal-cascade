@@ -481,6 +481,16 @@ export function TaskCreateSheet({
           ...(monthKey ? { period } : { week: clock.offsetOf(weekStart) }),
           title: title.trim(),
           cond: cond.trim(),
+          /**
+           * ⚠ **The same measure the create branch sends, on the same one command (Q-E).**
+           *
+           * This sheet renders `MeasureFields` on both paths, validates the draft on both, and **blocks
+           * `Save task` on that validity** on both (`measureBlocked`) — so omitting it here discarded a
+           * number the owner was required to get right and was never told had been thrown away. The
+           * alternative, hiding the fields on this path, makes the same task reachable with a number
+           * through one door and not the other for no reason the owner can see.
+           */
+          ...(measure ? { measure } : {}),
         },
         { onSuccess: (d) => landed(d.goal?.title ?? null, isMonth ? undefined : (d.goal?.periodKey ?? period)), onError },
       );

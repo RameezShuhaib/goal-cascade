@@ -754,6 +754,19 @@ export const ConvertBacklogItemRequest = z
     period: PeriodKeyParam.optional(),
     title: Title.optional(),
     cond: OneLiner.default(''),
+    /**
+     * ⚠ **A8 (R-measure-1, Q-E) — a measure attached in the create sheet, on the SAME command.**
+     *
+     * The sheet that converts an item is the sheet that creates a task: one `Save task`, one write, and
+     * `CreateTaskRequest.measure` already travels that way. Without this field the client rendered the
+     * measure fields on this path, validated them, **blocked the save on their validity**, and then
+     * discarded them — a number the owner was required to get right and then never told was thrown away.
+     *
+     * ⚠ **Explicit only, and a conversion still never INVENTS one.** A backlog item has no number to
+     * carry, so nothing is inferred from the item: absent here means the task is an ordinary checkbox,
+     * exactly as before. `MEASURE_TARGET_EQUALS_START` applies identically on both paths.
+     */
+    measure: MeasureInput.optional(),
     version: OptionalVersion,
   })
   .strict()

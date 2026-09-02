@@ -183,6 +183,66 @@ describe('R-lens-31 — the month band, and the Monday rule that decides which m
   });
 
   /**
+   * ⚠ **A8 (R-lens-31) — `monthGoals`: the band's own goals, on the SAME payload, from ANY month.**
+   *
+   * The band draws one card per Monthly goal, and nothing else on a Weekly payload can name them:
+   * `items` and `carried` are Weekly goals, and `parents` holds the parents of *those* — which happens to
+   * include a band goal whenever that goal also has a weekly plan, and never otherwise. The case it
+   * misses is the case A8 exists to serve.
+   *
+   * ⚠ **The carried case is the severe one.** A month task carried out of June and open in August still
+   * hangs off the **June** Monthly goal, which is not on August's Monthly page — so a client that read
+   * that page to find its goals dropped the row silently, and dropped the whole band when every task in
+   * it was carried.
+   */
+  it('R-lens-31 — `monthGoals` carries the band’s goals, including one whose month is EARLIER than the band’s', async () => {
+    const { cookie, userId, life, august } = await line();
+    const june = await makeGoal(t, userId, 'Monthly', life.id, '2026-06');
+    const carried = await seedMonthTask(cookie, june.id, '2026-06-10T10:00:00.000Z', { title: 'still not done' });
+    const own = await seedMonthTask(cookie, august.id, '2026-08-10T10:00:00.000Z', { title: 'august work' });
+
+    const week = await lens(cookie, { lens: 'Weekly', period: CURRENT_WEEK });
+    expect(week.monthTasks.map((x) => x.id)).toEqual([carried.id, own.id]);
+    // One per distinct goal, in `monthTasks`' own first-appearance order, so the client re-derives none.
+    expect(week.monthGoals.map((g) => g.id)).toEqual([june.id, august.id]);
+    // The June goal keeps its OWN month: the band is a week's view of a month, not a re-dating of goals.
+    expect(week.monthGoals.map((g) => g.periodKey)).toEqual(['2026-06', AUG]);
+    // Every band goal carries the Life line the card renders, and it resolves from this payload's groups.
+    expect(week.monthGoals.map((g) => g.lifeRootId)).toEqual([life.id, life.id]);
+    expect(week.groups.map((g) => g.id)).toContain(life.id);
+  });
+
+  /**
+   * ⚠ **R-lens-19, restated by A8: `groups` covers what the SCREEN shows, not what `items` holds.** A Life
+   * goal that reaches this week only through the month band is on this week's screen, so its line is on
+   * this week's payload — otherwise the band's card renders with no `under …` line and the client has no
+   * way to get one but a second read.
+   */
+  it('R-lens-31 — a Life root reached ONLY through the band is in `groups`, with an open count of zero', async () => {
+    const { cookie, userId, weekly } = await line();
+    await seedTask(t, cookie, { goalId: weekly.id, title: 'the one week task' });
+    // A second Life line with a month task and no weekly plan at all — the case `parents` cannot answer.
+    const other = await makeGoal(t, userId, 'Life', null);
+    const otherMonth = await makeGoal(t, userId, 'Monthly', other.id, AUG);
+    await seedMonthTask(cookie, otherMonth.id, '2026-08-10T10:00:00.000Z', { title: 'the other line' });
+
+    const week = await lens(cookie, { lens: 'Weekly', period: CURRENT_WEEK });
+    expect(week.monthGoals.map((g) => g.id)).toEqual([otherMonth.id]);
+    expect(week.groups.map((g) => g.id)).toContain(other.id);
+    // S-lens-31-3 is untouched: a month task is still not counted in any group header.
+    expect(week.groups.find((g) => g.id === other.id)!.openTasks).toBe(0);
+  });
+
+  it('R-lens-31 — `monthGoals` is empty on every lens but Weekly, Monthly included', async () => {
+    const { cookie, august } = await line();
+    await seedMonthTask(cookie, august.id, '2026-08-10T10:00:00.000Z');
+
+    for (const q of [{ lens: 'Life' }, { lens: 'Yearly', period: '2026' }, { lens: 'Quarterly', period: '2026-Q3' }, { lens: 'Monthly', period: AUG }]) {
+      expect((await lens(cookie, q)).monthGoals, JSON.stringify(q)).toEqual([]);
+    }
+  });
+
+  /**
    * ⚠ **S-lens-31-3 — the group header counts WEEK tasks only, and this is the number that would lie.**
    *
    * R-lens-4's count answers *"what is on me this week"*. A month task is precisely the work A8 exists to

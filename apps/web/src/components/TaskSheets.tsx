@@ -35,6 +35,7 @@ export function ConfirmTaskExitSheet({ taskId, exit, week }: { taskId: string; e
   const S = useSkin();
   const ui = useUI();
   const navigate = useNavigate();
+  const clock = useWeekClock();
   const taskQ = useTask(taskId, week);
   const task = taskQ.data?.task;
   const goalQ = useGoal(task?.goalId);
@@ -59,8 +60,16 @@ export function ConfirmTaskExitSheet({ taskId, exit, week }: { taskId: string; e
     const trimmed = reason.trim();
     if (exit === 'backlog') {
       moveToBacklog.mutate(
-        // D-12 — `fromPeriodKey` is the week the task was LIVE in, which is the week being viewed.
-        { id: task.id, week, ...(trimmed ? { reason: trimmed } : {}), version: task.version },
+        /**
+         * D-12 — `fromPeriodKey` is the period the task was LIVE in.
+         *
+         * ⚠ **A8 (R-task-55) — at the TASK'S OWN SCOPE, through the one spelling of that rule.** This
+         * sent `week`, which `useMoveTaskToBacklog` turns into a **Monday**; a Monday against a month
+         * task is `WEEK_OUT_OF_RANGE` (R-task-52 — the keys only compare inside one scope), so every
+         * `Move to Backlog` on a month task was refused. The sheet already reads `task.scope` for the
+         * line naming where the item lands, so the fact was on screen while the write was wrong.
+         */
+        { id: task.id, period: clock.periodFor(task.scope, week, task.originPeriodKey), ...(trimmed ? { reason: trimmed } : {}), version: task.version },
         { onSuccess: () => done('Moved to Backlog' + (trimmed ? ' — reason noted' : '')) },
       );
     } else {
@@ -124,7 +133,22 @@ export function RetargetTaskSheet({ taskId }: { taskId: string }) {
   const task = taskQ.data?.task;
   const retarget = useRetargetTask();
 
-  const weeks = task ? taskWeeksInMonth(task.originPeriodKey, clock.today) : [];
+  /**
+   * ⚠ **The month the task is IN, not the month it came FROM** (R-task-53).
+   *
+   * This read `task.originPeriodKey`, and a **carried** month task's origin is behind: every week of it
+   * is filtered out as past, the list came back empty, `chosen` was `null` and `Park it` was permanently
+   * disabled — a sheet that opens and can never be finished, on the exact task shape month tasks exist
+   * for. The control is not withdrawn instead, because parking a long-carried task into a week of the
+   * month it has reached is the most useful thing this sheet does; withdrawing it would leave that task
+   * with no way out of the month but an exit.
+   *
+   * `park` on the server bounds the target week by `PERIOD_IN_PAST` and by nothing else — it does **not**
+   * require the week to be inside the task's origin month — so this offer is exactly the set the server
+   * accepts, and no option here can be refused.
+   */
+  const parkMonth = task ? clock.periodFor('Monthly', 0, task.originPeriodKey) : '';
+  const weeks = task ? taskWeeksInMonth(parkMonth, clock.today) : [];
   const [week, setWeek] = useState<string | null>(null);
   const chosen = week ?? weeks[0] ?? null;
   const [picked, setPicked] = useState<string | null>(null);
@@ -196,7 +220,9 @@ export function RetargetTaskSheet({ taskId }: { taskId: string }) {
             ))}
           {chosen && (
             <div style={{ fontSize: 12.5, color: S.T.mut, marginTop: 8 }}>
-              {taskDestinationNote(shortDate(chosen), labelOf('Monthly', task?.originPeriodKey ?? ''))}
+              {/* The month the write really lands in — naming the ORIGIN month here would describe a
+                  month the task is leaving rather than the one it is landing inside. */}
+              {taskDestinationNote(shortDate(chosen), labelOf('Monthly', parkMonth))}
             </div>
           )}
           <FieldError>{commandError(retarget.error)}</FieldError>

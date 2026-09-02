@@ -108,23 +108,44 @@ describe('R-lens-31 — the month band, at the seam (Wed 2 Sep 2026)', () => {
    * ⚠ **S-lens-31-2 — a month task wears NO carry label of any kind inside a week.**
    *
    * Not a chip, not a grey `since …`, not a badge, and not a visually-hidden "not late" either. The wire
-   * carries the honest month-scale age (this task is three months old and would earn the red chip in the
-   * Monthly lens); **the band suppresses it at the call site**, which is what makes this assertable by
-   * rendering the band rather than by reading `CarryLabel`.
+   * carries the honest month-scale age; **the band suppresses it at the call site**, which is what makes
+   * this assertable by rendering the band rather than by reading `CarryLabel`.
+   *
+   * ⚠ **It is asserted as THE RULE, at BOTH ages, against the same task in both lenses.** The previous
+   * version matched three strings at `carryAge: 3` alone, which tested one of `CarryLabel`'s two
+   * branches — age 1 renders the grey `since …`, age ≥ 2 the red chip — and could not tell *suppressed*
+   * from *rendered in a spelling the regexes missed*. `CarryLabel` carries one `data-testid`, so the
+   * suppression is a presence test with a matching counter-example: **absent in the band, present on the
+   * same task in the Monthly lens.** Without the second half, deleting `CarryLabel` outright would pass.
    */
-  it('S-lens-31-2: a month task in a week shows no carry label of any kind, at any age', async () => {
+  it.each([
+    { age: 1, origin: '2026-07', branch: 'the grey `since …`' },
+    { age: 3, origin: '2026-06', branch: 'the red chip' },
+  ])('S-lens-31-2: at carryAge $age ($branch) the band suppresses the label the Monthly lens renders', async ({ age, origin }) => {
     atInstant(SEAM);
+    const carried = monthTask({ carryAge: age, originPeriodKey: origin });
     withLenses({
-      Weekly: weeklyBand({ monthTasks: [monthTask({ carryAge: 3, originPeriodKey: '2026-06' })] }),
-      Monthly: monthlyPage('2026-08'),
+      Weekly: weeklyBand({ monthTasks: [carried] }),
+      Monthly: F.lens({
+        lens: 'Monthly',
+        period: F.period({ horizon: 'Monthly', periodKey: '2026-08' }),
+        items: [monthGoal()],
+        groups: [F.group({ id: F.L })],
+        tasks: [carried],
+      }),
     });
-    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    const { unmount } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
 
     const band = await screen.findByTestId('month-band');
     expect(within(band).getByText('Book the gym induction')).toBeInTheDocument();
-    expect(within(band).queryByText(/months/)).not.toBeInTheDocument();
-    expect(within(band).queryByText(/^since /)).not.toBeInTheDocument();
-    expect(within(band).queryByText(/·\s*since/)).not.toBeInTheDocument();
+    expect(within(band).queryByTestId('carry-label')).not.toBeInTheDocument();
+    unmount();
+
+    // The counter-example, on the SAME row: the Monthly lens is where the unit means something, so the
+    // label is the component's ordinary output and its absence above is the band's own suppression.
+    renderApp(<AppShell />, { route: '/month/2026-08' });
+    const card = (await screen.findByText('Lift three times a week')).closest('[data-testid="lens-card"]') as HTMLElement;
+    expect(within(card).getByTestId('carry-label')).toBeInTheDocument();
   });
 
   /**
@@ -185,14 +206,100 @@ describe('R-lens-31 — the month band, at the seam (Wed 2 Sep 2026)', () => {
     expect(within(band).queryByText('Book the gym induction')).not.toBeInTheDocument();
   });
 
-  it('does not render at all when the month holds nothing — no band, no heading, no note', async () => {
+  /**
+   * ⚠ **The gate is `monthTasks`, and the counter-example is in the same test.** The payload here holds a
+   * Monthly goal in `monthGoals` and no task on it: a month with a plan and nothing on it yet is not a
+   * band. Asserted against the identical payload plus one task, so the assertion turns on the ONE field
+   * that differs — the previous version asserted only the absence, which is also what a build with no
+   * band at all produces.
+   */
+  it('does not render at all when the month holds no TASKS, however many goals it holds', async () => {
     atInstant(SEAM);
-    withLenses({ Weekly: weeklyBand({ monthTasks: [] }), Monthly: monthlyPage('2026-08') });
-    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    const goals = [monthGoal()];
+    withLenses({ Weekly: weeklyBand({ monthTasks: [], monthGoals: goals }), Monthly: monthlyPage('2026-08') });
+    const { unmount } = renderApp(<AppShell />, { route: '/week/2026-08-31' });
 
     await screen.findByText('Three easy runs and one long run');
     expect(screen.queryByTestId('month-band')).not.toBeInTheDocument();
     expect(screen.queryByText(/has ended\. New work for the month/)).not.toBeInTheDocument();
+    // The goal is on the wire and still draws nothing: a card with no task on it is not a band card.
+    expect(screen.queryByText('Lift three times a week')).not.toBeInTheDocument();
+    unmount();
+
+    withLenses({ Weekly: weeklyBand({ monthTasks: [monthTask()], monthGoals: goals }), Monthly: monthlyPage('2026-08') });
+    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+    expect(await screen.findByTestId('month-band')).toBeInTheDocument();
+  });
+});
+
+/**
+ * ⚠ **A CARRIED MONTH TASK — the case month tasks exist for (R-task-53), and the one the band could not
+ * draw.**
+ *
+ * A month task that is not finished carries into the next month **on the same goal**, and that goal keeps
+ * its own earlier `periodKey`: a task carried out of June and open in August hangs off a **June** Monthly
+ * goal. The band used to read the Monthly lens for its own month to find its goals, and June's goal is
+ * not on August's page — so `byId.get(t.goalId)` was `undefined`, the row was filtered out silently, and
+ * a band whose every task was carried rendered `null` while `showMonthBand` was true.
+ *
+ * `LensResponse.monthGoals` is the fix and it is on the wire: the server resolves those ids out of the
+ * interior tree it already holds, so a goal from any month arrives with the band that needs it.
+ */
+describe('R-lens-31 / R-task-53 — the band draws a CARRIED month task, whose goal is in an earlier month', () => {
+  /** The June goal the carried task still hangs off. It is NOT on August's Monthly page, deliberately. */
+  const juneGoal = () =>
+    monthGoal({ id: F.M2, title: 'Rebuild the base', periodKey: '2026-06', period: 'Jun 2026', weeklyBreakdown: null });
+  const carriedTask = () => monthTask({ id: F.ulid(81), goalId: F.M2, title: 'Squat 100 kg once', carryAge: 2, originPeriodKey: '2026-06' });
+
+  it('renders the carried task under its own goal’s title, though that goal’s month is not the band’s', async () => {
+    atInstant(SEAM);
+    withLenses({
+      Weekly: weeklyBand({ monthTasks: [carriedTask(), monthTask()], monthGoals: [juneGoal(), monthGoal()] }),
+      // August's page. The carried task's goal is in JUNE and is not here — which is the whole point.
+      Monthly: monthlyPage('2026-08'),
+    });
+    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+
+    const band = await screen.findByTestId('month-band');
+    expect(within(band).getByText('Rebuild the base')).toBeInTheDocument();
+    expect(within(band).getByText('Squat 100 kg once')).toBeInTheDocument();
+    // The band's own month goal is still there and still second: `monthTasks`' order, kept.
+    expect(within(band).getByText('Lift three times a week')).toBeInTheDocument();
+  });
+
+  /**
+   * ⚠ **The severe case: EVERY task in the band carried.** `cards.length === 0` returned `null` from
+   * `MonthBand`, so the heading, the deadline sentence and the past-month foot all vanished with it —
+   * the band silently absent on precisely the screen it exists for.
+   */
+  it('renders the whole band when EVERY month task in it is carried', async () => {
+    atInstant(SEAM);
+    withLenses({
+      Weekly: weeklyBand({ monthTasks: [carriedTask()], monthGoals: [juneGoal()] }),
+      Monthly: monthlyPage('2026-08'),
+    });
+    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+
+    const band = await screen.findByTestId('month-band');
+    expect(within(band).getByText('This month · Aug 2026')).toBeInTheDocument();
+    expect(within(band).getByText('Due by the end of Aug 2026, not by the end of this week.')).toBeInTheDocument();
+    expect(within(band).getByText('Squat 100 kg once')).toBeInTheDocument();
+    // R-task-54 / S-lens-31-2 — carried or not, a month task wears no label inside a week.
+    expect(within(band).queryByTestId('carry-label')).not.toBeInTheDocument();
+  });
+
+  /**
+   * ⚠ **The second lens read is DELETED, not merely made unnecessary** (`build.md` §11). While it existed
+   * the band's cards arrived a round trip after the rest of the screen; more importantly, it was the read
+   * that answered with the wrong month's goals. A build that keeps it as a fallback keeps the defect.
+   */
+  it('makes no second lens request: the band’s goals come from the week’s own payload', async () => {
+    atInstant(SEAM);
+    withLenses({ Weekly: weeklyBand(), Monthly: monthlyPage('2026-08') });
+    renderApp(<AppShell />, { route: '/week/2026-08-31' });
+
+    await screen.findByText('Lift three times a week');
+    expect(requests().filter((r) => r.url.includes('lens=Monthly')).length).toBe(0);
   });
 });
 
@@ -226,6 +333,15 @@ describe('R-lens-31 — the band off the seam (Wed 16 Sep 2026)', () => {
     expect(within(band).queryByText(/has ended/)).not.toBeInTheDocument();
     // On the CARD, not at the band's foot — the card is the goal, so nothing is chosen and nothing inferred.
     const card = within(band).getByText('Lift three times a week').closest('[data-testid="lens-card"]') as HTMLElement;
+    /**
+     * ⚠ **`Pull from backlog` is absent HERE, where `+ Task` is present** (`33-measurables-ux` §8.1). The
+     * past-month test asserts the same thing where the whole `LinkRow` is already withdrawn, which proves
+     * nothing about the pull: `pull={false}` is the only thing suppressing it on this screen, and
+     * deleting that prop must fail a test.
+     */
+    expect(within(card).getByRole('button', { name: '+ Task' })).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Pull from backlog' })).not.toBeInTheDocument();
+    expect(within(band).queryByRole('button', { name: 'Pull from backlog' })).not.toBeInTheDocument();
     await user.click(within(card).getByRole('button', { name: '+ Task' }));
 
     const sheet = await screen.findByRole('dialog', { name: 'New task' });

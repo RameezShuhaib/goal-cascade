@@ -98,10 +98,15 @@ interface LensData {
   carried: GoalView[];
   tasks: TaskView[];
   /**
-   * ⚠ **A8, new (R-lens-31)** — the month band's tasks and the month they belong to. **Weekly lens only**;
-   * empty and `null` everywhere else, including the Monthly lens, where the month's tasks are `tasks`.
+   * ⚠ **A8, new (R-lens-31)** — the month band's tasks, **the Monthly goals they hang on**, and the month
+   * they belong to. **Weekly lens only**; empty and `null` everywhere else, including the Monthly lens,
+   * where the month's tasks are `tasks`.
+   *
+   * `monthGoals` is here rather than read from the Monthly lens because a **carried** month task's goal
+   * is in an earlier month, so that page does not contain it (see `MonthBand`).
    */
   monthTasks: TaskView[];
+  monthGoals: GoalView[];
   monthPeriodKey: string | null;
   /** R-lens-24 — has this horizon ever held a goal, and does the account have Life goals at all? */
   hasAnyAtHorizon: boolean;
@@ -594,7 +599,7 @@ function Body({
        * ⚠ **A8 (R-lens-31) — the month band, and it is LAST.** Below this week's plan and below the
        * carried band, because the week's own plan is what the week is for.
        */}
-      {showMonthBand && <MonthBand tasks={data.monthTasks} monthPeriodKey={data.monthPeriodKey!} />}
+      {showMonthBand && <MonthBand tasks={data.monthTasks} goals={data.monthGoals} monthPeriodKey={data.monthPeriodKey!} lifeOf={lifeOf} />}
     </div>
   );
 }
@@ -784,19 +789,33 @@ function CarriedBand({
  * not the vanishing.
  *
  * ── Where the band's GOALS come from ──────────────────────────────────────────
- * `monthTasks` arrives with no goals: `items`, `carried`, `groups` and `parents` on a Weekly payload are
- * all about **Weekly** goals. So the band reads the **Monthly lens for its own month** — one extra
- * request, cached under the key the Monthly tab itself uses, so switching to that tab afterwards costs
- * nothing. The alternative was one `GET /goals/:id` per goal in the band, which is N requests for two
- * fields. The band waits for it rather than drawing a card with no title: it is the last section on the
- * screen, and a half-drawn card reads as a bug in a way a section arriving a moment later does not.
+ * ⚠ **`LensResponse.monthGoals`, on the SAME payload — and the second read it replaces was not merely
+ * slow, it was WRONG.** The band used to read the Monthly lens for its own month and index that page by
+ * id. A **carried** month task's goal keeps its own earlier `periodKey` (R-task-53): a task carried out
+ * of June and open in August hangs off a *June* Monthly goal, which is not on August's page. So the
+ * lookup missed, the row was filtered out silently, and a band whose every task was carried rendered
+ * `null` — the section absent on exactly the screen carrying exists for.
+ *
+ * The server resolves those ids out of the interior tree it already holds, so the goals arrive with the
+ * tasks, from any month, in `monthTasks`' own order, and their Life lines resolve from the payload's own
+ * `groups`. **There is no fallback read**: a build that re-adds one has re-added the defect.
  */
-function MonthBand({ tasks, monthPeriodKey }: { tasks: TaskView[]; monthPeriodKey: string }) {
+function MonthBand({
+  tasks,
+  goals,
+  monthPeriodKey,
+  lifeOf,
+}: {
+  tasks: TaskView[];
+  /** R-lens-31 — the Monthly goals these tasks hang on, from the week's own payload. */
+  goals: GoalView[];
+  monthPeriodKey: string;
+  lifeOf: (goal: GoalView) => LifeRef | null;
+}) {
   const S = useSkin();
   const ui = useUI();
   const navigate = useNavigate();
   const clock = useWeekClock();
-  const monthly = useLens('Monthly', monthPeriodKey);
 
   const key = `Weekly|__month|${monthPeriodKey}`;
   const collapsed = !!ui.collapsed[key];
@@ -807,11 +826,7 @@ function MonthBand({ tasks, monthPeriodKey }: { tasks: TaskView[]; monthPeriodKe
   /** R-lens-30's ruling: the client's own calendar arithmetic, through `@goal-cascade/shared`. */
   const currentMonthKey = currentPeriodKey('Monthly', clock.today);
 
-  const goals = monthly.data?.items ?? [];
   const byId = new Map(goals.map((g) => [g.id, g]));
-  const lives = new Map(
-    (monthly.data?.groups ?? []).filter((g): g is LifeGroupView & { id: string } => g.id !== null).map((g) => [g.id, g.title]),
-  );
   /** `monthTasks` order, grouped by goal, first appearance preserved — the server's order, kept. */
   const order: string[] = [];
   for (const t of tasks) if (!order.includes(t.goalId)) order.push(t.goalId);
@@ -844,7 +859,7 @@ function MonthBand({ tasks, monthPeriodKey }: { tasks: TaskView[]; monthPeriodKe
                 /* ⚠ The band's OWN month. Never `currentPeriodKey`, never a clamp. */
                 monthPeriodKey={monthPeriodKey}
                 canCreate={canCreate}
-                life={goal!.lifeRootId && lives.has(goal!.lifeRootId) ? { id: goal!.lifeRootId, title: lives.get(goal!.lifeRootId)! } : null}
+                life={lifeOf(goal!)}
               />
             ))}
           </div>

@@ -231,10 +231,32 @@ export class GoalService {
     const items = this.inLineOrder(interior, page.items).map((g) => this.toView(g, view));
     const carriedViews = carried.map((g) => this.toView(g, view));
 
+    /**
+     * ⚠ **A8 (R-lens-31) — the band's own goals, so the client needs no second read.**
+     *
+     * Weekly lens only, one per distinct `goalId` in `monthTaskRows`, in that array's first-appearance
+     * order. Every id resolves out of `interior`, which already holds **every** Monthly goal the account
+     * has (R-lens-27) — so a goal whose month is not the band's month is here too, which is the entire
+     * point: a **carried** month task's goal lives in an earlier month, and the Monthly lens for the
+     * band's month does not contain it. The client used to read that lens and drop the row.
+     *
+     * A row whose goal has vanished is skipped rather than 500ing the lens (R-lens-20's reason).
+     */
+    const monthGoalViews =
+      horizon === 'Weekly'
+        ? [...new Set(monthTaskRows.map((t) => t.goalId))]
+            .map((id) => interior.byId.get(id))
+            .filter((g): g is Goal => g !== undefined)
+            .map((g) => this.toView(g, view))
+        : [];
+
     return {
       lens: horizon,
       period: isLife ? null : this.periodView(horizon, periodKey, today, page.items.length > 0),
-      groups: this.groupsOf(interior, [...items, ...carriedViews], openByGoal, byId),
+      // ⚠ **A8 (R-lens-31)** — the band's goals count as rendered, so their Life lines resolve from this
+      // payload. R-lens-19's "no items in this period" is about what the SCREEN shows; a Life goal that
+      // reaches the week only through the month band is on the screen.
+      groups: this.groupsOf(interior, [...items, ...carriedViews, ...monthGoalViews], openByGoal, byId),
       items,
       carried: carriedViews,
       /**
@@ -267,6 +289,8 @@ export class GoalService {
         horizon === 'Weekly'
           ? monthTaskRows.map((t) => toTaskView(t, [], monthKey!, currentPeriodOf(ctx, 'Monthly')))
           : [],
+      /** ⚠ **A8 (R-lens-31)** — the Monthly goals those tasks hang on, carried ones included. */
+      monthGoals: monthGoalViews,
       /** R-lens-31 — the band's month, so the client never re-derives which month a week belongs to. */
       monthPeriodKey: horizon === 'Weekly' ? monthKey : null,
       nextCursor: page.nextCursor,

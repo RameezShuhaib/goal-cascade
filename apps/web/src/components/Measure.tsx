@@ -357,8 +357,14 @@ export function MeasureBlock({ task }: { task: TaskDetailView }) {
         )}
       </div>
 
-      {/* The one polite region for this block: a record and a delete both announce their result here. */}
-      <div aria-live="polite" style={VISUALLY_HIDDEN}>
+      {/*
+       * The one polite region for this block: a record and a delete both announce their result here.
+       *
+       * ⚠ The `data-testid` is what lets R-measure-8 be asserted as an EQUALITY rather than as a
+       * blacklist of celebratory words: reaching a target must announce the ordinary sentence and
+       * **nothing else**, and no list of forbidden words can prove "nothing else".
+       */}
+      <div data-testid="measure-announcement" aria-live="polite" style={VISUALLY_HIDDEN}>
         {announcement}
       </div>
 

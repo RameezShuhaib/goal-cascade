@@ -940,6 +940,8 @@ export function useConvertBacklogItem() {
       period?: string;
       title?: string;
       cond?: string;
+      /** ⚠ **A8 (Q-E)** — the measure the create sheet attached, on the SAME command as the conversion. */
+      measure?: MeasureInput;
       version?: number;
     },
     Awaited<ReturnType<ApiClient['convertBacklogItem']>>
@@ -953,6 +955,7 @@ export function useConvertBacklogItem() {
           period: v.period ?? addWeeks(currentMonday, v.week ?? 0),
           ...(v.title ? { title: v.title } : {}),
           cond: v.cond ?? '',
+          ...(v.measure ? { measure: v.measure } : {}),
           ...(v.version ? { version: v.version } : {}),
         },
         k,

@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { AppShell } from '../../src/AppShell';
 import { renderApp } from '../render';
-import { bodyOf, lastRequest, server } from '../msw/handlers';
+import { atInstant, bodyOf, lastRequest, server } from '../msw/handlers';
 import * as F from '../msw/fixtures';
 
 /**
@@ -84,6 +84,78 @@ describe('R-task-56 — Park a month task into a week', () => {
   });
 });
 
+/**
+ * ⚠ **A CARRIED month task — the case Park could not complete.**
+ *
+ * The sheet's option list was `taskWeeksInMonth(task.originPeriodKey, today)`, and a carried task's
+ * ORIGIN month is behind: every week of it is filtered out as past, the list came back empty, `chosen`
+ * was `null` and `Park it` was permanently disabled — a sheet that opens and can never be finished, on
+ * the task shape month tasks exist for (R-task-53).
+ *
+ * The offer is the weeks of the month the task is **in now** — which is what the server accepts (`park`
+ * bounds the target week by `PERIOD_IN_PAST` and by nothing else) and what the owner is looking at. The
+ * control is not withdrawn: parking a long-carried task into a week of the month it has reached is the
+ * most useful thing this sheet does, and withdrawing it would leave the task with no way out but an exit.
+ */
+describe('R-task-56 — Park a CARRIED month task, whose origin month is behind', () => {
+  const SEAM = '2026-09-02T09:00:00.000Z';
+
+  it('offers the weeks of the month the task is in NOW, and parks into the one chosen', async () => {
+    atInstant(SEAM);
+    const { user } = await openTask(monthTask({ originPeriodKey: '2026-07', carryAge: 2 }));
+    await user.click(screen.getByRole('button', { name: 'Park in a week' }));
+
+    const sheet = await screen.findByRole('dialog', { name: 'Park in a week' });
+    const chips = within(sheet).getByRole('radiogroup', { name: 'When this lands' });
+    // July's weeks are all past and are not offered; September's are the month the task has reached.
+    expect(within(chips).getAllByRole('radio').map((c) => c.getAttribute('aria-label'))).toEqual([
+      'Week of 7 Sep',
+      'Week of 14 Sep',
+      'Week of 21 Sep',
+      'Week of 28 Sep',
+    ]);
+
+    await user.click(within(chips).getByRole('radio', { name: 'Week of 14 Sep' }));
+    // ⚠ The sentence names the month it is really landing in. Naming `Jul 2026` here — the task's origin
+    // — would be the sheet describing a month the write does not touch.
+    expect(within(sheet).getByText('Lands in the week of 14 Sep · Sep 2026.')).toBeInTheDocument();
+
+    const park = within(sheet).getByRole('button', { name: 'Park it' });
+    expect(park).toBeEnabled();
+    await user.click(park);
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/retarget'))).toMatchObject({ period: '2026-09-14' }));
+  });
+});
+
+/**
+ * ⚠ **R-task-55 — the exit sheet names a period at the TASK'S OWN SCOPE.**
+ *
+ * `ConfirmTaskExitSheet` held a week offset and posted `addWeeks(currentMonday, week)` — always a Monday,
+ * and a Monday against a month task is `WEEK_OUT_OF_RANGE`, the server's scope check doing exactly its
+ * job. Every `Move to Backlog` on a month task was refused. The sheet already read `task.scope` for the
+ * line above the button, so the fact was on screen while the write was wrong.
+ */
+describe('R-task-55 — Move to Backlog from a MONTH task posts a month key', () => {
+  it('posts the month, never the viewer’s Monday', async () => {
+    const { user } = await openTask(monthTask({ originPeriodKey: '2026-08' }));
+    await user.click(screen.getByRole('button', { name: 'Move to Backlog' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Move to Backlog' });
+    await user.click(within(sheet).getByRole('button', { name: 'Move it' }));
+
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/move-to-backlog'))).toMatchObject({ period: '2026-08' }));
+  });
+
+  /** The week path is unchanged in every particular: a week task still names the week it was live in. */
+  it('a WEEK task still posts its week', async () => {
+    const { user } = await openTask({ goalId: F.W, title: 'Tuesday easy 6k' });
+    await user.click(screen.getByRole('button', { name: 'Move to Backlog' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Move to Backlog' });
+    await user.click(within(sheet).getByRole('button', { name: 'Move it' }));
+
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/move-to-backlog'))).toMatchObject({ period: F.THIS_MONDAY }));
+  });
+});
+
 describe('R-task-56 — un-park a week task back to its month', () => {
   /**
    * ⚠ **One tap, no sheet, no confirm** — there is nothing to choose on the way back, and the write is
@@ -118,11 +190,58 @@ describe('R-task-56 — un-park a week task back to its month', () => {
     expect(screen.queryByText(/no monthly goal|can't be moved|not available/i)).not.toBeInTheDocument();
   });
 
-  /** R-task-17 — a task that has left a period cannot be moved between periods. Both directions go. */
+  /**
+   * ⚠ **R-task-17 — a task that has left a period cannot be moved between periods, and the title's
+   * "both directions" is now asserted in both.** The un-park half was untested, which is where two
+   * defects lived; a done MONTH task alone can never exercise it, because `Move to …` renders only for a
+   * WEEK task. So both scopes are done here, on the same rule.
+   */
   it('both directions are withdrawn once the task is not open', async () => {
-    await openTask(monthTask({ status: 'done', done: true, doneAt: F.NOW, donePeriodKey: '2026-09' }));
+    const { unmount } = await openTask(monthTask({ status: 'done', done: true, doneAt: F.NOW, donePeriodKey: '2026-09' }));
     expect(screen.getByText('In Sep 2026 — the whole month, no particular week.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Park in a week' })).not.toBeInTheDocument();
+    unmount();
+
+    await openTask({ goalId: F.W, title: 'Tuesday easy 6k', status: 'done', done: true, doneAt: F.NOW, donePeriodKey: F.THIS_MONDAY });
+    expect(screen.getByText('In the week of 31 Aug.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Move to [A-Z][a-z]{2} \d{4}/ })).not.toBeInTheDocument();
+    // D-5 — withdrawn, and with nothing on screen apologising for the absence.
+    expect(screen.queryByText(/can't be moved|no longer|not available/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * ⚠ **THE AUGUST TRAP, one control over — and the defect a green test used to pin.**
+   *
+   * Un-park's destination is **fully determined by the tree**: the server walks to the Weekly goal's
+   * nearest Monthly ancestor and then *checks* the key the client sent against that goal's own month,
+   * refusing any other with `VALIDATION_FAILED`. So there is no second month this button could name, and
+   * "retarget to the current month instead" is not an option that exists — the only honest answers when
+   * that month is **past** are to send a write the server refuses with `PERIOD_IN_PAST`, or to withdraw
+   * the control.
+   *
+   * It is withdrawn, exactly as `MonthBand` withdraws `+ Task` for the same reason (R-goal-36, R-task-41):
+   * **the error is made unreachable rather than handled**, and D-5's rule applies unchanged — no disabled
+   * button, and no sentence apologising for an option that was never real.
+   */
+  it('R-task-56: the un-park control is WITHDRAWN when the monthly ancestor’s month is past', async () => {
+    server.use(
+      http.get('/api/goals/:id', () =>
+        HttpResponse.json({
+          ...F.detailOf(F.W),
+          ancestors: [
+            F.goal({ id: F.L, title: 'Be strong at 60', horizon: 'Life' }),
+            F.goal({ id: F.M, title: 'Lift three times a week', horizon: 'Monthly', periodKey: '2026-07', period: 'Jul 2026' }),
+          ],
+        }),
+      ),
+    );
+    await openTask({ goalId: F.W, title: 'Tuesday easy 6k' });
+
+    // The line still renders: where the task lives is a fact, and it is true whatever the month has done.
+    expect(screen.getByText('In the week of 31 Aug.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Move to [A-Z][a-z]{2} \d{4}/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Jul 2026/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/has ended|too late|can't be moved|not available/i)).not.toBeInTheDocument();
   });
 });
 

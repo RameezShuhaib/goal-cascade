@@ -56,22 +56,37 @@ export interface WeekClock {
    * the owner is standing in. `todayMonthKey` is the same `periodKeyOf('Monthly', today)` the rest of
    * this hook is built from, so this adds no second date rule (R-lens-30).
    *
-   * There is one spelling of this because there are three callers — the task page, a task row, and the
-   * exit sheet — and a rule each of them re-derived is a rule two of them would get wrong.
+   * ⚠ **`originPeriodKey`, when the caller holds it, is a LOWER bound and nothing else.** A month task
+   * written for a month that has not arrived yet is legal and ordinary (R-goal-36, S-task-57-2), and the
+   * current month is *before* its origin — a period the task did not exist in, which every bound in
+   * `assertPeriodFor` refuses. So the answer is the later of the two, which is the month the task is
+   * actually in: its origin while that is ahead, the current month once it has been reached and for every
+   * month it carries into after. Omitting the argument keeps the plain current-month answer, which is
+   * what a row holding no origin can ask for.
+   *
+   * There is one spelling of this because there are four callers — the task page, a task row, the exit
+   * sheet and the Park sheet — and a rule each of them re-derived is a rule three of them would get wrong.
    */
-  periodFor: (scope: TaskScope, weekOffset: number) => string;
+  periodFor: (scope: TaskScope, weekOffset: number, originPeriodKey?: string) => string;
 }
 
 export function useWeekClock(): WeekClock {
   const { tz, today } = useOwnerClockState();
   const currentMonday = weekStartOfDate(today);
+  const todayMonthKey = periodKeyOf('Monthly', today);
   return {
     currentMonday,
     today,
     tz,
-    todayMonthKey: periodKeyOf('Monthly', today),
+    todayMonthKey,
     offsetOf: (monday) => (monday ? weeksBetween(currentMonday, monday) : 0),
-    periodFor: (scope, weekOffset) =>
-      scope === 'Monthly' ? periodKeyOf('Monthly', today) : addWeeks(currentMonday, weekOffset),
+    periodFor: (scope, weekOffset, originPeriodKey) =>
+      scope === 'Monthly'
+        ? // A string comparison of two month keys, not a date computation: `YYYY-MM` sorts
+          // lexicographically in calendar order, which is the property R-goal-33 chose the format for.
+          originPeriodKey !== undefined && originPeriodKey > todayMonthKey
+          ? originPeriodKey
+          : todayMonthKey
+        : addWeeks(currentMonday, weekOffset),
   };
 }

@@ -124,6 +124,28 @@ export const LensResponse = z.object({
    */
   monthTasks: z.array(TaskView),
   /**
+   * ⚠ **A8, new (R-lens-31) — the Monthly goals `monthTasks` hang on. Weekly lens only**, empty
+   * everywhere else.
+   *
+   * **It exists because a CARRIED month task's goal lives in an earlier month, and no other field on a
+   * Weekly payload can name it.** `items` and `carried` are Weekly goals; `parents` holds the parents of
+   * those, which *incidentally often* includes a band goal and never reliably — a month task on a goal
+   * with no weekly plan is exactly the case A8 exists to serve, and it is the case `parents` misses.
+   * Without this field the band's client had to read the **Monthly lens for the band's own month**, which
+   * answers with that month's goals only: a task carried out of June into August has its goal in June's
+   * page, so the row was silently dropped, and a band whose every task was carried vanished entirely.
+   *
+   * One entry per distinct `goalId` in `monthTasks`, **in `monthTasks`' own first-appearance order**, so
+   * the client groups by walking this array rather than re-deriving the server's order. Every one of them
+   * is already in memory when the lens is built (the interior tree holds every Monthly goal — R-lens-27),
+   * so this costs no read.
+   *
+   * Their Life lines resolve from `groups`, which is widened to cover them: a Life goal present in the
+   * band **is** present on this lens, and R-lens-19's "no items in this period" is about the screen, not
+   * about `items` alone.
+   */
+  monthGoals: z.array(GoalView),
+  /**
    * ⚠ **A8, new (R-lens-31)** — the month `monthTasks` belongs to, e.g. `2026-08`. **Weekly lens only**;
    * `null` on every other lens, Monthly included.
    *

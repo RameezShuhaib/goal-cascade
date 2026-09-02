@@ -274,6 +274,58 @@ describe('backlog → task conversion', () => {
     expect(await openTasksUnder(f, [weeklyThisWeek])).toHaveLength(before);
   });
 
+  /**
+   * ⚠ **A8 (R-measure-1, Q-E) — a measure named on the conversion, and only ever a named one.**
+   *
+   * The create sheet is one sheet with two save paths — `POST /tasks` for a fresh task, this endpoint for
+   * a backlog item — and it renders the same `MeasureFields` on both, blocking `Save task` on the same
+   * validity. `CreateTaskRequest.measure` already travelled that way; without the twin here the client
+   * had to either discard the number or hide the fields on one of two doors to the same task.
+   *
+   * The task comes back measurable, `current` is `start` (no readings exist yet), and R-task-58's
+   * `Measure added` line is in the same batch as the `created` one — exactly what `POST /tasks` writes.
+   */
+  it('R-measure-1 — a conversion carries a measure named on the command, with its `Measure added` line', async () => {
+    const item = await createItem(monthly, 'Log the leads');
+    const res = await post(E.backlogItemConvert(item.id), {
+      measure: { kind: 'counter', start: 0, target: 300, unit: 'leads' },
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const out = (await res.json()) as {
+      task: { id: string; measure: { kind: string; start: number; current: number; target: number | null; unit: string } | null; events: { kind: string }[] };
+    };
+
+    expect(out.task.measure).toMatchObject({ kind: 'counter', start: 0, current: 0, target: 300, unit: 'leads' });
+    expect(out.task.events.map((e) => e.kind).sort()).toEqual(['created', 'measure_added']);
+  });
+
+  /** The absence is the ordinary case: a conversion never INVENTS a measure, because an item has no number. */
+  it('R-measure-1 — a conversion with no measure named produces an ordinary checkbox', async () => {
+    const item = await createItem(monthly, 'Just a task');
+    const res = await post(E.backlogItemConvert(item.id), {});
+    expect(res.status).toBe(201);
+    const out = (await res.json()) as { task: { measure: unknown; events: { kind: string }[] } };
+    expect(out.task.measure).toBeNull();
+    expect(out.task.events.map((e) => e.kind)).toEqual(['created']);
+  });
+
+  /**
+   * R-measure-4 — one enforcement point, and it is `domain/measures.assertMeasure`. It was a private
+   * method on `TaskService` while one service wrote measures; a conversion writing one made that a
+   * second place the rule had to hold, so the rule moved rather than being copied.
+   */
+  it('R-measure-4 — `target === start` is refused on this path too, with its own code and no task created', async () => {
+    const item = await createItem(monthly, 'A target that names no movement');
+    const before = (await openTasksUnder(f, [weeklyThisWeek])).length;
+
+    const res = await post(E.backlogItemConvert(item.id), { measure: { kind: 'counter', start: 5, target: 5, unit: 'reps' } });
+    // 422, the same status and the same code `POST /tasks` answers with — one rule, one refusal.
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('MEASURE_TARGET_EQUALS_START');
+    expect(await openTasksUnder(f, [weeklyThisWeek])).toHaveLength(before);
+    expect((await backlogRow(f, item.id))!.status).toBe('open');
+  });
+
   it('R-backlog-6 — a converted item is no longer editable or movable: it is a task now', async () => {
     const item = await createItem(monthly, 'Then locked');
     expect((await post(E.backlogItemConvert(item.id), {})).status).toBe(201);

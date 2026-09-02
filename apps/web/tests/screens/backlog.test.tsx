@@ -201,6 +201,51 @@ describe('Backlog → work: the one conversion (R-backlog-26, D-19)', () => {
 
     expect(await within(sheet).findByText('That one is already this week — nothing new was created.')).toBeInTheDocument();
   });
+
+  /**
+   * ⚠ **A8 (Q-E, R-measure-1) — a measure attached in the create sheet travels on the CONVERT command
+   * too, because the sheet is one sheet.**
+   *
+   * `TaskCreateSheet` renders `MeasureFields` on both its paths, validates the draft on both, and **gates
+   * `Save task` on that validity** on both (`measureBlocked`) — then the convert branch dropped the
+   * measure on the floor. A number the owner typed, that the app refused to save the task without, and
+   * then discarded without a word: the "silent partial write" defect A9 spent an amendment closing, in
+   * a new place. The alternative — hiding the fields on this path — makes the same task reachable with a
+   * number from one door and not from the other, for no reason the owner can see.
+   *
+   * `ConvertBacklogItemRequest.measure` is the API half, and it is **explicit-only**: a conversion still
+   * never invents a measure from the item, which has no number to carry.
+   */
+  it('carries a measure attached in the sheet onto the CONVERT command, in the same write', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M })]);
+    const { user } = renderApp(<AppShell />, { route: '/backlog' });
+    await user.click(await screen.findByText('Find a squat rack that is free at 7am'));
+    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
+
+    await user.click(within(sheet).getByRole('button', { name: '+ Add a number' }));
+    const fields = within(sheet).getByTestId('measure-fields');
+    await user.type(within(fields).getByLabelText('Target (optional)'), '300');
+    await user.type(within(fields).getByLabelText('Unit'), 'leads');
+    await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
+
+    await waitFor(async () => {
+      const body = await bodyOf(lastRequest('POST', '/convert-to-task'));
+      expect(body).toMatchObject({ period: F.THIS_MONDAY, measure: { kind: 'counter', start: 0, target: 300, unit: 'leads' } });
+    });
+  });
+
+  /** The absence is the ordinary case and stays byte-identical: no `measure` key at all, not a null one. */
+  it('sends no measure key when none was attached', async () => {
+    withBacklog([F.backlogItem({ goalId: F.M })]);
+    const { user } = renderApp(<AppShell />, { route: '/backlog' });
+    await user.click(await screen.findByText('Find a squat rack that is free at 7am'));
+    await user.click(screen.getByRole('button', { name: 'Add to this week' }));
+    const sheet = await screen.findByRole('dialog', { name: 'New task' });
+    await user.click(within(sheet).getByRole('button', { name: 'Save task' }));
+
+    await waitFor(async () => expect(await bodyOf(lastRequest('POST', '/convert-to-task'))).not.toHaveProperty('measure'));
+  });
 });
 
 describe('The `+` drawer (R-backlog-27, D-21)', () => {
